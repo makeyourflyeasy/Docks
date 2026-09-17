@@ -1,0 +1,10 @@
+{
+  "name": "Docks (Pvt.) Ltd",
+  "description": "One Window Logistics Solution - Afghan Transit, Customs Clearance, Freight & Client Portal",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

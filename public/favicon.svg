@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="30 20 420 200" width="100%" height="100%">
+  <defs>
+    <linearGradient id="dplFavGold" x1="0%" y1="0%" x2="100%" y2="80%">
+      <stop offset="0%" stop-color="#FFF5B8" />
+      <stop offset="20%" stop-color="#FCE182" />
+      <stop offset="45%" stop-color="#EDB840" />
+      <stop offset="70%" stop-color="#CCA026" />
+      <stop offset="100%" stop-color="#B28014" />
+    </linearGradient>
+    <filter id="dplFavShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#6B4803" flood-opacity="0.4" />
+    </filter>
+  </defs>
+  <g filter="url(#dplFavShadow)">
+    <path d="M 45,36 L 215,36 L 203,62 L 45,62 Z" fill="url(#dplFavGold)" stroke="#8C630D" stroke-width="1.5" />
+    <path d="M 45,80 L 180,80 L 168,106 L 45,106 Z" fill="url(#dplFavGold)" stroke="#8C630D" stroke-width="1.5" />
+    <path d="M 45,124 L 145,124 L 133,150 L 45,150 Z" fill="url(#dplFavGold)" stroke="#8C630D" stroke-width="1.5" />
+    <path
+      fill-rule="evenodd"
+      d="
+        M 265,36
+        L 370,36
+        C 415,36 442,65 442,105
+        C 442,155 410,204 345,204
+        L 145,204
+        L 225,120
+        L 280,120
+        L 298,80
+        L 245,80
+        Z
+        M 305,68
+        L 345,68
+        C 370,68 388,86 388,110
+        C 388,142 368,172 335,172
+        L 278,172
+        L 302,144
+        L 322,144
+        L 332,102
+        L 288,102
+        Z
+      "
+      fill="url(#dplFavGold)"
+      stroke="#8C630D"
+      stroke-width="1.8"
+    />
+  </g>
+</svg>

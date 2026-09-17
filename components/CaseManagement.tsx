@@ -1,0 +1,5586 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  ChevronRight, ChevronDown, CheckCircle2, Upload, FileText, CheckCircle, Loader2, Save, 
+  MapPin, Anchor, Box, User, AlertCircle, Calendar, Camera, X, Truck, Briefcase, 
+  Search, Eye, Printer, Share2, AlertTriangle, ArrowLeft, Download, Trash2, Edit, Plus, ListFilter, Filter,
+  Sparkles, Scan, FileCheck, Globe, Receipt, Scale, Ship, UploadCloud, Play, Clock, ArrowRight, RefreshCw, Layers
+} from 'lucide-react';
+import Logo from './Logo';
+import { useBranding } from '../services/brandingService';
+import { autoFillCaseData, downloadFile, docDataCache, detectShippingDocumentType } from '../services/geminiService';
+import { downloadCasePdf, sharePdfFile } from '../services/pdfExportService';
+import { PdfViewerModal } from './PdfViewerModal';
+import { detectMimeType, compressAndPrepareFile } from '../services/fileUtils';
+import { Container, ExtractedData, CaseStatus, Case, MockDocument, UserRole, CaseCharge, Client, CaseStepDetail, WORKFLOW_8_STEPS, Vehicle } from '../types';
+import { WorkflowStepModal } from './WorkflowStepModal';
+import { CompletedCaseDossier } from './CompletedCaseDossier';
+import { 
+  PAKISTAN_CUSTOMS_COMPLIANCE, 
+  getStandardChargesForCategory, 
+  validateCustomsCompliance,
+  CategoryComplianceDetail
+} from '../services/customsComplianceService';
+import { safeSessionStorage, safeLocalStorage, safeAppStorage } from '../services/storage';
+import { appLifecycle } from '../services/lifecycle';
+import { 
+  PRIMARY_SERVICE_CATEGORIES, 
+  SUB_CATEGORY_OPTIONS, 
+  supportsSubCategories, 
+  getCategoryWorkflow, 
+  getWorkflowStepIndex 
+} from '../services/workflowConfig';
+
+export interface UploadedDocRecord {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  url: string;
+  docCategory?: 'BL' | 'INVOICE' | 'PACKING_LIST' | 'ALL_IN_ONE' | 'GENERAL';
+}
+
+export const TOP_SHIPPING_LINES_SHOWCASE = [
+  { name: 'Maersk Line', prefix: 'MSKU / MRKU', flag: '🇩🇰' },
+  { name: 'MSC', prefix: 'MEDU / MSCU', flag: '🇨🇭' },
+  { name: 'CMA CGM', prefix: 'CMAU / APZU', flag: '🇫🇷' },
+  { name: 'COSCO Shipping', prefix: 'COSU / CBHU', flag: '🇨🇳' },
+  { name: 'Hapag-Lloyd', prefix: 'HLCU / HLXU', flag: '🇩🇪' },
+  { name: 'ONE (Ocean Network)', prefix: 'ONEY / NYKU', flag: '🇯🇵' },
+  { name: 'Evergreen Marine', prefix: 'EMCU / EGLV', flag: '🇹🇼' },
+  { name: 'HMM', prefix: 'HDMU', flag: '🇰🇷' },
+  { name: 'Yang Ming', prefix: 'YMLU', flag: '🇹🇼' },
+  { name: 'OOCL / PIL / Wan Hai', prefix: 'OOLU / PCIU', flag: '🌏' }
+];
+import { 
+  subscribeToCases, 
+  saveCaseToFirestore, 
+  updateCaseInFirestore, 
+  deleteCaseFromFirestore,
+  subscribeToClients,
+  saveClientToFirestore,
+  DEFAULT_CLIENTS
+} from '../services/dbService';
+
+const INITIAL_PORTS = [
+  // Sea Ports / Terminal
+  { name: "Karachi Port Trust", code: "KPT" },
+  { name: "Port Qasim", code: "QICT" },
+  { name: "South Asia Pakistan Terminals", code: "SAPT" },
+  { name: "Karachi International Container Terminal", code: "KICT" },
+  { name: "Karachi Gateway Terminal", code: "KGTL" },
+  { name: "Karachi Gateway Terminal Multipurpose", code: "KGTML" },
+  { name: "Al-Hamd International Container Terminal", code: "AICT" },
+  { name: "Gwadar Port", code: "Gwadar Port" },
+  { name: "NLC Sultanabad", code: "NLC Sultanabad" },
+
+  // Dry Ports
+  { name: "Faisalabad Dry Port", code: "Faisalabad Dry Port" },
+  { name: "Lahore Dry Port", code: "Lahore Dry Port" },
+  { name: "Lahore NLC Dry Port", code: "Lahore NLC Dry Port" },
+  { name: "Lahore MICT Dry Port", code: "Lahore MICT Dry Port" },
+  { name: "Lahore DPW Dry Port", code: "Lahore DPW Dry Port" },
+  { name: "Rawalpindi Dry Port", code: "Rawalpindi Dry Port" },
+  { name: "Multan Dry Port", code: "Multan Dry Port" },
+  { name: "Sialkot Dry Port", code: "SICT" },
+  { name: "Islamabad Dry Port", code: "Islamabad Dry Port" },
+  { name: "Azakhel Dry Port", code: "Azakhel Dry Port" },
+  { name: "Havelian Dry Port", code: "Havelian Dry Port" },
+  { name: "Peshawar Dry Port", code: "Peshawar Dry Port" },
+  { name: "Jamrud Dry Port", code: "Jamrud Dry Port" },
+  { name: "Quetta Railway Dry Port", code: "Quetta Railway Dry Port" },
+  { name: "Quetta NLC Dry Port", code: "Quetta NLC Dry Port" },
+  { name: "Gilgit Dry Port", code: "Gilgit Dry Port" },
+  { name: "Sost Dry Port", code: "Sost Dry Port" },
+  { name: "Muzaffarabad Dry Port", code: "Muzaffarabad Dry Port" },
+  { name: "Karachi Dry Port", code: "Karachi Dry Port" },
+  { name: "Karachi NLC Dry Port", code: "Karachi NLC Dry Port" },
+
+  // Border Terminals & Crossings
+  { name: "Wagha Border Terminal", code: "Wagha Border Terminal" },
+  { name: "Torkham Border Terminal", code: "Torkham Border Terminal" },
+  { name: "Chaman Border Terminal", code: "Chaman Border Terminal" },
+  { name: "Taftan Border Terminal", code: "Taftan Border Terminal" },
+  { name: "Angur Ada", code: "Angur Ada" },
+  { name: "Badini", code: "Badini" },
+  { name: "Ghulam Khan", code: "Ghulam Khan" },
+  { name: "Kharlachi", code: "Kharlachi" },
+  { name: "Mand", code: "Mand" }
+];
+
+const CATEGORIES = PRIMARY_SERVICE_CATEGORIES;
+
+const MOCK_CLIENTS = [
+  "Global Traders Ltd", "Swift Logistics", "Afghan Transit Corp", "Pak China Trade Co", "Sea Green Lines"
+];
+
+// Rich Mock Data
+const INITIAL_CASES: Case[] = [
+  { 
+    id: '1', 
+    caseNo: 'DPL-26-000004', 
+    clientName: 'Global Traders Ltd', 
+    category: 'Afghan Transit', 
+    status: CaseStatus.LOADING_PORT_PROCESSING, 
+    pol: 'SHA',
+    pod: 'KDH',
+    createdAt: '2024-05-20',
+    documents: [
+      { name: 'Bill of Lading.pdf', type: 'application/pdf', url: 'https://placehold.co/600x800/png?text=Bill+of+Lading+Preview' },
+      { name: 'Commercial Invoice.jpg', type: 'image/jpeg', url: 'https://placehold.co/600x800/png?text=Commercial+Invoice+Preview' }
+    ],
+    containers: [
+       { id: 1, number: 'MSKU-1234567', size: '40ft', weight: 28000, status: 'Loaded' }
+    ],
+    extractedData: {
+      shipperName: 'Shanghai Export Co.',
+      shipperAddress: '123 Industrial Zone, Shanghai, China',
+      consigneeName: 'Global Traders Ltd',
+      consigneeAddress: 'Kabul, Afghanistan',
+      blNumber: 'MSK-998877',
+      vesselName: 'Maersk Sealand',
+      arrivalDate: '2024-05-25',
+      totalWeight: 28000,
+      invoiceValue: 50000,
+      itemType: 'Electronics',
+      itemName: 'Solar Panels',
+      packageCount: 500
+    }
+  },
+  { 
+    id: '2', 
+    caseNo: 'DPL-26-000003', 
+    clientName: 'Swift Logistics', 
+    category: 'Bonded Carrier', 
+    status: CaseStatus.IN_TRANSIT, 
+    pol: 'JEA',
+    pod: 'LHR-NLC',
+    createdAt: '2024-05-18',
+    documents: [],
+    containers: [
+       { id: 2, number: 'HLCU-9876543', size: '20ft', weight: 14000, status: 'In Transit' },
+       { id: 3, number: 'HLCU-1122334', size: '20ft', weight: 14500, status: 'In Transit' }
+    ],
+    extractedData: {
+      shipperName: 'Dubai Logistics FZE',
+      consigneeName: 'Swift Logistics',
+      blNumber: 'HLC-554433',
+      vesselName: 'Hapag Lloyd Express',
+      arrivalDate: '2024-05-20',
+      itemType: 'Spare Parts'
+    }
+  },
+  { 
+    id: '3', 
+    caseNo: 'DPL-26-000002', 
+    clientName: 'Pak China Trade Co', 
+    category: 'Customs Clearance', 
+    status: CaseStatus.COMPLETED, 
+    pol: 'SHA',
+    pod: 'KGTL',
+    createdAt: '2024-05-15',
+    documents: [],
+    containers: [],
+    extractedData: {
+       shipperName: 'China Heavy Industry',
+       consigneeName: 'Pak China Trade',
+       blNumber: 'COS-110022',
+       vesselName: 'Cosco Shipping',
+       itemName: 'Steel Machinery'
+    }
+  },
+  { 
+    id: '4', 
+    caseNo: 'DPL-26-000001', 
+    clientName: 'Sea Green Lines', 
+    category: 'Customs Clearance', 
+    status: CaseStatus.SHIPPING_LINE_DO, 
+    pol: 'SHA',
+    pod: 'KPT',
+    createdAt: '2024-05-21',
+    documents: [],
+    containers: [],
+    extractedData: {
+       blNumber: 'COS-123456',
+    }
+  },
+];
+
+// Configuration for Report Columns
+const REPORT_COLUMNS = [
+  { key: 'caseNo', label: 'Case No' },
+  { key: 'clientName', label: 'Client' },
+  { key: 'category', label: 'Category' },
+  { key: 'status', label: 'Status' },
+  { key: 'createdAt', label: 'Date' },
+  { key: 'pol', label: 'POL' },
+  { key: 'pod', label: 'POD' },
+  { key: 'extractedData.blNumber', label: 'BL No' },
+  { key: 'extractedData.blDate', label: 'BL Date' },
+  { key: 'extractedData.vesselName', label: 'Vessel' },
+  { key: 'extractedData.shippingLine', label: 'Line' },
+  { key: 'extractedData.shipperName', label: 'Shipper' },
+  { key: 'extractedData.shipperAddress', label: 'Shipper Addr' },
+  { key: 'extractedData.consigneeName', label: 'Consignee' },
+  { key: 'extractedData.consigneeAddress', label: 'Consignee Addr' },
+  { key: 'extractedData.igmNo', label: 'IGM No' },
+  { key: 'extractedData.igmDate', label: 'IGM Date' },
+  { key: 'extractedData.indexNo', label: 'Index No' },
+  { key: 'extractedData.arrivalDate', label: 'Arrival' },
+  { key: 'extractedData.itemType', label: 'Item Type' },
+  { key: 'extractedData.itemName', label: 'Item Name' },
+  { key: 'extractedData.packagingType', label: 'Packaging' },
+  { key: 'extractedData.packageCount', label: 'Pkg Count' },
+  { key: 'extractedData.totalWeight', label: 'Weight (Kg)' },
+  { key: 'extractedData.invoiceValue', label: 'Value (PKR)' },
+  { key: 'extractedData.hsCode', label: 'HS Code' },
+];
+
+interface CaseManagementProps {
+    initialFilter?: any;
+    clearFilter?: () => void;
+    onActionComplete?: (notificationId: number) => void;
+    customLogo?: string | null;
+    userRole?: UserRole;
+    currentClientName?: string;
+}
+
+const CaseManagement: React.FC<CaseManagementProps> = ({ 
+  initialFilter, 
+  clearFilter, 
+  onActionComplete, 
+  customLogo,
+  userRole: propUserRole,
+  currentClientName: propClientName
+}) => {
+  const branding = useBranding();
+  const { companyName, subtitle } = branding;
+  const activeLogo = customLogo || branding.customLogo;
+  const [view, setView] = useState<'list' | 'register' | 'details'>('list');
+  const [activeNotificationId, setActiveNotificationId] = useState<number | null>(null);
+  const [cases, setCases] = useState<Case[]>(INITIAL_CASES);
+  const [selectedCase, setSelectedCase] = useState<any>(() => {
+    return safeAppStorage.getJSON<any>('dpl_selected_case', null);
+  });
+
+  // Preserve selectedCase across app switching & tab freezing
+  useEffect(() => {
+    if (selectedCase) {
+      safeAppStorage.setJSON('dpl_selected_case', selectedCase);
+      safeAppStorage.setItem('dpl_selected_case_id', selectedCase.id || '');
+    } else if (view !== 'details') {
+      safeAppStorage.removeItem('dpl_selected_case');
+      safeAppStorage.removeItem('dpl_selected_case_id');
+    }
+  }, [selectedCase, view]);
+
+  // Persist active view in safeAppStorage
+  useEffect(() => {
+    safeAppStorage.setItem('dpl_reg_view', view);
+  }, [view]);
+
+  // Restore selectedCase from cases list if returning from background/gallery
+  useEffect(() => {
+    if (view === 'details' && !selectedCase && cases.length > 0) {
+      const savedId = safeAppStorage.getItem('dpl_selected_case_id');
+      if (savedId) {
+        const found = cases.find(c => c.id === savedId || c.caseNo === savedId);
+        if (found) {
+          setSelectedCase(found);
+        }
+      }
+    }
+  }, [view, selectedCase, cases]);
+
+  // Synchronize cases with Firestore
+  useEffect(() => {
+    const unsubscribe = subscribeToCases(
+      (firestoreCases) => {
+        if (firestoreCases && firestoreCases.length > 0) {
+          setCases(firestoreCases);
+          // If viewing details, update selectedCase with live Firestore changes
+          if (view === 'details' && selectedCase) {
+            const updated = firestoreCases.find(c => c.id === selectedCase.id || c.caseNo === selectedCase.caseNo);
+            if (updated) setSelectedCase(updated);
+          }
+        } else {
+          // Auto-seed initial baseline cases to Firestore if empty
+          INITIAL_CASES.forEach((c) => {
+            saveCaseToFirestore(c).catch(() => {});
+          });
+        }
+      },
+      (err) => {
+        console.warn("Firestore case subscription note:", err);
+      }
+    );
+    return () => unsubscribe();
+  }, [view, selectedCase?.id]);
+
+  // Synchronize Registered Clients with Firestore & Cases
+  const [clientsData, setClientsData] = useState<Client[]>([]);
+  const [registeredClients, setRegisteredClients] = useState<string[]>(DEFAULT_CLIENTS);
+  const [isOtherClient, setIsOtherClient] = useState(false);
+  const [otherClientName, setOtherClientName] = useState('');
+
+  useEffect(() => {
+    const unsubscribeClients = subscribeToClients((clientsList) => {
+      setClientsData(clientsList);
+      const dbNames = clientsList.map(c => c.name).filter(Boolean);
+      const caseNames = cases.map(c => c.clientName).filter(Boolean);
+      const combined = Array.from(new Set([...DEFAULT_CLIENTS, ...dbNames, ...caseNames]));
+      setRegisteredClients(combined);
+    });
+    return () => unsubscribeClients();
+  }, [cases]);
+
+  // User role state
+  const [mockUserRole, setMockUserRole] = useState(UserRole.ADMIN);
+
+  // Determine effective user role and client account
+  const effectiveRole = propUserRole || (safeAppStorage.getItem('dpl_user_role') as UserRole) || mockUserRole || UserRole.ADMIN;
+  const effectiveClientName = propClientName || safeAppStorage.getItem('dpl_client_name') || 'Global Traders Ltd';
+  const isClientUser = effectiveRole === UserRole.CLIENT;
+
+  // Retrieve client's default category from profile or previous cases
+  const getClientDefaultCategory = (clientName: string): string => {
+    if (!clientName) return '';
+    const foundClient = clientsData.find(c => c.name?.toLowerCase() === clientName.toLowerCase());
+    if (foundClient?.defaultCaseCategory) return foundClient.defaultCaseCategory;
+    const prevCase = cases.find(c => c.clientName?.toLowerCase() === clientName.toLowerCase() && c.category);
+    return prevCase?.category || '';
+  };
+
+  const handleClientSelect = (clientName: string) => {
+    if (clientName === '__OTHERS__') {
+      setIsOtherClient(true);
+      setFormData(prev => ({ ...prev, client: otherClientName.trim() }));
+    } else {
+      setIsOtherClient(false);
+      const defaultCat = getClientDefaultCategory(clientName);
+      setFormData(prev => ({
+        ...prev,
+        client: clientName,
+        category: defaultCat || prev.category || 'Afghan Transit'
+      }));
+    }
+  };
+
+  const handleOtherClientChange = (val: string) => {
+    setOtherClientName(val);
+    setFormData(prev => ({ ...prev, client: val.trim() }));
+  };
+
+  // Dynamic Ports State
+  const [ports, setPorts] = useState(INITIAL_PORTS);
+  const [showPortModal, setShowPortModal] = useState(false);
+  const [newPortName, setNewPortName] = useState('');
+
+  // Filtering State
+  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [filterDates, setFilterDates] = useState({ start: '', end: '' });
+  const [activeDateFilter, setActiveDateFilter] = useState<{start: string, end: string} | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
+
+  // Advanced Reporting State
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportSearchTerm, setReportSearchTerm] = useState('');
+  const [reportFilters, setReportFilters] = useState<Record<string, string>>({});
+  const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
+
+  // Detail View Edit State
+  const [isEditingCase, setIsEditingCase] = useState(false);
+  const [editedCase, setEditedCase] = useState<any>(null);
+
+  // New features state
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [printOptions, setPrintOptions] = useState({ withAttachments: false, withInvoice: false, onlyInvoice: false });
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfDownloadSuccess, setPdfDownloadSuccess] = useState<string | null>(null);
+  const [pdfDownloadError, setPdfDownloadError] = useState<string | null>(null);
+  const [directDownloadUrl, setDirectDownloadUrl] = useState<string | null>(null);
+  const [directDownloadFilename, setDirectDownloadFilename] = useState<string>('');
+  const [isPdfViewerOpen, setIsPdfViewerOpen] = useState(false);
+
+  // Download Documents Modal state
+  const [showDownloadDocsModal, setShowDownloadDocsModal] = useState(false);
+  const [selectedDownloadType, setSelectedDownloadType] = useState<'caseDetails' | 'invoice' | 'attachments' | 'all'>('caseDetails');
+
+  // Add/Edit Charges state
+  const STANDARD_CHARGE_CATEGORIES = [
+    'Transhipment Permit (TP) Filing & EDI Fee',
+    'Port Wharfage & Terminal Handling (THC)',
+    'Delivery Order (DO) Charges',
+    'DO Security Deposit',
+    'Excise & Taxation Payment',
+    'Customs Examination & Surcharge',
+    'Weighbridge Scale Charges',
+    'Detention / Demurrage Payment',
+    'Container Damage / Repair Payment',
+    'FBR Satellite Tracking Device & E-Seal Monitoring',
+    'Inland Freight & Vehicle Rent',
+    'Customs Duty & Regulatory Taxes',
+    'Additional Customs Duty (ACD)',
+    'Labor & Offloading Charges',
+    'Customs Agency / Clearing Commission',
+    'Bank Charges & Stamp Paper',
+    'Empty Container Return & Gate-in Fee',
+    'Manifest / WeBOC Electronic Processing',
+    'Cross-Border Transit / TIR Surcharge',
+    'Direct Client Disbursement',
+    'Cash Payment / Miscellaneous Handling'
+  ];
+
+  const [customChargeCategories, setCustomChargeCategories] = useState<string[]>(() => {
+    try {
+      const stored = safeLocalStorage.getItem('custom_billing_categories');
+      if (stored) return JSON.parse(stored);
+    } catch (e) {
+      console.warn("Failed reading custom categories:", e);
+    }
+    return [];
+  });
+
+  const [showAddChargeModal, setShowAddChargeModal] = useState(false);
+  const [selectedChargeCategory, setSelectedChargeCategory] = useState('');
+  const [newChargeDesc, setNewChargeDesc] = useState('');
+  const [newChargeAmount, setNewChargeAmount] = useState('');
+  const [isAddingNewCategory, setIsAddingNewCategory] = useState(false);
+  const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [newChargeReceipt, setNewChargeReceipt] = useState<{ url: string; name: string } | null>(null);
+  const [isUploadingReceipt, setIsUploadingReceipt] = useState(false);
+
+  // 8-Step Workflow Interactive Modal state
+  const [showStepModal, setShowStepModal] = useState(false);
+  const [selectedStepStatus, setSelectedStepStatus] = useState<CaseStatus | null>(null);
+  const [stepModalIndex, setStepModalIndex] = useState<number>(0);
+
+  const handleOpenStepModal = (status: CaseStatus, index: number, target: Case) => {
+    setSelectedStepStatus(status);
+    setStepModalIndex(index);
+    setShowStepModal(true);
+  };
+
+  const handleDownloadPdfFile = async (caseToExport?: Case, overrideOpts?: { onlyInvoice?: boolean; withInvoice?: boolean; withAttachments?: boolean; onlyCaseDetails?: boolean }) => {
+    const activeCase = caseToExport || selectedCase;
+    if (!activeCase) {
+      setPdfDownloadError("No case found to generate PDF.");
+      return;
+    }
+    setIsDownloadingPdf(true);
+    setPdfDownloadError(null);
+    setPdfDownloadSuccess(null);
+    try {
+      const opts = overrideOpts || printOptions;
+      const result = await downloadCasePdf(
+        activeCase,
+        { companyName, subtitle, customLogo: activeLogo, ...branding },
+        opts
+      );
+      setPdfDownloadSuccess(result.filename);
+      if (result.blobUrl) {
+        setDirectDownloadUrl(result.blobUrl);
+        setDirectDownloadFilename(result.filename);
+      }
+    } catch (err: any) {
+      console.error("PDF generation/download error:", err);
+      setPdfDownloadError("Unable to download PDF. Please try again.");
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  // Registration State (Bulletproof persistence across app switching, backgrounding & reloads)
+  const [step, setStep] = useState<number>(() => {
+    const saved = safeAppStorage.getItem('dpl_reg_step');
+    return saved ? Math.max(1, parseInt(saved, 10)) : 1;
+  });
+  const [loading, setLoading] = useState(false);
+  const [isReadingDocuments, setIsReadingDocuments] = useState(false);
+  const [readingPhase, setReadingPhase] = useState('Reading Documents...');
+  const [readingProgress, setReadingProgress] = useState(0);
+  const [files, setFiles] = useState<File[]>([]);
+  const [uploadedDocs, setUploadedDocs] = useState<UploadedDocRecord[]>(() => {
+    return safeAppStorage.getJSON<UploadedDocRecord[]>('dpl_reg_docs', []);
+  });
+  const [isAttachingFiles, setIsAttachingFiles] = useState(false);
+  const documentsSectionRef = useRef<HTMLDivElement>(null);
+  const [showCamera, setShowCamera] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const multiFileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const [generatedCaseNo, setGeneratedCaseNo] = useState<string>(() => {
+    return safeAppStorage.getItem('dpl_reg_caseno') || '';
+  });
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const [categorySearch, setCategorySearch] = useState('');
+  const [showCustomsGuideModal, setShowCustomsGuideModal] = useState(false);
+  const [activeGuideCategory, setActiveGuideCategory] = useState<string>('Bonded Carrier');
+  
+  const [formData, setFormData] = useState<{
+    client: string;
+    category: string;
+    subCategory?: string;
+    pol: string;
+    pod: string;
+    containers: Container[];
+    extractedData: ExtractedData;
+    charges?: CaseCharge[];
+  }>(() => {
+    return safeAppStorage.getJSON('dpl_reg_formdata', {
+      client: '',
+      category: '',
+      subCategory: 'Standard Container / General Cargo',
+      pol: '',
+      pod: '',
+      containers: [],
+      extractedData: {},
+      charges: []
+    });
+  });
+
+  // Draft Persistence and Detection
+  const checkHasDraft = () => {
+    try {
+      const active = safeAppStorage.getItem('dpl_reg_draft_active') === 'true';
+      const savedStep = parseInt(safeAppStorage.getItem('dpl_reg_step') || '1', 10);
+      const savedFormData = safeAppStorage.getJSON<any>('dpl_reg_formdata', null);
+      const savedDocs = safeAppStorage.getJSON<any[]>('dpl_reg_docs', []);
+      if (active) return true;
+      if (savedStep > 1) return true;
+      if (savedDocs && savedDocs.length > 0) return true;
+      if (savedFormData && (Boolean(savedFormData.client?.trim()) || (savedFormData.containers && savedFormData.containers.length > 0))) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  const [hasDraft, setHasDraft] = useState<boolean>(() => checkHasDraft());
+  const [showDiscardModal, setShowDiscardModal] = useState<boolean>(false);
+  const [showStartNewDraftPrompt, setShowStartNewDraftPrompt] = useState<boolean>(false);
+  const [draftToast, setDraftToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (draftToast) {
+      const timer = setTimeout(() => setDraftToast(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [draftToast]);
+
+  const draftInfo = React.useMemo(() => {
+    if (!hasDraft) return null;
+    const savedStep = parseInt(safeAppStorage.getItem('dpl_reg_step') || '1', 10);
+    const savedCaseNo = safeAppStorage.getItem('dpl_reg_caseno') || '';
+    const savedFormData = safeAppStorage.getJSON<any>('dpl_reg_formdata', formData);
+    const savedDocs = safeAppStorage.getJSON<any[]>('dpl_reg_docs', uploadedDocs);
+    const savedTime = safeAppStorage.getItem('dpl_reg_updated_at') || '';
+
+    let stepName = 'Basic Details & Shipping Documents';
+    if (savedStep === 2) stepName = 'Extracted Data & Route Verification';
+    if (savedStep === 3) stepName = 'Container Allocation & Charges Review';
+
+    return {
+      step: savedStep,
+      stepName,
+      caseNo: savedCaseNo,
+      client: savedFormData?.client || '',
+      category: savedFormData?.category || 'Afghan Transit',
+      docsCount: (savedDocs && savedDocs.length) || 0,
+      containersCount: (savedFormData?.containers && savedFormData.containers.length) || 0,
+      updatedAt: savedTime
+    };
+  }, [hasDraft, formData, uploadedDocs]);
+
+  // Preserve registration draft in safeAppStorage with debouncing to prevent mobile I/O thrashing
+  useEffect(() => {
+    if (view === 'register' && step < 4) {
+      const hasContent = Boolean(formData.client?.trim()) || uploadedDocs.length > 0 || step > 1 || (formData.containers && formData.containers.length > 0);
+      const timer = setTimeout(() => {
+        if (hasContent) {
+          safeAppStorage.setItem('dpl_reg_draft_active', 'true');
+          safeAppStorage.setItem('dpl_reg_step', String(step));
+          if (generatedCaseNo) {
+            safeAppStorage.setItem('dpl_reg_caseno', generatedCaseNo);
+          } else {
+            safeAppStorage.removeItem('dpl_reg_caseno');
+          }
+          safeAppStorage.setJSON('dpl_reg_formdata', formData);
+          safeAppStorage.setJSON('dpl_reg_docs', uploadedDocs);
+          safeAppStorage.setItem('dpl_reg_updated_at', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+          setHasDraft(true);
+        }
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [view, step, generatedCaseNo, formData, uploadedDocs]);
+
+  // Safely release camera hardware when the user switches to gallery or another app
+  useEffect(() => {
+    const unsubscribe = appLifecycle.subscribe((lifecycleState) => {
+      if (lifecycleState === 'background' && showCamera) {
+        stopCamera();
+      }
+    });
+    return () => {
+      unsubscribe();
+      stopCamera();
+    };
+  }, [showCamera]);
+
+  // Effect to apply initial filter from props (Dashboard drill-down)
+  useEffect(() => {
+    if (initialFilter) {
+        if (initialFilter.status) {
+            setStatusFilter(initialFilter.status);
+        }
+        if (initialFilter.notificationId) {
+            setActiveNotificationId(initialFilter.notificationId);
+        }
+    } else {
+        setStatusFilter(null);
+    }
+  }, [initialFilter]);
+
+  const getNestedValue = (obj: any, path: string) => {
+    return path.split('.').reduce((acc, part) => acc && acc[part], obj);
+  };
+
+  // Generate strictly sequential case number from current active cases
+  const generateCaseNumber = (customList?: Case[]) => {
+    const listToScan = customList || cases;
+    const year = new Date().getFullYear().toString().slice(-2);
+    
+    // Find the max sequence number from existing cases to maintain a single continuous sequence
+    let maxSeq = 0;
+    listToScan.forEach(c => {
+      // Format is DPL-YY-XXXXXX
+      const parts = c.caseNo.split('-');
+      if (parts.length === 3) {
+        const num = parseInt(parts[2], 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
+      }
+    });
+
+    // Increment and pad to 6 digits, resetting after 999999
+    let nextSeq = maxSeq + 1;
+    if (nextSeq > 999999) {
+      nextSeq = 1;
+    }
+    const count = nextSeq.toString().padStart(6, '0');
+    return `DPL-${year}-${count}`;
+  };
+
+  const handleResumeDraft = () => {
+    const savedStep = parseInt(safeAppStorage.getItem('dpl_reg_step') || '1', 10);
+    const savedCaseNo = safeAppStorage.getItem('dpl_reg_caseno') || '';
+    const savedFormData = safeAppStorage.getJSON<any>('dpl_reg_formdata', null);
+    const savedDocs = safeAppStorage.getJSON<UploadedDocRecord[]>('dpl_reg_docs', []);
+
+    if (savedFormData) {
+      setFormData(savedFormData);
+    }
+    if (savedDocs && savedDocs.length > 0) {
+      setUploadedDocs(savedDocs);
+    }
+    setGeneratedCaseNo(savedCaseNo);
+    setStep(Math.max(1, Math.min(savedStep, 3)));
+    setView('register');
+    setDraftToast('⚡ Resumed incomplete case draft');
+  };
+
+  const handleDiscardDraft = () => {
+    safeAppStorage.removeItem('dpl_reg_draft_active');
+    safeAppStorage.removeItem('dpl_reg_step');
+    safeAppStorage.removeItem('dpl_reg_caseno');
+    safeAppStorage.removeItem('dpl_reg_formdata');
+    safeAppStorage.removeItem('dpl_reg_docs');
+    safeAppStorage.removeItem('dpl_reg_updated_at');
+    safeAppStorage.removeItem('dpl_reg_view');
+    setHasDraft(false);
+    setGeneratedCaseNo('');
+    setStep(1);
+    setFiles([]);
+    setUploadedDocs([]);
+    setFormData({
+      client: isClientUser ? (effectiveClientName || 'Global Traders Ltd') : '',
+      category: isClientUser ? getClientDefaultCategory(effectiveClientName || '') : 'Afghan Transit',
+      pol: 'Karachi Port (KPT)',
+      pod: '',
+      containers: [],
+      extractedData: {},
+      charges: []
+    });
+    setShowDiscardModal(false);
+    setDraftToast('🗑️ Incomplete case draft discarded');
+  };
+
+  const handleStartRegistration = () => {
+    if (hasDraft) {
+      setShowStartNewDraftPrompt(true);
+      return;
+    }
+    startFreshRegistration();
+  };
+
+  const startFreshRegistration = () => {
+    // Clear any previous draft residue
+    safeAppStorage.removeItem('dpl_reg_draft_active');
+    safeAppStorage.removeItem('dpl_reg_step');
+    safeAppStorage.removeItem('dpl_reg_caseno');
+    safeAppStorage.removeItem('dpl_reg_formdata');
+    safeAppStorage.removeItem('dpl_reg_docs');
+    safeAppStorage.removeItem('dpl_reg_updated_at');
+    setHasDraft(false);
+
+    // CRITICAL USER DIRECTIVE:
+    // Do NOT reserve or assign a serial case number in Step 1!
+    // Case number will be generated strictly when progressing to Step 2.
+    setGeneratedCaseNo('');
+    setStep(1);
+
+    const initialClient = isClientUser ? (effectiveClientName || 'Global Traders Ltd') : '';
+    const initialCategory = initialClient ? getClientDefaultCategory(initialClient) : '';
+
+    const initialFormData = {
+      client: initialClient,
+      category: initialCategory || 'Afghan Transit',
+      pol: 'Karachi Port (KPT)',
+      pod: '',
+      containers: [],
+      extractedData: {},
+      charges: []
+    };
+
+    setFormData(initialFormData);
+    setFiles([]);
+    setUploadedDocs([]);
+    setCategoryDropdownOpen(false);
+    setCategorySearch('');
+    setIsOtherClient(false);
+    setOtherClientName('');
+    setView('register');
+  };
+
+  // Keep client account synced if registering as a Client user
+  useEffect(() => {
+    if (view === 'register' && isClientUser && effectiveClientName) {
+      if (!formData.client || formData.client !== effectiveClientName) {
+        const cat = getClientDefaultCategory(effectiveClientName);
+        setFormData(prev => ({
+          ...prev,
+          client: effectiveClientName,
+          category: prev.category || cat || 'Afghan Transit'
+        }));
+      }
+    }
+  }, [view, isClientUser, effectiveClientName, clientsData]);
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const inputEl = e.target;
+    try {
+      if (inputEl && inputEl.files && inputEl.files.length > 0) {
+        const selected: File[] = Array.from(inputEl.files);
+        // Clear input value so selecting the same file again triggers change event
+        inputEl.value = '';
+        setIsAttachingFiles(true);
+        // Defer processing to next frame so the mobile browser can smoothly finish returning from OS Activity
+        setTimeout(() => {
+          processFiles(selected).finally(() => {
+            setIsAttachingFiles(false);
+          });
+        }, 40);
+      }
+    } catch (err) {
+      console.warn("File upload error caught:", err);
+      setIsAttachingFiles(false);
+    }
+  };
+
+  const processFiles = async (newFiles: File[], categoryHint?: 'BL' | 'INVOICE' | 'PACKING_LIST' | 'ALL_IN_ONE') => {
+    if (!newFiles || newFiles.length === 0) return;
+    try {
+      const newDocRecords: UploadedDocRecord[] = [];
+
+      for (const f of newFiles) {
+        let objectUrl = '';
+        try {
+          objectUrl = URL.createObjectURL(f);
+        } catch (_) {}
+
+        const docType = f.type || detectMimeType(f).mimeType;
+        const recId = `${f.name.replace(/[^a-zA-Z0-9.-]/g, '_')}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        const detectedCategory = categoryHint || detectShippingDocumentType(f.name);
+
+        newDocRecords.push({
+          id: recId,
+          name: f.name,
+          type: docType,
+          size: f.size,
+          url: objectUrl,
+          docCategory: detectedCategory
+        });
+      }
+
+      // Smoothly cache Base64 in background after UI finishes rendering to prevent freezing main UI thread
+      setTimeout(() => {
+        for (const f of newFiles) {
+          compressAndPrepareFile(f).then(processed => {
+            if (processed && processed.base64) {
+              const mime = processed.type || (processed.isImage ? 'image/jpeg' : 'application/pdf');
+              docDataCache.set(f.name, { base64: processed.base64, mimeType: mime, name: f.name });
+            }
+          }).catch(() => {});
+        }
+      }, 300);
+
+      setFiles(prev => [...prev, ...newFiles]);
+      setUploadedDocs(prev => {
+        const combined = [...prev, ...newDocRecords];
+        try {
+          // Store clean serializable records without volatile blob URLs that break storage
+          const safeRecords = combined.map(d => ({
+            id: d.id,
+            name: d.name,
+            type: d.type,
+            size: d.size,
+            url: '',
+            docCategory: d.docCategory
+          }));
+          safeAppStorage.setJSON('dpl_reg_docs', safeRecords);
+        } catch (e) {
+          console.warn("Doc storage notice:", e);
+        }
+        return combined;
+      });
+
+      // Keep view smoothly focused on the documents section without jumping to the top
+      setTimeout(() => {
+        if (documentsSectionRef.current) {
+          documentsSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 80);
+    } catch (error) {
+      console.warn("Processing notice:", error);
+    }
+  };
+
+  const triggerDocumentReading = async () => {
+    setIsReadingDocuments(true);
+    setReadingProgress(12);
+    setReadingPhase('Enhancing scan contrast & analyzing shipping line format...');
+
+    const timer1 = setTimeout(() => {
+      setReadingProgress(35);
+      setReadingPhase('Reading B/L header, Maersk/MSC/COSCO line & B/L Number...');
+    }, 400);
+
+    const timer2 = setTimeout(() => {
+      setReadingProgress(60);
+      setReadingPhase('Extracting ISO containers (MSKU/CMAU...), 20ft/40ft/45ft & seals...');
+    }, 900);
+
+    const timer3 = setTimeout(() => {
+      setReadingProgress(82);
+      setReadingPhase('Parsing Commercial Invoice values (USD/PKR) & Incoterms...');
+    }, 1500);
+
+    const timer4 = setTimeout(() => {
+      setReadingProgress(94);
+      setReadingPhase('Extracting Packing List carton counts, weights & volume (CBM)...');
+    }, 2100);
+
+    try {
+      // Gather all documents (both direct File objects and uploaded docs without duplicates)
+      const combinedDocs: any[] = [];
+      const seenNames = new Set<string>();
+
+      for (const f of files) {
+        if (f && f.name && !seenNames.has(f.name)) {
+          seenNames.add(f.name);
+          combinedDocs.push(f);
+        }
+      }
+      for (const d of uploadedDocs) {
+        if (d && d.name && !seenNames.has(d.name)) {
+          seenNames.add(d.name);
+          combinedDocs.push(d);
+        }
+      }
+
+      let data: any = {};
+      if (combinedDocs.length > 0) {
+        data = await autoFillCaseData(combinedDocs);
+      } else {
+        await new Promise(r => setTimeout(r, 1200));
+      }
+
+      setReadingProgress(100);
+      setReadingPhase('All International Shipping Fields Read! Opening Form...');
+
+      if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+        setFormData(prev => {
+          const merged = { ...prev.extractedData, ...data };
+          let updatedContainers = [...prev.containers];
+
+          if (data.containers && Array.isArray(data.containers) && data.containers.length > 0) {
+            updatedContainers = data.containers.map((c: any, idx: number) => ({
+              id: Date.now() + idx,
+              number: c.number || `CNTR-${Math.floor(1000 + Math.random() * 9000)}`,
+              size: c.size === '20ft' || c.size === '45ft' ? c.size : '40ft',
+              weight: c.weight || data.totalWeight || data.grossWeight || 0,
+              sealNo: c.sealNo || '',
+              status: 'Pending'
+            }));
+          } else if ((data.totalWeight || data.grossWeight) && updatedContainers.length === 0) {
+            updatedContainers = [
+              {
+                id: Date.now(),
+                number: `CNTR-${Math.floor(1000 + Math.random() * 9000)}`,
+                size: '40ft',
+                weight: data.totalWeight || data.grossWeight,
+                status: 'Pending'
+              }
+            ];
+          }
+
+          // Auto-fill client from consignee if empty
+          const candidateClient = prev.client || data.consigneeName || '';
+
+          // Auto-register extracted client into registeredClients list so it appears in dropdowns
+          if (data.consigneeName && !registeredClients.includes(data.consigneeName)) {
+            setRegisteredClients(prevList => {
+              if (prevList.includes(data.consigneeName)) return prevList;
+              const nextList = [...prevList, data.consigneeName];
+              safeAppStorage.setJSON('dpl_registered_clients', nextList);
+              return nextList;
+            });
+          }
+
+          // Auto-fill category if empty
+          let candidateCategory = prev.category;
+          if (!candidateCategory) {
+            candidateCategory = data.suggestedCategory || (
+              (data.consigneeAddress && (data.consigneeAddress.toUpperCase().includes('BARA') || data.consigneeAddress.toUpperCase().includes('AFGHAN') || data.consigneeAddress.toUpperCase().includes('KHYBER')))
+                ? 'Bonded Carrier'
+                : 'Ocean Freight Import'
+            );
+          }
+
+          // Auto-fill POL & POD if found
+          let candidatePol = prev.pol;
+          if (!candidatePol && data.pol) {
+            const matchedPort = ports.find(p => 
+              p.name.toLowerCase().includes(data.pol.toLowerCase()) || 
+              data.pol.toLowerCase().includes(p.name.toLowerCase()) || 
+              (p.code && data.pol.toUpperCase().includes(p.code.toUpperCase()))
+            );
+            candidatePol = matchedPort ? matchedPort.name : data.pol;
+          }
+
+          let candidatePod = prev.pod;
+          if (!candidatePod && data.pod) {
+            const matchedPort = ports.find(p => 
+              p.name.toLowerCase().includes(data.pod.toLowerCase()) || 
+              data.pod.toLowerCase().includes(p.name.toLowerCase()) || 
+              (p.code && data.pod.toUpperCase().includes(p.code.toUpperCase()))
+            );
+            candidatePod = matchedPort ? matchedPort.name : data.pod;
+          }
+
+          return {
+            ...prev,
+            client: candidateClient,
+            category: candidateCategory,
+            pol: candidatePol,
+            pod: candidatePod,
+            containers: updatedContainers,
+            extractedData: merged
+          };
+        });
+      }
+
+      // Allow animated 100% completion to display nicely
+      await new Promise(r => setTimeout(r, 650));
+    } catch (err) {
+      console.warn("Document reading notice:", err);
+    } finally {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      clearTimeout(timer4);
+      setIsReadingDocuments(false);
+      let activeNo = generatedCaseNo;
+      if (!activeNo) {
+        activeNo = generateCaseNumber();
+        setGeneratedCaseNo(activeNo);
+        safeAppStorage.setItem('dpl_reg_caseno', activeNo);
+      }
+      setStep(2);
+    }
+  };
+
+  const startCamera = async () => {
+    try {
+      setShowCamera(true);
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: { ideal: 'environment' } } 
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.warn("Camera getUserMedia fallback:", err);
+      setShowCamera(false);
+      // Fallback smoothly to device image capture
+      cameraInputRef.current?.click();
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setShowCamera(false);
+  };
+
+  const captureImage = () => {
+    if (videoRef.current) {
+      try {
+        const canvas = document.createElement('canvas');
+        const maxDim = 1200;
+        let w = videoRef.current.videoWidth || 640;
+        let h = videoRef.current.videoHeight || 480;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(videoRef.current, 0, 0, w, h);
+          canvas.toBlob((blob) => {
+            if (blob) {
+              const file = new File([blob], `scanned_doc_${Date.now()}.jpg`, { type: 'image/jpeg' });
+              processFiles([file]);
+              stopCamera();
+            }
+          }, 'image/jpeg', 0.85);
+        }
+      } catch (camErr) {
+        console.warn("Camera capture error:", camErr);
+        stopCamera();
+      }
+    }
+  };
+
+  const addContainer = () => {
+    const totalWeight = formData.extractedData.totalWeight || 0;
+    const count = formData.containers.length + 1;
+    setFormData((prev) => ({
+      ...prev,
+      containers: [
+        ...prev.containers, 
+        { 
+          id: Date.now(), 
+          number: `CNTR-${Math.floor(Math.random()*10000)}`, 
+          size: '40ft', 
+          weight: 0,
+          status: 'Pending'
+        }
+      ]
+    }));
+  };
+
+  const updateContainer = (id: number, field: string, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      containers: prev.containers.map(c => c.id === id ? { ...c, [field]: value } : c)
+    }));
+  };
+
+  const removeContainer = (id: number) => {
+    if (window.confirm("Are you sure you want to remove this container?")) {
+      setFormData(prev => ({
+          ...prev,
+          containers: prev.containers.filter(c => c.id !== id)
+      }));
+    }
+  }
+
+  const updateExtractedData = (field: string, value: any) => {
+    setFormData(prev => ({
+        ...prev,
+        extractedData: { ...prev.extractedData, [field]: value }
+    }));
+  };
+
+  const handleFinalSubmit = () => {
+      const serializableDocs = uploadedDocs.length > 0 
+        ? uploadedDocs.map(d => ({
+            name: d.name || 'document',
+            type: d.type || 'application/octet-stream',
+            size: d.size || 0,
+            url: d.url || ''
+          }))
+        : files.map((f: any) => ({
+            name: (f as any).name || 'document',
+            type: (f as any).type || 'application/octet-stream',
+            size: (f as any).size || 0,
+            url: ''
+          }));
+
+      const finalCharges = (formData.charges && formData.charges.length > 0)
+        ? formData.charges
+        : getStandardChargesForCategory(formData.category, formData.containers?.length || 1);
+
+      // Final sequential verification: ensure case number is strictly unique & sequential
+      let finalCaseNo = generatedCaseNo;
+      const isTaken = !finalCaseNo || cases.some(c => c.caseNo === finalCaseNo);
+      if (isTaken) {
+        finalCaseNo = generateCaseNumber();
+        setGeneratedCaseNo(finalCaseNo);
+      }
+
+      const initialWorkflow = getCategoryWorkflow(formData.category);
+      const initialStepStatus = initialWorkflow.steps[0]?.id || CaseStatus.SHIPPING_LINE_DO;
+
+      const newCase: Case = {
+          id: Date.now().toString(),
+          caseNo: finalCaseNo,
+          clientName: formData.client,
+          category: formData.category,
+          subCategory: supportsSubCategories(formData.category) ? (formData.subCategory || 'Standard Container / General Cargo') : undefined,
+          status: initialStepStatus, 
+          createdAt: new Date().toISOString().split('T')[0],
+          pol: formData.pol,
+          pod: formData.pod,
+          containers: formData.containers,
+          extractedData: formData.extractedData,
+          documents: serializableDocs,
+          charges: finalCharges
+      };
+      setCases([newCase, ...cases]);
+      saveCaseToFirestore(newCase).catch((e) => console.warn("Firestore saveCase error:", e));
+      if (formData.client) {
+        saveClientToFirestore({ name: formData.client }).catch(() => {});
+      }
+
+      // Registration is complete! Clean up draft keys from storage
+      safeAppStorage.removeItem('dpl_reg_draft_active');
+      safeAppStorage.removeItem('dpl_reg_step');
+      safeAppStorage.removeItem('dpl_reg_caseno');
+      safeAppStorage.removeItem('dpl_reg_formdata');
+      safeAppStorage.removeItem('dpl_reg_docs');
+      safeAppStorage.removeItem('dpl_reg_updated_at');
+      safeAppStorage.removeItem('dpl_reg_view');
+      setHasDraft(false);
+
+      setStep(4); 
+  };
+
+  // --- Dynamic Port Logic ---
+  const handleAddPort = () => {
+    if (!newPortName.trim()) return;
+    const code = newPortName.substring(0, 3).toUpperCase() + '-' + Math.floor(Math.random() * 100);
+    setPorts([...ports, { name: newPortName, code }]);
+    setNewPortName('');
+    setShowPortModal(false);
+  };
+
+  // --- Filter Logic ---
+  const handleSearchRecords = () => {
+    if (filterDates.start && filterDates.end) {
+        setActiveDateFilter(filterDates);
+    } else {
+        setActiveDateFilter(null);
+    }
+    setShowFilterModal(false);
+  };
+
+  const handleOpenReport = () => {
+    setShowReportModal(true);
+    setShowFilterModal(false);
+  };
+
+  // Workflow Tab Filter (All Active, In Progress, Completed, Incident Vault)
+  const [activeWorkflowTab, setActiveWorkflowTab] = useState<'all' | 'in_progress' | 'completed' | 'incident_vault'>('all');
+
+  const incidentCasesCount = cases.filter(c => c.status === CaseStatus.INCIDENT_STOPPAGE || c.isIncidentVault).length;
+  const completedCasesCount = cases.filter(c => c.status === CaseStatus.COMPLETED && !c.isIncidentVault).length;
+  const inProgressCasesCount = cases.filter(c => c.status !== CaseStatus.COMPLETED && c.status !== CaseStatus.INCIDENT_STOPPAGE && !c.isIncidentVault).length;
+
+  // Filtering Logic Combined
+  const filteredCases = cases.filter(c => {
+      // Incident Vault separation
+      if (activeWorkflowTab === 'incident_vault') {
+        return c.status === CaseStatus.INCIDENT_STOPPAGE || c.isIncidentVault === true;
+      }
+      // Hide incident stoppage cases from normal lists
+      if (c.status === CaseStatus.INCIDENT_STOPPAGE || c.isIncidentVault === true) {
+        return false;
+      }
+
+      // Workflow Status Tabs
+      if (activeWorkflowTab === 'in_progress' && c.status === CaseStatus.COMPLETED) return false;
+      if (activeWorkflowTab === 'completed' && c.status !== CaseStatus.COMPLETED) return false;
+
+      // Date Filter
+      if (activeDateFilter) {
+          if (c.createdAt < activeDateFilter.start || c.createdAt > activeDateFilter.end) return false;
+      }
+      // Status Filter (from Dashboard)
+      if (statusFilter) {
+          if (c.status !== statusFilter) return false;
+      }
+      return true;
+  });
+
+  const clearStatusFilter = () => {
+      setStatusFilter(null);
+      if(clearFilter) clearFilter();
+  };
+
+  const handleResolveIncident = (caseToResume: Case) => {
+    const updated: Case = {
+      ...caseToResume,
+      status: CaseStatus.IN_TRANSIT,
+      isIncidentVault: false,
+      incidentDetails: undefined
+    };
+    setCases(prev => prev.map(c => c.id === updated.id ? updated : c));
+    if (selectedCase?.id === updated.id) setSelectedCase(updated);
+    updateCaseInFirestore(updated).catch(e => console.warn("Firestore error resolving incident:", e));
+  };
+
+  // --- Detail View Logic ---
+
+  const handleEditCaseToggle = () => {
+     if (isEditingCase) {
+         // Cancel
+         setIsEditingCase(false);
+         setEditedCase(selectedCase);
+     } else {
+         // Start Edit
+         const caseCopy = JSON.parse(JSON.stringify(selectedCase));
+         caseCopy.documents = selectedCase.documents; // Preserve File objects
+         setEditedCase(caseCopy); 
+         setIsEditingCase(true);
+     }
+  };
+
+  const handleSaveEditedCase = () => {
+      // Update local state and Firestore
+      const updatedCases = cases.map(c => c.id === editedCase.id ? editedCase : c);
+      setCases(updatedCases);
+      setSelectedCase(editedCase);
+      setIsEditingCase(false);
+      updateCaseInFirestore(editedCase).catch((e) => console.warn("Firestore updateCase error:", e));
+  };
+
+  const handleApproveCase = () => {
+    const target = isEditingCase ? editedCase : selectedCase;
+    if (!target) return;
+    
+    // Logic to move to next status
+    let newStatus = target.status;
+    if (target.status === CaseStatus.SHIPPING_LINE_DO) {
+        newStatus = CaseStatus.LOADING_PORT_PROCESSING;
+    } else if (target.status === CaseStatus.LOADING_PORT_PROCESSING) {
+        newStatus = CaseStatus.IN_TRANSIT;
+    }
+
+    const updatedCase = { ...target, status: newStatus };
+    const updatedCases = cases.map(c => c.id === target.id ? updatedCase : c);
+    setCases(updatedCases);
+    setSelectedCase(updatedCase);
+    updateCaseInFirestore(updatedCase).catch((e) => console.warn("Firestore approveCase error:", e));
+    
+    if (activeNotificationId && onActionComplete) {
+        onActionComplete(activeNotificationId);
+        setActiveNotificationId(null);
+    }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // --- Advanced Report Logic ---
+  const getFilteredReportData = () => {
+    return cases.filter(c => {
+      // 1. Global Search (Deep Search)
+      if (reportSearchTerm) {
+        const rowString = JSON.stringify(c).toLowerCase();
+        if (!rowString.includes(reportSearchTerm.toLowerCase())) return false;
+      }
+
+      // 2. Column Filters
+      for (const col of REPORT_COLUMNS) {
+        const filterVal = reportFilters[col.key];
+        if (filterVal) {
+          const cellVal = String(getNestedValue(c, col.key) || '').toLowerCase();
+          if (!cellVal.includes(filterVal.toLowerCase())) return false;
+        }
+      }
+
+      return true;
+    });
+  };
+
+  const handleColumnFilterChange = (key: string, value: string) => {
+    setReportFilters(prev => ({ ...prev, [key]: value }));
+  };
+
+  const renderReportModal = () => {
+    const reportData = getFilteredReportData();
+
+    return (
+      <div className="fixed inset-0 bg-slate-950 z-50 flex flex-col animate-in fade-in slide-in-from-bottom-4 print-sheet" data-printable-modal="true">
+        {/* Top Bar - Hidden during Print */}
+        <div className="bg-slate-900 border-b border-white/10 p-4 flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg z-20 no-print">
+           <div className="flex items-center gap-4 w-full md:w-auto">
+              <button onClick={() => setShowReportModal(false)} className="text-gray-400 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors">
+                 <ArrowLeft size={24} />
+              </button>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2"><ListFilter size={24} className="text-brand-400"/> Full Case Report</h2>
+           </div>
+
+           {/* Global Search Bar */}
+           <div className="w-full md:w-96 relative">
+              <Search className="absolute left-3 top-2.5 text-brand-400" size={20} />
+              <input 
+                type="text" 
+                placeholder="Search anything (Client, BL, Item, etc)..." 
+                className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 outline-none text-white focus:border-brand-500 transition-colors shadow-inner"
+                value={reportSearchTerm}
+                onChange={(e) => setReportSearchTerm(e.target.value)}
+                autoFocus
+              />
+           </div>
+           
+           <div className="flex items-center gap-3">
+              <div className="text-sm text-gray-400 font-mono hidden md:block">
+                 {reportData.length} Records Found
+              </div>
+              <button
+                onClick={() => window.print()}
+                className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all cursor-pointer"
+              >
+                <Printer size={15} />
+                <span>Print Report</span>
+              </button>
+           </div>
+        </div>
+
+        {/* Official Header for Print (Visible only in Print) */}
+        <div className="hidden print:block p-4 border-b-2 border-black">
+           <div className="flex justify-between items-center">
+              <div className="flex items-center gap-4">
+                 <Logo className="h-14 w-auto max-w-[200px] object-contain shrink-0" customSrc={activeLogo} />
+                 <div className="flex flex-col justify-center">
+                    <h1 className="text-xl font-bold uppercase tracking-wider text-black leading-tight">{companyName}</h1>
+                    {subtitle && <p className="text-xs text-gray-700 font-medium">{subtitle}</p>}
+                    <p className="text-[11px] text-gray-600 mt-0.5">{branding.address} • Tel: {branding.phone} • Cell: {branding.cell} • Email: {branding.email}</p>
+                    <p className="text-xs font-semibold text-black mt-1 uppercase tracking-wide">COMPREHENSIVE CASE AUDIT & LOGISTICS REPORT</p>
+                 </div>
+              </div>
+              <div className="text-right text-xs text-gray-700 shrink-0">
+                 <p className="font-semibold text-black">Total Records: {reportData.length}</p>
+                 <p>Generated on: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}</p>
+                 {reportSearchTerm && <p>Search Query: "{reportSearchTerm}"</p>}
+              </div>
+           </div>
+        </div>
+
+        {/* Report Table */}
+        <div className="flex-1 overflow-auto custom-scrollbar bg-slate-950 p-4">
+           <div className="border border-white/10 rounded-xl overflow-hidden shadow-2xl bg-slate-900/50 print:border-none">
+             <div className="overflow-x-auto">
+               <table className="w-full text-left text-sm text-gray-200 print:text-black">
+                  <thead className="bg-slate-900 text-xs uppercase font-bold text-gray-400 sticky top-0 z-10 shadow-md print:bg-gray-100 print:text-black">
+                    <tr>
+                      <th className="p-4 border-b border-white/10 bg-slate-900 sticky left-0 z-20 w-16 text-center print:bg-transparent print:border-gray-300">#</th>
+                      {REPORT_COLUMNS.map((col) => (
+                        <th key={col.key} className="p-4 border-b border-white/10 bg-slate-900 whitespace-nowrap min-w-[150px] group relative print:bg-transparent print:border-gray-300">
+                           <div className="flex items-center justify-between gap-2">
+                              <span>{col.label}</span>
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); setActiveFilterColumn(activeFilterColumn === col.key ? null : col.key); }}
+                                className={`p-1 rounded hover:bg-white/10 transition-colors no-print ${reportFilters[col.key] ? 'text-brand-400' : 'text-gray-600 group-hover:text-gray-400'}`}
+                              >
+                                 <Filter size={14} fill={reportFilters[col.key] ? 'currentColor' : 'none'} />
+                              </button>
+                           </div>
+
+                           {/* Column Filter Popup */}
+                           {activeFilterColumn === col.key && (
+                              <div className="absolute top-full left-0 mt-2 w-48 bg-slate-800 border border-white/20 rounded-lg shadow-xl p-2 z-30 animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+                                 <input 
+                                   type="text" 
+                                   placeholder={`Filter ${col.label}...`}
+                                   className="w-full bg-black/30 border border-white/10 rounded p-2 text-xs text-white outline-none focus:border-brand-500"
+                                   value={reportFilters[col.key] || ''}
+                                   onChange={(e) => handleColumnFilterChange(col.key, e.target.value)}
+                                   autoFocus
+                                 />
+                                 <div className="flex justify-end mt-2">
+                                    <button 
+                                      onClick={() => setActiveFilterColumn(null)}
+                                      className="text-[10px] text-brand-400 hover:text-white uppercase font-bold"
+                                    >
+                                      Close
+                                    </button>
+                                 </div>
+                              </div>
+                           )}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                     {reportData.map((row, idx) => (
+                        <tr key={row.id} className="hover:bg-white/5 transition-colors">
+                           <td className="p-4 border-r border-white/5 bg-slate-900/30 sticky left-0 text-center text-gray-500 font-mono text-xs">
+                              {idx + 1}
+                           </td>
+                           {REPORT_COLUMNS.map((col) => {
+                              const val = getNestedValue(row, col.key);
+                              return (
+                                <td key={col.key} className="p-4 whitespace-nowrap text-gray-300 border-r border-white/5 last:border-0">
+                                   {val || '-'}
+                                </td>
+                              );
+                           })}
+                        </tr>
+                     ))}
+                     {reportData.length === 0 && (
+                        <tr>
+                           <td colSpan={REPORT_COLUMNS.length + 1} className="p-12 text-center text-gray-500">
+                              No records found matching your search.
+                           </td>
+                        </tr>
+                     )}
+                  </tbody>
+               </table>
+             </div>
+
+             {/* Official Footer for Print */}
+             <div className="hidden print:flex justify-between items-center p-4 border-t border-gray-300 text-xs text-gray-600 print-avoid-break">
+                <div>
+                   <p className="font-semibold text-black">Docks (Pvt.) Ltd — Operations Control</p>
+                   <p className="text-[10px]">Confidential Logistics & Customs Terminal Audit</p>
+                </div>
+                <div className="text-right">
+                   <div className="border-t border-dashed border-gray-400 pt-1 w-44 text-center">
+                      <p className="text-[11px] font-semibold text-black">Operations Director</p>
+                      <p className="text-[10px] text-gray-600">Verification & Sign-off</p>
+                   </div>
+                </div>
+             </div>
+           </div>
+        </div>
+      </div>
+    );
+  };
+
+  // --- Views ---
+
+  const renderCaseList = () => (
+    <div className={`space-y-6 animate-fade-in ${showReportModal ? 'print:hidden' : ''}`}>
+       {/* Incomplete Case Draft Alert Banner */}
+       {hasDraft && draftInfo && (
+         <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-950/50 via-slate-900/95 to-amber-950/50 border border-amber-500/40 shadow-xl shadow-amber-950/20 space-y-3 animate-in fade-in slide-in-from-top-2">
+           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+             <div className="flex items-start sm:items-center gap-3.5">
+               <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 text-amber-400 shadow-inner">
+                 <AlertTriangle size={22} className="animate-pulse" />
+               </div>
+               <div>
+                 <div className="flex flex-wrap items-center gap-2">
+                   <h3 className="text-base font-bold text-white flex items-center gap-2">
+                     Incomplete Case Registration
+                   </h3>
+                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                     Step {draftInfo.step} of 4: {draftInfo.stepName}
+                   </span>
+                   {draftInfo.caseNo ? (
+                     <span className="px-2 py-0.5 rounded-full text-[11px] font-mono bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                       {draftInfo.caseNo}
+                     </span>
+                   ) : (
+                     <span className="px-2 py-0.5 rounded-full text-[11px] font-mono bg-white/10 text-gray-300 border border-white/10">
+                       Serial: Assigned on Progression
+                     </span>
+                   )}
+                 </div>
+                 <p className="text-xs text-amber-200/90 mt-1">
+                   <span className="font-semibold text-white">{draftInfo.client || 'Draft Client'}</span> &bull; {draftInfo.category} &bull; {draftInfo.docsCount} document(s) attached {draftInfo.updatedAt ? `&bull; Auto-saved at ${draftInfo.updatedAt}` : ''}
+                 </p>
+               </div>
+             </div>
+
+             {/* Action Buttons */}
+             <div className="flex items-center gap-2.5 shrink-0 self-end md:self-auto">
+               <button
+                 onClick={handleResumeDraft}
+                 className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 shadow-lg shadow-brand-600/30 transition-all hover:scale-105 active:scale-95"
+                 title="Resume case registration from where you left off"
+               >
+                 <Play size={14} className="fill-current" />
+                 <span>Continue Registration</span>
+               </button>
+               <button
+                 onClick={() => setShowDiscardModal(true)}
+                 className="bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-all hover:text-white"
+                 title="Discard this incomplete draft"
+               >
+                 <Trash2 size={14} />
+                 <span>Discard Draft</span>
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+
+       {/* Toolbar */}
+       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+         <div className="flex flex-wrap gap-2 items-center">
+           <button onClick={handleStartRegistration} className="bg-brand-600 hover:bg-brand-500 text-white px-5 py-2.5 rounded-lg flex items-center gap-2 font-medium shadow-lg shadow-brand-600/30 transition-all hover:scale-105">
+             <Upload size={18} /> New Case Registration
+           </button>
+           <select 
+              value={mockUserRole} 
+              onChange={(e) => setMockUserRole(e.target.value as UserRole)}
+              className="bg-slate-800 text-white border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none"
+              title="Mock User Role (For Testing)"
+           >
+              <option value={UserRole.ADMIN}>Admin Role</option>
+              <option value={UserRole.CLIENT}>Client Role</option>
+              <option value={UserRole.OPERATIONS_MANAGER}>Operations Manager</option>
+              <option value={UserRole.FINANCE_MANAGER}>Finance Manager</option>
+           </select>
+           <button onClick={() => setShowPortModal(true)} className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-colors">
+             <Anchor size={18} className="text-brand-400" /> Add Port
+           </button>
+           <button onClick={() => setShowFilterModal(true)} className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-colors">
+             <ListFilter size={18} className="text-brand-400" /> View List / Reports
+           </button>
+           <button 
+             onClick={() => setShowCustomsGuideModal(true)} 
+             className="bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 px-3.5 py-2.5 rounded-lg flex items-center gap-2 font-medium text-xs sm:text-sm transition-all"
+             title="Pakistan Customs Act, Rules & Statutory Compliance Guide"
+           >
+             <FileCheck size={17} className="text-amber-400" />
+             <span>Customs Rules & Act Guide</span>
+           </button>
+         </div>
+         <div className="flex gap-2 w-full md:w-auto">
+            <div className="relative flex-1 md:w-64">
+              <Search className="absolute left-3 top-2.5 text-gray-500" size={18} />
+              <input type="text" placeholder="Search Case / BL / Container" className="w-full glass-input rounded-lg pl-10 pr-4 py-2.5 outline-none text-sm text-white" />
+            </div>
+         </div>
+       </div>
+
+        {/* Active Filter Indicators */}
+        <div className="flex flex-wrap gap-2">
+            {activeDateFilter && (
+                <div className="flex items-center gap-2 bg-brand-500/10 border border-brand-500/20 px-3 py-1.5 rounded-lg w-fit">
+                    <span className="text-xs text-brand-300">Date Filter: {activeDateFilter.start} to {activeDateFilter.end}</span>
+                    <button onClick={() => setActiveDateFilter(null)} className="text-gray-400 hover:text-white"><X size={14} /></button>
+                </div>
+            )}
+            {statusFilter && (
+                <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/20 px-3 py-1.5 rounded-lg w-fit animate-in fade-in">
+                    <span className="text-xs text-yellow-300">Status: {statusFilter}</span>
+                    <button onClick={clearStatusFilter} className="text-gray-400 hover:text-white"><X size={14} /></button>
+                </div>
+            )}
+        </div>
+
+        {/* Workflow & Incident Vault Filtering Tabs */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowTab('all')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
+              activeWorkflowTab === 'all'
+                ? 'bg-brand-600 text-white shadow-md shadow-brand-600/20'
+                : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
+            }`}
+          >
+            <span>All Active Cases</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-black/30 text-[10px] font-mono">
+              {cases.length - incidentCasesCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowTab('in_progress')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
+              activeWorkflowTab === 'in_progress'
+                ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
+                : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
+            }`}
+          >
+            <span>In Progress (8 Steps)</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-black/30 text-[10px] font-mono">
+              {inProgressCasesCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowTab('completed')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
+              activeWorkflowTab === 'completed'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
+            }`}
+          >
+            <span>Completed Dossiers</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-black/30 text-[10px] font-mono">
+              {completedCasesCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveWorkflowTab('incident_vault')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+              activeWorkflowTab === 'incident_vault'
+                ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
+                : incidentCasesCount > 0
+                ? 'bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 animate-pulse'
+                : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/5'
+            }`}
+          >
+            <AlertTriangle size={14} className={incidentCasesCount > 0 ? 'text-rose-400' : 'text-gray-400'} />
+            <span>Incident / Disputed Vault</span>
+            <span className="px-1.5 py-0.5 rounded-md bg-black/30 text-[10px] font-mono">
+              {incidentCasesCount}
+            </span>
+          </button>
+        </div>
+
+        {/* If in Incident Vault, show emergency banner */}
+        {activeWorkflowTab === 'incident_vault' && (
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fade-in">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={22} className="text-rose-400 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="font-bold text-white text-sm">Incident & Disputed Exception Vault</h4>
+                <p className="text-gray-300 text-xs mt-0.5">
+                  These cases experienced en-route stoppages, breakdowns, customs holds, or accidents. Normal workflow execution is halted until resolved.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+       {/* Case List - Touch-Optimized for Smooth Vertical Scrolling */}
+       <div className="glass-card rounded-2xl overflow-hidden">
+         {/* Mobile View: High Density, Compact Typography, Zero Horizontal Scroll */}
+         <div className="block sm:hidden divide-y divide-white/10 touch-pan-y">
+           {filteredCases.length > 0 ? (
+             filteredCases.map(c => (
+               <div 
+                 key={c.id} 
+                 className="p-3 hover:bg-white/5 active:bg-white/10 transition-colors cursor-pointer space-y-1.5"
+                 onClick={() => { setSelectedCase(c); setView('details'); }}
+               >
+                 {/* Top Row: Case No, Status & Date */}
+                 <div className="flex items-center justify-between gap-2">
+                   <div className="flex items-center gap-2 min-w-0">
+                     <span className="font-mono font-bold text-xs text-brand-400 truncate">{c.caseNo}</span>
+                     <span className="text-[10px] text-gray-400 shrink-0">{c.createdAt}</span>
+                   </div>
+                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border border-white/10 shrink-0 ${
+                     c.status === CaseStatus.COMPLETED ? 'bg-green-500/20 text-green-400' : 
+                     c.status === CaseStatus.IN_TRANSIT ? 'bg-blue-500/20 text-blue-400' : 'bg-yellow-500/20 text-yellow-400'
+                   }`}>
+                     {c.status}
+                   </span>
+                 </div>
+
+                 {/* Middle Row: Client & Category */}
+                 <div className="flex items-center justify-between gap-2">
+                   <p className="font-semibold text-white text-xs truncate">{c.clientName}</p>
+                   <span className="text-[10px] text-brand-300 bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/20 shrink-0">
+                     {c.category}
+                   </span>
+                 </div>
+
+                 {/* Bottom Row: Route (POL -> POD) & View Button */}
+                 <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px]">
+                   <span className="font-mono text-gray-300 truncate">
+                     {c.pol && c.pod ? `${c.pol} → ${c.pod}` : 'Customs Clearance'}
+                   </span>
+                   <span className="text-brand-400 flex items-center gap-1 font-medium text-[11px] shrink-0">
+                     <Eye size={12} />
+                     <span>Details</span>
+                   </span>
+                 </div>
+               </div>
+             ))
+           ) : (
+             <div className="p-8 text-center text-gray-400 text-xs">
+               No cases found matching the criteria.
+             </div>
+           )}
+         </div>
+
+         {/* Desktop View: Full Table */}
+         <div className="hidden sm:block overflow-x-auto custom-scrollbar touch-pan-y">
+           <table className="w-full text-left text-sm text-gray-200 min-w-[1000px]">
+             <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-300 border-b border-white/5">
+               <tr>
+                 <th className="p-4">Case No</th>
+                 <th className="p-4">Client</th>
+                 <th className="p-4">Category</th>
+                 <th className="p-4">Route</th>
+                 <th className="p-4">Date</th>
+                 <th className="p-4">Status</th>
+                 <th className="p-4 text-center">Action</th>
+               </tr>
+             </thead>
+             <tbody className="divide-y divide-white/5">
+               {filteredCases.length > 0 ? (
+                 filteredCases.map(c => (
+                   <tr key={c.id} className="hover:bg-white/5 transition-colors cursor-pointer group" onClick={() => { setSelectedCase(c); setView('details'); }}>
+                     <td className="p-4 font-mono font-bold text-white group-hover:text-brand-400 transition-colors">{c.caseNo}</td>
+                     <td className="p-4 font-medium text-white">{c.clientName}</td>
+                     <td className="p-4 text-gray-200">{c.category}</td>
+                     <td className="p-4 text-xs font-mono text-gray-300">
+                        {c.pol && c.pod ? `${c.pol} → ${c.pod}` : '-'}
+                     </td>
+                     <td className="p-4 text-gray-300">
+                          {c.createdAt}
+                     </td>
+                     <td className="p-4">
+                        <span className={`px-2 py-1 rounded text-xs font-medium border border-white/10
+                          ${c.status === CaseStatus.COMPLETED ? 'bg-green-500/20 text-green-400' : 
+                            c.status === CaseStatus.IN_TRANSIT ? 'bg-blue-500/20 text-blue-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                           {c.status}
+                        </span>
+                     </td>
+                     <td className="p-4 text-center">
+                       <button className="p-2 hover:bg-white/10 rounded-full text-brand-400 transition-colors">
+                         <Eye size={18} />
+                       </button>
+                     </td>
+                   </tr>
+                 ))
+               ) : (
+                  <tr>
+                      <td colSpan={7} className="p-8 text-center text-gray-400">
+                          No cases found matching the criteria.
+                      </td>
+                  </tr>
+               )}
+             </tbody>
+           </table>
+         </div>
+       </div>
+
+       {/* Add Port Modal */}
+       {showPortModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="glass-card p-6 rounded-2xl w-full max-w-sm border border-white/10">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2"><Anchor size={20} className="text-brand-400"/> Add New Port</h3>
+                    <button onClick={() => setShowPortModal(false)} className="text-gray-400 hover:text-white"><X size={20}/></button>
+                </div>
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Port Name</label>
+                        <input 
+                            type="text" 
+                            placeholder="e.g. Gwadar Deep Sea Port" 
+                            value={newPortName}
+                            onChange={(e) => setNewPortName(e.target.value)}
+                            className="w-full glass-input rounded-lg p-3 outline-none text-white"
+                            autoFocus
+                        />
+                    </div>
+                    <button 
+                        onClick={handleAddPort}
+                        className="w-full bg-brand-600 hover:bg-brand-500 text-white py-2 rounded-lg font-medium shadow-lg shadow-brand-600/20"
+                    >
+                        Add Port
+                    </button>
+                </div>
+            </div>
+        </div>
+       )}
+
+       {/* View List / Filter Modal */}
+       {showFilterModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="glass-card p-6 rounded-2xl w-full max-w-sm border border-white/10">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2"><ListFilter size={20} className="text-brand-400"/> Filter Case List</h3>
+                    <button onClick={() => setShowFilterModal(false)} className="text-gray-400 hover:text-white"><X size={20}/></button>
+                </div>
+                <div className="space-y-4">
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">Start Date</label>
+                        <input 
+                            type="date" 
+                            value={filterDates.start}
+                            onChange={(e) => setFilterDates({...filterDates, start: e.target.value})}
+                            className="w-full glass-input rounded-lg p-3 outline-none text-white"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs text-gray-400 block mb-1">End Date</label>
+                        <input 
+                            type="date" 
+                            value={filterDates.end}
+                            onChange={(e) => setFilterDates({...filterDates, end: e.target.value})}
+                            className="w-full glass-input rounded-lg p-3 outline-none text-white"
+                        />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                        <button 
+                            onClick={handleSearchRecords}
+                            className="w-full bg-white/10 hover:bg-white/20 text-white py-2 rounded-lg font-medium border border-white/10 flex items-center justify-center gap-1 text-xs"
+                        >
+                            <Search size={14} /> Search Records
+                        </button>
+                        <button 
+                            onClick={handleOpenReport}
+                            className="w-full bg-brand-600 hover:bg-brand-500 text-white py-2 rounded-lg font-medium shadow-lg shadow-brand-600/20 flex items-center justify-center gap-1 text-xs"
+                        >
+                            <Eye size={14} /> View Full List
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+       )}
+
+       {/* Full Screen Report Modal */}
+       {showReportModal && renderReportModal()}
+
+       {/* Confirm Discard Incomplete Draft Modal */}
+       {showDiscardModal && (
+         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+           <div className="glass-card p-6 rounded-2xl w-full max-w-md border border-red-500/30 shadow-2xl space-y-4">
+             <div className="flex items-center gap-3 text-red-400">
+               <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center shrink-0">
+                 <Trash2 size={20} />
+               </div>
+               <div>
+                 <h3 className="text-lg font-bold text-white">Discard Incomplete Case?</h3>
+                 <p className="text-xs text-gray-400">This action will permanently delete the draft</p>
+               </div>
+             </div>
+
+             <p className="text-sm text-gray-300 leading-relaxed">
+               Are you sure you want to discard this incomplete case draft? All uploaded documents and entered details will be cleared permanently.
+             </p>
+
+             {draftInfo && (
+               <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 text-xs space-y-1.5 text-gray-300">
+                 <div className="flex justify-between">
+                   <span className="text-gray-400">Client:</span>
+                   <span className="font-semibold text-white">{draftInfo.client || 'None'}</span>
+                 </div>
+                 <div className="flex justify-between">
+                   <span className="text-gray-400">Category:</span>
+                   <span className="text-white">{draftInfo.category}</span>
+                 </div>
+                 <div className="flex justify-between">
+                   <span className="text-gray-400">Progress:</span>
+                   <span className="text-amber-300 font-medium">Step {draftInfo.step} of 4 ({draftInfo.stepName})</span>
+                 </div>
+                 {draftInfo.caseNo && (
+                   <div className="flex justify-between">
+                     <span className="text-gray-400">Reserved Serial:</span>
+                     <span className="text-cyan-300 font-mono">{draftInfo.caseNo}</span>
+                   </div>
+                 )}
+               </div>
+             )}
+
+             <div className="grid grid-cols-2 gap-3 pt-2">
+               <button
+                 type="button"
+                 onClick={() => setShowDiscardModal(false)}
+                 className="bg-white/10 hover:bg-white/15 text-white py-2.5 rounded-xl font-medium text-sm transition-colors"
+               >
+                 Cancel
+               </button>
+               <button
+                 type="button"
+                 onClick={handleDiscardDraft}
+                 className="bg-red-600 hover:bg-red-500 text-white py-2.5 rounded-xl font-semibold text-sm transition-all shadow-lg shadow-red-600/30"
+               >
+                 Yes, Discard Draft
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+
+       {/* Existing Incomplete Draft Prompt (When clicking New Registration) */}
+       {showStartNewDraftPrompt && (
+         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+           <div className="glass-card p-6 rounded-2xl w-full max-w-md border border-amber-500/30 shadow-2xl space-y-4">
+             <div className="flex items-center gap-3 text-amber-400">
+               <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
+                 <AlertCircle size={20} />
+               </div>
+               <div>
+                 <h3 className="text-lg font-bold text-white">Incomplete Draft Found</h3>
+                 <p className="text-xs text-gray-400">You already have a case registration in progress</p>
+               </div>
+             </div>
+
+             <p className="text-sm text-gray-300 leading-relaxed">
+               An incomplete registration draft {draftInfo?.client ? `for "${draftInfo.client}"` : ''} is currently paused at Step {draftInfo?.step || 1}. Would you like to resume this draft or discard it and start fresh?
+             </p>
+
+             <div className="flex flex-col gap-2.5 pt-2">
+               <button
+                 type="button"
+                 onClick={() => {
+                   setShowStartNewDraftPrompt(false);
+                   handleResumeDraft();
+                 }}
+                 className="w-full bg-brand-600 hover:bg-brand-500 text-white py-2.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-brand-600/30 transition-all"
+               >
+                 <Play size={15} className="fill-current" />
+                 <span>Resume Incomplete Draft</span>
+               </button>
+               <button
+                 type="button"
+                 onClick={() => {
+                   setShowStartNewDraftPrompt(false);
+                   startFreshRegistration();
+                 }}
+                 className="w-full bg-white/10 hover:bg-white/15 text-gray-300 hover:text-white py-2.5 rounded-xl font-medium text-sm transition-colors"
+               >
+                 Discard & Start Fresh Case
+               </button>
+               <button
+                 type="button"
+                 onClick={() => setShowStartNewDraftPrompt(false)}
+                 className="w-full py-2 text-xs text-gray-400 hover:text-white transition-colors"
+               >
+                 Cancel
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+
+       {/* Draft notification toast */}
+       {draftToast && (
+         <div className="fixed bottom-6 right-6 z-50 bg-slate-900/95 border border-white/20 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4">
+           <span className="text-sm font-medium">{draftToast}</span>
+         </div>
+       )}
+
+    </div>
+  );
+
+  const renderCaseDetails = () => {
+    // Helper to render input or text based on edit mode
+    const Field = ({ label, value, onChange }: { label: string, value: any, onChange?: (val: string) => void }) => {
+       if (isEditingCase && onChange) {
+          return (
+             <div className="mb-3">
+                <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">{label}</label>
+                <input 
+                   type="text" 
+                   value={value || ''} 
+                   onChange={(e) => onChange(e.target.value)} 
+                   className="w-full border-b border-brand-500 bg-brand-500/10 text-white px-1 py-0.5 focus:outline-none text-sm font-medium"
+                />
+             </div>
+          );
+       }
+       return (
+         <div className="mb-3">
+             <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+             <p className="text-sm font-medium text-white border-b border-transparent">{value || '-'}</p>
+         </div>
+       );
+    };
+
+    const targetCase = isEditingCase ? editedCase : selectedCase;
+
+    if (!targetCase) {
+      return (
+        <div className="glass-card rounded-2xl p-8 text-center border border-white/10 space-y-4 max-w-lg mx-auto my-12 animate-fade-in">
+          <div className="w-14 h-14 bg-brand-500/10 border border-brand-500/20 text-brand-400 rounded-2xl flex items-center justify-center mx-auto">
+            <Loader2 className="animate-spin" size={28} />
+          </div>
+          <h3 className="text-lg font-bold text-white">Restoring Case Details</h3>
+          <p className="text-xs text-gray-300">Synchronizing your case documents and shipment files...</p>
+          <div className="pt-2">
+            <button 
+              type="button"
+              onClick={() => {
+                safeAppStorage.removeItem('dpl_selected_case');
+                safeAppStorage.removeItem('dpl_selected_case_id');
+                setView('list');
+              }}
+              className="text-xs bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-xl transition-colors font-medium shadow-md shadow-brand-600/30"
+            >
+              Return to Cases List
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Helper to get image source from File or MockDocument
+    const getDocSource = (doc: any) => {
+      if (!doc) return '';
+      if (doc.url) {
+        return doc.url;
+      }
+      try {
+        if (doc instanceof File || doc instanceof Blob || doc instanceof MediaSource) {
+          return URL.createObjectURL(doc);
+        }
+      } catch (err) {
+        console.error("Failed to create object URL for doc", doc, err);
+      }
+      return '';
+    };
+
+    return (
+      <div className="space-y-6 animate-fade-in printable-content">
+         <div className="flex flex-wrap justify-between items-center gap-3 mb-4 no-print">
+            <button onClick={() => setView('list')} className="text-gray-300 hover:text-white flex items-center gap-2 font-medium text-xs sm:text-sm">
+                <ArrowLeft size={16} /> Back to List
+            </button>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                {isEditingCase ? (
+                   <>
+                      <button onClick={handleEditCaseToggle} className="text-gray-300 hover:text-white px-3 py-1.5 text-xs sm:text-sm">Cancel</button>
+                      <button onClick={handleSaveEditedCase} className="bg-green-600 hover:bg-green-500 text-white px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm shadow-lg font-medium">
+                         <Save size={15} /> Save Changes
+                      </button>
+                   </>
+                ) : (
+                   <>
+                      {targetCase?.status === CaseStatus.SHIPPING_LINE_DO && mockUserRole !== UserRole.CLIENT && (
+                          <button onClick={handleApproveCase} className="bg-green-600 hover:bg-green-500 text-white px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm shadow-lg shadow-green-600/20 animate-pulse font-medium">
+                              <CheckCircle size={15} /> Approve & Process
+                          </button>
+                      )}
+                      
+                      {mockUserRole === UserRole.ADMIN && (
+                        <>
+                          <button onClick={handleEditCaseToggle} className="bg-brand-600/20 hover:bg-brand-600/30 text-brand-400 border border-brand-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-medium">
+                              <Edit size={15} /> Edit Case
+                          </button>
+                          <button onClick={() => {
+                             if(window.confirm("Are you sure you want to delete this case?")) {
+                                if (targetCase?.id) {
+                                  deleteCaseFromFirestore(targetCase.id).catch(() => {});
+                                }
+                                setCases(cases.filter(c => c.id !== targetCase?.id));
+                                setView('list');
+                             }
+                          }} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-medium">
+                              <Trash2 size={15} /> Delete
+                          </button>
+                        </>
+                      )}
+                      <button 
+                        onClick={() => setShowDownloadDocsModal(true)} 
+                        className="bg-brand-600 hover:bg-brand-500 active:scale-95 text-white px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm shadow-lg shadow-brand-600/20 transition-all font-medium"
+                        title="Download Documents (Case Details, Invoice, Attachments, All)"
+                      >
+                        <Download size={15} />
+                        <span>Download Documents</span>
+                      </button>
+                   </>
+                )}
+            </div>
+         </div>
+
+         {/* Mobile-Friendly PDF Download Alert / Notification Banner */}
+         {(isDownloadingPdf || pdfDownloadSuccess || pdfDownloadError) && (
+           <div className="mb-4 print:hidden animate-fade-in">
+             {isDownloadingPdf && (
+               <div className="p-3.5 bg-brand-500/15 border border-brand-500/40 rounded-xl flex items-center gap-3 text-brand-300 text-xs sm:text-sm shadow-lg">
+                 <Loader2 size={18} className="animate-spin text-brand-400 shrink-0" />
+                 <span>Generating & downloading PDF...</span>
+               </div>
+             )}
+             {pdfDownloadSuccess && (
+               <div className="p-4 bg-emerald-950/80 border border-emerald-500/40 rounded-xl space-y-2 shadow-2xl backdrop-blur-md">
+                 <div className="flex flex-wrap items-center justify-between gap-2">
+                   <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
+                     <CheckCircle2 size={18} className="shrink-0" />
+                     <span>PDF Ready: {pdfDownloadSuccess}</span>
+                   </div>
+                   <button
+                     type="button"
+                     onClick={() => setPdfDownloadSuccess(null)}
+                     className="text-xs text-gray-400 hover:text-white px-2 py-1"
+                   >
+                     ✕ Close
+                   </button>
+                 </div>
+                 <p className="text-xs text-gray-300">
+                   If the file did not download automatically, click the button below:
+                 </p>
+                 <div className="flex flex-wrap items-center gap-3 pt-1">
+                   {directDownloadUrl && (
+                     <>
+                       <a
+                         href={directDownloadUrl}
+                         download={directDownloadFilename}
+                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow active:scale-95 transition-all"
+                       >
+                         <Download size={14} /> Download File
+                       </a>
+                       <button
+                         type="button"
+                         onClick={() => setIsPdfViewerOpen(true)}
+                         className="bg-white/10 hover:bg-white/20 text-white font-medium text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 border border-white/20 active:scale-95 transition-all"
+                       >
+                         <Eye size={14} /> View PDF
+                       </button>
+                       {typeof navigator !== 'undefined' && 'share' in navigator && (
+                         <button
+                           type="button"
+                           onClick={() => sharePdfFile(directDownloadUrl, directDownloadFilename, targetCase?.caseNo)}
+                           className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow active:scale-95 transition-all"
+                         >
+                           <Share2 size={14} /> Save to Mobile
+                         </button>
+                       )}
+                     </>
+                   )}
+                 </div>
+               </div>
+             )}
+             {pdfDownloadError && (
+               <div className="p-3.5 bg-red-500/20 border border-red-500/40 rounded-xl flex items-center justify-between gap-2 text-red-300 text-xs sm:text-sm">
+                 <div className="flex items-center gap-2">
+                   <AlertCircle size={18} className="text-red-400 shrink-0" />
+                   <span>{pdfDownloadError}</span>
+                 </div>
+                 <button
+                   type="button"
+                   onClick={() => setPdfDownloadError(null)}
+                   className="text-xs text-gray-400 hover:text-white px-2 py-1"
+                 >
+                   ✕
+                 </button>
+               </div>
+             )}
+           </div>
+         )}
+  
+         <div id="printable-area" className="glass-card rounded-2xl overflow-hidden border border-white/10 print:border-none print:shadow-none">
+            {/* Official Corporate Header for Print (Visible only in Print) */}
+            <div className="hidden print:block p-6 pb-4 border-b-2 border-black bg-white">
+               <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-4">
+                     <Logo className="h-16 w-auto max-w-[210px] object-contain shrink-0" customSrc={activeLogo} />
+                     <div className="flex flex-col justify-center">
+                        <h1 className="text-2xl font-bold uppercase tracking-wider text-black leading-tight">{companyName}</h1>
+                        <p className="text-xs text-gray-700 font-medium">{subtitle || "Customs Clearance, Bonded Carrier & Freight Terminal Services"}</p>
+                        <p className="text-[11px] text-gray-600 mt-0.5">{branding.address} • Tel: {branding.phone} • Cell: {branding.cell} • Email: {branding.email}</p>
+                        <p className="text-xs font-bold text-black mt-1 uppercase tracking-wide">CASE DETAILS</p>
+                     </div>
+                  </div>
+                  <div className="text-right text-xs text-gray-700 shrink-0">
+                     <p className="font-mono font-bold text-sm text-black">{targetCase?.caseNo}</p>
+                     <p>Date: {targetCase?.createdAt || new Date().toLocaleDateString()}</p>
+                     <p>Status: <span className="font-bold text-black">{targetCase?.status}</span></p>
+                  </div>
+               </div>
+            </div>
+
+            {/* Header / Title Section */}
+            <div className="bg-black/20 p-6 border-b border-white/10 print:bg-gray-100 print:border-b print:border-gray-300">
+               <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-4">
+                     <div className="flex flex-col justify-center">
+                        <h2 className="text-2xl sm:text-3xl font-bold text-white print:text-black leading-tight mb-1">{targetCase?.caseNo}</h2>
+                        <p className="text-brand-300 print:text-black text-base sm:text-lg font-semibold">{targetCase?.clientName}</p>
+                     </div>
+                  </div>
+                  <div className="text-right">
+                     <span className={`inline-block px-3 py-1 rounded text-sm font-medium border border-white/10 mb-2 print:border-black
+                        ${targetCase?.status === CaseStatus.COMPLETED ? 'bg-green-500/20 text-green-400 print:bg-transparent print:text-black' : 
+                          'bg-blue-500/20 text-blue-400 print:bg-transparent print:text-black'}`}>
+                        {targetCase?.status}
+                     </span>
+                     <p className="text-gray-300 text-sm print:text-black">
+                         {targetCase?.createdAt}
+                     </p>
+                  </div>
+               </div>
+            </div>
+                       <div className={`p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 print:grid-cols-2 print:gap-4 ${printOptions.onlyInvoice ? 'print:hidden' : ''}`}>
+               {/* Client & Route Info */}
+               <div className="bg-white/5 rounded-xl p-5 border border-white/5 print:bg-transparent print:border print:border-gray-300">
+                  <h3 className="text-brand-300 print:text-black font-bold uppercase text-xs mb-4 border-b border-white/10 pb-2 print:border-gray-300">Case Info</h3>
+                  <Field label="Category" value={targetCase?.category} onChange={(v) => setEditedCase({...targetCase, category: v})} />
+                  <Field label="Port of Loading" value={targetCase?.pol} onChange={(v) => setEditedCase({...targetCase, pol: v})} />
+                  <Field label="Port of Destination" value={targetCase?.pod} onChange={(v) => setEditedCase({...targetCase, pod: v})} />
+               </div>
+
+               {/* Shipping Details */}
+               <div className="bg-white/5 rounded-xl p-5 border border-white/5 print:bg-transparent print:border print:border-gray-300">
+                  <h3 className="text-brand-300 print:text-black font-bold uppercase text-xs mb-4 border-b border-white/10 pb-2 print:border-gray-300">Shipping Details</h3>
+                   <Field 
+                     label="BL Number" 
+                     value={targetCase?.extractedData?.blNumber} 
+                     onChange={(v) => setEditedCase({...targetCase, extractedData: {...targetCase.extractedData, blNumber: v}})} 
+                  />
+                   <Field 
+                     label="Vessel Name" 
+                     value={targetCase?.extractedData?.vesselName} 
+                     onChange={(v) => setEditedCase({...targetCase, extractedData: {...targetCase.extractedData, vesselName: v}})} 
+                  />
+                   <Field 
+                     label="Arrival Date" 
+                     value={targetCase?.extractedData?.arrivalDate} 
+                     onChange={(v) => setEditedCase({...targetCase, extractedData: {...targetCase.extractedData, arrivalDate: v}})} 
+                  />
+               </div>
+
+               {/* Cargo Specs */}
+               <div className="bg-white/5 rounded-xl p-5 border border-white/5 print:bg-transparent print:border print:border-gray-300">
+                  <h3 className="text-brand-300 print:text-black font-bold uppercase text-xs mb-4 border-b border-white/10 pb-2 print:border-gray-300">Cargo Specs</h3>
+                  <Field 
+                     label="Shipper" 
+                     value={targetCase?.extractedData?.shipperName} 
+                     onChange={(v) => setEditedCase({...targetCase, extractedData: {...targetCase.extractedData, shipperName: v}})} 
+                  />
+                  <Field 
+                     label="Consignee" 
+                     value={targetCase?.extractedData?.consigneeName} 
+                     onChange={(v) => setEditedCase({...targetCase, extractedData: {...targetCase.extractedData, consigneeName: v}})} 
+                  />
+                  <Field 
+                     label="Total Weight" 
+                     value={targetCase?.extractedData?.totalWeight ? `${targetCase?.extractedData?.totalWeight} Kg` : ''} 
+                     onChange={(v) => setEditedCase({...targetCase, extractedData: {...targetCase.extractedData, totalWeight: parseFloat(v) || 0}})} 
+                  />
+               </div>
+            </div>
+
+            {/* Containers List */}
+            <div className={`p-6 border-t border-white/10 print:border-gray-300 ${printOptions.onlyInvoice ? 'print:hidden' : ''}`}>
+                <div className="flex justify-between items-center mb-4">
+                   <h3 className="text-white print:text-black font-bold text-lg">Containers</h3>
+                   {isEditingCase && (
+                       <button className="text-xs bg-brand-600 text-white px-2 py-1 rounded">Add Container</button>
+                   )}
+                </div>
+                {/* Mobile View (Cards) - Optimized for vertical thumb scrolling */}
+                <div className="block sm:hidden divide-y divide-white/10 touch-pan-y">
+                    {targetCase?.containers?.length > 0 ? (
+                        targetCase.containers.map((c: any, idx: number) => (
+                            <div key={idx} className="py-3 space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="font-mono font-bold text-white text-sm">
+                                        {isEditingCase ? (
+                                            <input 
+                                                className="bg-transparent border-b border-brand-400 w-36 text-white font-mono" 
+                                                value={c.number} 
+                                                onChange={(e) => {
+                                                    const newContainers = [...targetCase.containers];
+                                                    newContainers[idx].number = e.target.value;
+                                                    setEditedCase({...targetCase, containers: newContainers});
+                                                }} 
+                                            />
+                                        ) : c.number}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                                        {c.status || 'Active'}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-xs text-gray-300 bg-white/5 p-2 rounded-lg">
+                                    <div>
+                                        <span className="text-[10px] text-gray-500 uppercase block">Size</span>
+                                        <span className="font-medium text-white">{c.size || '20ft'}</span>
+                                    </div>
+                                    <div>
+                                        <span className="text-[10px] text-gray-500 uppercase block">Weight</span>
+                                        <span className="font-medium text-white">{c.weight ? `${c.weight} Kg` : '-'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ))
+                    ) : (
+                        <div className="p-4 text-center text-gray-400 italic text-xs">No containers assigned.</div>
+                    )}
+                </div>
+
+                {/* Desktop View (Table) */}
+                <div className="hidden sm:block overflow-x-auto touch-pan-y custom-scrollbar">
+                    <table className="w-full text-left text-sm text-gray-200 print:text-black">
+                        <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-300 print:text-black border-b border-white/5 print:border-gray-300 print:bg-gray-100">
+                            <tr>
+                                <th className="p-3">Container No</th>
+                                <th className="p-3">Size</th>
+                                <th className="p-3">Weight (Kg)</th>
+                                <th className="p-3">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 print:divide-gray-300">
+                            {targetCase?.containers?.length > 0 ? (
+                                targetCase.containers.map((c: any, idx: number) => (
+                                    <tr key={idx}>
+                                        <td className="p-3 font-mono font-medium text-white print:text-black">
+                                            {isEditingCase ? (
+                                                <input className="bg-transparent border-b border-white/20 w-32 text-white" value={c.number} onChange={(e) => {
+                                                    const newContainers = [...targetCase.containers];
+                                                    newContainers[idx].number = e.target.value;
+                                                    setEditedCase({...targetCase, containers: newContainers});
+                                                }} />
+                                            ) : c.number}
+                                        </td>
+                                        <td className="p-3 text-white print:text-black">{c.size}</td>
+                                        <td className="p-3 text-white print:text-black">{c.weight}</td>
+                                        <td className="p-3 text-white print:text-black">{c.status}</td>
+                                    </tr>
+                                ))
+                            ) : (
+                                <tr>
+                                    <td colSpan={4} className="p-4 text-center text-gray-400 italic">No containers assigned.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Billing Details (On-Screen Interactive Card) */}
+            <div className="p-6 border-t border-white/10 no-print space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                    <FileText className="text-amber-400" size={20} />
+                    <span>Billing Details</span>
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewChargeDesc('');
+                      setNewChargeAmount('');
+                      setShowAddChargeModal(true);
+                    }}
+                    className="bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium transition-all hover:scale-105"
+                    title="Add additional charge or fee"
+                  >
+                    <Plus size={14} />
+                    <span>Add Charge</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Charges Breakdown Table */}
+              <div className="overflow-x-auto rounded-xl border border-white/10 bg-slate-900/60">
+                <table className="w-full text-left text-sm text-gray-200">
+                  <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-300 border-b border-white/10">
+                    <tr>
+                      <th className="p-3 w-10 text-center">#</th>
+                      <th className="p-3">Service Description</th>
+                      <th className="p-3 text-right">Amount (PKR)</th>
+                      <th className="p-3 text-center">Payment Receipt</th>
+                      <th className="p-3 text-center w-14">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {((targetCase.charges && targetCase.charges.length > 0)
+                      ? targetCase.charges
+                      : getStandardChargesForCategory(targetCase.category, targetCase.containers?.length || 1)
+                    ).map((charge: any, idx: number) => (
+                      <tr key={idx} className="hover:bg-white/5 transition-colors group">
+                        <td className="p-3 text-gray-400 text-xs text-center">{idx + 1}</td>
+                        <td className="p-3 text-white font-medium text-xs sm:text-sm">
+                          {charge.description}
+                        </td>
+                        <td className="p-3 text-right font-mono font-semibold text-emerald-400 text-xs sm:text-sm">
+                          PKR {Number(charge.amount || 0).toLocaleString()}
+                        </td>
+                        <td className="p-3 text-center">
+                          {charge.receiptUrl ? (
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setLightboxImage(charge.receiptUrl)}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-medium flex items-center gap-1 transition-colors"
+                                title="View Receipt"
+                              >
+                                <Eye size={12} />
+                                <span>View Receipt</span>
+                              </button>
+                              <a
+                                href={charge.receiptUrl}
+                                download={charge.receiptName || `Receipt_${(charge.description || 'charge').replace(/\s+/g, '_')}.png`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1.5 rounded-lg bg-brand-500/15 hover:bg-brand-500/25 text-brand-300 border border-brand-500/30 transition-colors"
+                                title="Download Receipt"
+                              >
+                                <Download size={13} />
+                              </a>
+                            </div>
+                          ) : (
+                            <label className="cursor-pointer inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed border-white/20 hover:border-brand-400 text-gray-400 hover:text-white text-xs transition-colors">
+                              <Upload size={12} />
+                              <span>+ Attach Receipt</span>
+                              <input
+                                type="file"
+                                accept="image/*,.pdf"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  try {
+                                    const proc = await compressAndPrepareFile(file);
+                                    const dataUrl = proc?.dataUrl || proc?.base64 || '';
+                                    const currentCharges = (targetCase.charges && targetCase.charges.length > 0)
+                                      ? [...targetCase.charges]
+                                      : [...getStandardChargesForCategory(targetCase.category, targetCase.containers?.length || 1)];
+                                    currentCharges[idx] = {
+                                      ...currentCharges[idx],
+                                      receiptUrl: dataUrl,
+                                      receiptName: file.name
+                                    };
+                                    const updatedCase = { ...targetCase, charges: currentCharges };
+                                    setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
+                                    setSelectedCase(updatedCase);
+                                    if (isEditingCase) setEditedCase(updatedCase);
+                                    updateCaseInFirestore(updatedCase).catch(e => console.warn("Attach receipt err:", e));
+                                  } catch (err) {
+                                    console.error("Failed to attach receipt:", err);
+                                  }
+                                }}
+                              />
+                            </label>
+                          )}
+                        </td>
+                        <td className="p-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const currentCharges = (targetCase.charges && targetCase.charges.length > 0)
+                                ? [...targetCase.charges]
+                                : [...getStandardChargesForCategory(targetCase.category, targetCase.containers?.length || 1)];
+                              const updatedCharges = currentCharges.filter((_, i) => i !== idx);
+                              const updatedCase = { ...targetCase, charges: updatedCharges };
+                              setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
+                              setSelectedCase(updatedCase);
+                              if (isEditingCase) setEditedCase(updatedCase);
+                              updateCaseInFirestore(updatedCase).catch(e => console.warn("Firestore charge delete err:", e));
+                            }}
+                            className="text-gray-500 hover:text-red-400 p-1 rounded transition-colors opacity-0 group-hover:opacity-100"
+                            title="Remove Charge"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="bg-white/5 font-bold border-t-2 border-white/10">
+                      <td colSpan={2} className="p-3 text-gray-300 uppercase text-xs">Total Amount Due:</td>
+                      <td className="p-3 text-right text-amber-400 font-mono text-base">
+                        PKR {((targetCase.charges && targetCase.charges.length > 0)
+                          ? targetCase.charges
+                          : getStandardChargesForCategory(targetCase.category, targetCase.containers?.length || 1)
+                        ).reduce((sum: number, c: any) => sum + (Number(c.amount) || 0), 0).toLocaleString()}
+                      </td>
+                      <td colSpan={2}></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Attached Documents Section (Print Only or Always Visible but optimized for print) */}
+            {targetCase?.documents && targetCase.documents.length > 0 && (
+                <div className={`p-6 border-t border-white/10 print:border-gray-300 break-before-page ${(!printOptions.withAttachments || printOptions.onlyInvoice) ? 'print:hidden' : ''}`}>
+                    <h3 className="text-white print:text-black font-bold text-lg mb-6">Attached Documents</h3>
+                    <div className="space-y-8">
+                        {targetCase.documents.map((doc: any, idx: number) => (
+                            <div key={idx} className="bg-white p-4 rounded-lg print:p-0 print:border-none">
+                                <div className="flex items-center justify-between mb-2">
+                                  <p className="text-black font-bold text-sm">{doc?.name || `Document ${idx + 1}`}</p>
+                                  {isEditingCase && (
+                                    <button 
+                                      type="button"
+                                      onClick={() => {
+                                        if (window.confirm("Are you sure you want to remove this document?")) {
+                                          const updatedDocs = targetCase.documents.filter((_: any, dIdx: number) => dIdx !== idx);
+                                          setEditedCase({ ...targetCase, documents: updatedDocs });
+                                        }
+                                      }}
+                                      className="text-red-600 hover:text-red-700 text-xs font-semibold flex items-center gap-1 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition"
+                                    >
+                                      <Trash2 size={13} /> Remove
+                                    </button>
+                                  )}
+                                </div>
+                                <div className="border border-gray-200 rounded overflow-hidden cursor-pointer" onClick={() => setLightboxImage(getDocSource(doc))}>
+                                     <img 
+                                        src={getDocSource(doc)} 
+                                        alt={doc?.name || `Document ${idx + 1}`} 
+                                        className="w-full h-auto object-contain max-h-[800px] mx-auto print:max-h-[235mm] print:w-auto hover:scale-[1.01] transition-transform document-scan"
+                                     />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+            
+            {/* Invoice Section */}
+            {(printOptions.withInvoice || printOptions.onlyInvoice) && targetCase?.charges && targetCase.charges.length > 0 && (
+                <div className="p-6 border-t border-white/10 print:border-gray-300 break-before-page hidden print:block">
+                    <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-6">
+                      <div className="flex items-center gap-4">
+                        <Logo className="h-14 sm:h-16 w-auto max-w-[210px] object-contain shrink-0" customSrc={activeLogo} />
+                        <div className="flex flex-col justify-center">
+                          <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-wider text-black leading-tight">{companyName}</h2>
+                          <p className="text-xs text-gray-700 font-medium">{subtitle || "Customs Clearance, Bonded Carrier & Freight Terminal Services"}</p>
+                          <p className="text-[11px] text-gray-600 mt-0.5">{branding.address} • Tel: {branding.phone} • Cell: {branding.cell} • Email: {branding.email}</p>
+                          <p className="text-xs font-bold text-black mt-1 uppercase tracking-wide">INVOICE</p>
+                        </div>
+                      </div>
+                      <div className="text-right text-xs text-gray-700 shrink-0">
+                        <p className="font-mono font-bold text-sm text-black">INV-{targetCase.caseNo}</p>
+                        <p>Date: {targetCase.createdAt || new Date().toLocaleDateString()}</p>
+                        <p>Client: <span className="font-semibold text-black">{targetCase.clientName}</span></p>
+                      </div>
+                    </div>
+
+                    <table className="w-full text-left text-sm text-gray-200 print:text-black mb-6 border border-gray-200">
+                        <thead className="bg-white/5 print:bg-gray-100 uppercase text-xs font-semibold print:text-black border-b border-gray-200">
+                            <tr>
+                                <th className="p-4 border-r border-gray-200">Description</th>
+                                <th className="p-4 text-right">Amount (PKR)</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                            {targetCase.charges.map((charge: any, idx: number) => (
+                                <tr key={idx}>
+                                    <td className="p-4 border-r border-gray-200">{charge.description}</td>
+                                    <td className="p-4 text-right font-medium font-mono">{charge.amount.toLocaleString()}</td>
+                                </tr>
+                            ))}
+                            <tr className="bg-white/5 print:bg-gray-50 border-t-2 border-gray-300">
+                                <td className="p-4 border-r border-gray-200 font-bold text-right uppercase">Total Amount Due:</td>
+                                <td className="p-4 text-right font-bold text-brand-500 font-mono text-lg">
+                                    PKR {targetCase.charges.reduce((sum: number, c: any) => sum + c.amount, 0).toLocaleString()}
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    {/* Authorized Stamp Block */}
+                    <div className="flex justify-end items-center pt-4 border-t border-gray-300 print-avoid-break">
+                        <div className="border-t border-dashed border-black pt-1 w-48 text-center mt-4">
+                            <p className="font-semibold text-black text-[11px]">Authorized Signatory</p>
+                            <p className="text-[10px] text-gray-600">Finance & Terminal Billing</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Print Footer */}
+            <div className="hidden print:block p-6 mt-8 border-t border-gray-300">
+                <div className="flex justify-between text-xs text-gray-500">
+                    <p>Generated by {companyName} • Secure Customs & Terminal System</p>
+                    <p>Printed: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}</p>
+                </div>
+            </div>
+         </div>
+  
+         {/* If Case is Fully Completed, show the Completed Case Dossier View */}
+         {targetCase?.status === CaseStatus.COMPLETED ? (
+           <CompletedCaseDossier
+             targetCase={targetCase}
+             customLogo={activeLogo}
+             userRole={mockUserRole}
+             onUpdateCase={(updated) => {
+               setCases(prev => prev.map(c => c.id === updated.id ? updated : c));
+               setSelectedCase(updated);
+               updateCaseInFirestore(updated).catch(e => console.warn("Firestore error:", e));
+             }}
+             onOpenDownloadAllModal={() => setShowDownloadDocsModal(true)}
+           />
+         ) : (
+           /* Workflow Visualization (Hidden on Print) - Dynamic Workflow Process */
+           <div className="glass-card p-6 rounded-2xl no-print">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                      <Layers className="text-brand-400" size={20} />
+                      <span>{getCategoryWorkflow(targetCase?.category).category} Workflow ({getCategoryWorkflow(targetCase?.category).totalSteps} Steps)</span>
+                    </h3>
+                    {targetCase?.subCategory && targetCase.subCategory !== 'Standard Container / General Cargo' && (
+                      <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        {targetCase.subCategory}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Tap any of the {getCategoryWorkflow(targetCase?.category).totalSteps} workflow steps to view details, update mandatory compliance fields, or advance the case.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-brand-300 bg-brand-500/10 border border-brand-500/20 px-2.5 py-1 rounded-full shrink-0">
+                    {targetCase?.status === CaseStatus.COMPLETED ? (
+                      <span className="text-emerald-300 font-bold">✓ Workflow Completed</span>
+                    ) : (
+                      `Step ${Math.min(getCategoryWorkflow(targetCase?.category).totalSteps, getWorkflowStepIndex(targetCase?.category, targetCase?.status as string) + 1)} of ${getCategoryWorkflow(targetCase?.category).totalSteps} Active`
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              {/* If Case has an Active Incident Stoppage */}
+              {(targetCase?.isIncidentVault || targetCase?.status === CaseStatus.INCIDENT_STOPPAGE) && (
+                <div className="mb-6 p-4 rounded-xl bg-rose-500/15 border border-rose-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle size={24} className="text-rose-400 shrink-0" />
+                    <div>
+                      <h4 className="font-bold text-rose-300 text-sm">Case Stoppage / Incident Active</h4>
+                      <p className="text-xs text-gray-300 mt-0.5">
+                        Reason: {targetCase?.incidentDetails?.reason || 'Route Stoppage'} | Location: {targetCase?.incidentDetails?.location || 'Unknown'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleResolveIncident(targetCase)}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 shrink-0"
+                  >
+                    Resolve & Resume Workflow
+                  </button>
+                </div>
+              )}
+
+              <div className="relative">
+                 <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-white/10"></div>
+                 {(() => {
+                   const categoryWorkflow = getCategoryWorkflow(targetCase?.category);
+                   const activeIndex = getWorkflowStepIndex(targetCase?.category, targetCase?.status as string);
+                   const isCaseCompleted = targetCase?.status === CaseStatus.COMPLETED;
+
+                   return categoryWorkflow.steps.map((stepConfig, index) => {
+                     const isCompleted = isCaseCompleted || index < activeIndex;
+                     const isCurrent = !isCaseCompleted && index === activeIndex;
+                     const isPending = !isCaseCompleted && index > activeIndex;
+                     const stepDetail = targetCase?.workflowDetails?.[stepConfig.id];
+
+                     return (
+                       <div 
+                         key={stepConfig.id} 
+                         onClick={() => handleOpenStepModal(stepConfig.id as any, index, targetCase)}
+                         className="relative flex gap-4 sm:gap-6 mb-6 last:mb-0 cursor-pointer group"
+                         title="Tap to update or view step details"
+                       >
+                          <div className={`w-12 h-12 rounded-full border-4 shrink-0 flex items-center justify-center z-10 font-bold text-sm transition-all group-hover:scale-110 shadow-md ${
+                             isCompleted ? 'bg-emerald-600 border-emerald-950 text-white shadow-emerald-600/30' : 
+                             isCurrent ? 'bg-amber-500 border-amber-950 text-white animate-pulse shadow-amber-500/40 ring-4 ring-amber-500/20' : 
+                             'bg-slate-900 border-white/10 text-gray-500'
+                          }`}>
+                             {isCompleted ? <CheckCircle2 size={20} /> : index + 1}
+                          </div>
+                          <div className={`flex-1 p-4 rounded-xl border transition-all group-hover:border-brand-500/60 group-hover:bg-white/[0.07] ${
+                             isCurrent ? 'bg-amber-500/10 border-amber-500/40 shadow-lg shadow-amber-500/5' : 
+                             isCompleted ? 'bg-emerald-500/5 border-emerald-500/20' : 
+                             'bg-white/[0.02] border-white/5'
+                          }`}>
+                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                               <div className="flex items-center gap-2.5">
+                                 <h4 className={`font-semibold text-sm sm:text-base ${isCompleted ? 'text-white' : isCurrent ? 'text-amber-300 font-bold' : 'text-gray-400'}`}>
+                                   Step {index + 1}: {stepConfig.title}
+                                 </h4>
+                                 {isCompleted && (
+                                   <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                     <CheckCircle2 size={10} /> Completed
+                                   </span>
+                                 )}
+                                 {isCurrent && (
+                                   <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                                     <Clock size={10} className="animate-spin" /> In Progress
+                                   </span>
+                                 )}
+                                 {isPending && (
+                                   <span className="text-[10px] bg-white/5 text-gray-400 border border-white/10 px-2 py-0.5 rounded-full">
+                                     Pending
+                                   </span>
+                                 )}
+                               </div>
+                               <span className="text-xs text-brand-400 group-hover:text-brand-300 font-medium flex items-center gap-1 shrink-0">
+                                 <span>Update / Details</span>
+                                 <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                               </span>
+                             </div>
+
+                             {/* Render step details if recorded */}
+                             {stepDetail && (stepDetail.remarks || stepDetail.referenceNo || stepDetail.officer || stepDetail.date) && (
+                               <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-gray-300">
+                                 {stepDetail.date && (
+                                   <div>
+                                     <span className="text-gray-400">Date: </span>
+                                     <span className="font-mono text-white">{stepDetail.date}</span>
+                                   </div>
+                                 )}
+                                 {stepDetail.officer && (
+                                   <div>
+                                     <span className="text-gray-400">Officer: </span>
+                                     <span className="text-white">{stepDetail.officer}</span>
+                                   </div>
+                                 )}
+                                 {stepDetail.referenceNo && (
+                                   <div>
+                                     <span className="text-gray-400">Ref/Challan: </span>
+                                     <span className="font-mono text-amber-300">{stepDetail.referenceNo}</span>
+                                   </div>
+                                 )}
+                                 {stepDetail.remarks && (
+                                   <div className="sm:col-span-3 text-gray-300 text-xs italic bg-white/5 px-2.5 py-1.5 rounded-lg border border-white/5 mt-1">
+                                     "{stepDetail.remarks}"
+                                   </div>
+                                 )}
+                               </div>
+                             )}
+                          </div>
+                       </div>
+                     );
+                   });
+                 })()}
+              </div>
+           </div>
+         )}
+
+         {/* Bottom Action Section: Download Documents */}
+         <div className="glass-card p-6 rounded-2xl no-print border border-brand-500/30 bg-gradient-to-r from-slate-900 via-brand-950/40 to-slate-900 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
+           <div>
+             <h4 className="text-white font-bold text-lg flex items-center gap-2">
+               <Download className="text-brand-400" size={22} />
+               <span>Download Documents</span>
+             </h4>
+             <p className="text-xs sm:text-sm text-gray-300 mt-1">
+               Download single-page Case Details, itemized Billing Invoice, Attached Shipping Documents, or Complete Dossier.
+             </p>
+           </div>
+           <button
+             type="button"
+             onClick={() => setShowDownloadDocsModal(true)}
+             className="bg-brand-600 hover:bg-brand-500 active:scale-95 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-brand-600/30 flex items-center gap-2.5 text-sm transition-all shrink-0 hover:scale-105"
+             id="btn-bottom-download-docs"
+           >
+             <Download size={18} />
+             <span>Download Documents</span>
+           </button>
+         </div>
+      </div>
+    );
+  };
+
+  // --- Registration Wizard Steps ---
+  
+  // --- Registration Step 1: Merged Case Particulars & Documents (Single-Screen) ---
+  const renderStep1_Merged = () => {
+    return (
+      <div className="space-y-6 animate-in fade-in max-w-3xl mx-auto pb-4">
+        {/* Registration Header Card */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-brand-950/70 to-slate-900 border border-white/10 shadow-lg">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border flex items-center gap-1.5 ${
+                generatedCaseNo 
+                  ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' 
+                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+              }`}>
+                {generatedCaseNo ? (
+                  <span>{generatedCaseNo}</span>
+                ) : (
+                  <>
+                    <Clock size={12} className="animate-pulse" />
+                    <span>Serial: Assigned on Progression</span>
+                  </>
+                )}
+              </span>
+              <span className="text-xs text-gray-400">Step 1 of 4</span>
+            </div>
+            <h2 className="text-lg sm:text-xl font-bold text-white mt-1">
+              Case Registration & Documents
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Client, category, route, and shipping documents on a single streamlined page
+            </p>
+          </div>
+          {uploadedDocs.length > 0 && (
+            <div className="self-start sm:self-auto flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-medium">
+              <CheckCircle2 size={15} />
+              <span>{uploadedDocs.length} {uploadedDocs.length === 1 ? 'Document Attached' : 'Documents Attached'}</span>
+            </div>
+          )}
+        </div>
+
+        {/* 1. Client Selection (Sabse Upar) */}
+        <div className="glass-panel p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-sm font-semibold text-white">
+              <User size={16} className="text-brand-400" />
+              <span>Client Account</span>
+              <span className="text-red-400">*</span>
+            </label>
+            {isClientUser ? (
+              <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                <CheckCircle2 size={12} /> Auto-Selected
+              </span>
+            ) : isOtherClient ? (
+              <span className="text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full">
+                New Client Mode
+              </span>
+            ) : null}
+          </div>
+
+          {isClientUser ? (
+            /* Client is registering: Client account is pre-selected */
+            <div className="flex items-center justify-between p-3.5 sm:p-4 rounded-xl bg-slate-900/90 border border-brand-500/40 shadow-sm">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-brand-600/20 text-brand-400 border border-brand-500/30 flex items-center justify-center flex-shrink-0">
+                  <User size={20} />
+                </div>
+                <div className="min-w-0">
+                  <span className="text-[10px] sm:text-[11px] text-brand-300 uppercase tracking-wider block font-semibold">
+                    Client Company Name
+                  </span>
+                  <span className="text-base sm:text-lg font-bold text-white truncate block">
+                    {formData.client || effectiveClientName}
+                  </span>
+                </div>
+              </div>
+              <span className="text-xs text-gray-400 font-mono hidden sm:block">
+                Client Portal
+              </span>
+            </div>
+          ) : (
+            /* Case Manager / Admin is registering: Select from dropdown or add new */
+            <div className="space-y-2.5">
+              <div className="relative">
+                <select 
+                  className="w-full glass-input rounded-xl p-3.5 sm:p-4 outline-none appearance-none cursor-pointer text-sm sm:text-base text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-10"
+                  value={isOtherClient ? '__OTHERS__' : formData.client}
+                  onChange={(e) => handleClientSelect(e.target.value)}
+                >
+                  <option value="" className="bg-slate-900 text-gray-400">-- Select Client --</option>
+                  {registeredClients.map(c => (
+                    <option key={c} value={c} className="bg-slate-900 text-white">{c}</option>
+                  ))}
+                  <option value="__OTHERS__" className="bg-slate-900 text-amber-300 font-semibold">➕ Others (Add New Client)</option>
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={20} />
+              </div>
+
+              {isOtherClient && (
+                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 pt-1">
+                  <label className="block text-xs text-amber-300 font-semibold">Enter New Client Name</label>
+                  <input 
+                    type="text" 
+                    placeholder="Enter new client name..."
+                    className="w-full glass-input rounded-xl p-3 sm:p-3.5 outline-none text-white border border-amber-500/50 bg-amber-500/10 focus:border-amber-400 placeholder-gray-400 text-sm"
+                    value={otherClientName}
+                    onChange={(e) => handleOtherClientChange(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 2. Case Category (Client ke niche) */}
+        <div className="glass-panel p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-sm font-semibold text-white">
+              <Briefcase size={16} className="text-brand-400" />
+              <span>Case Category</span>
+              <span className="text-red-400">*</span>
+            </label>
+            {formData.client && getClientDefaultCategory(formData.client) && formData.category === getClientDefaultCategory(formData.client) && (
+              <span className="text-[11px] text-brand-300 bg-brand-500/10 border border-brand-500/25 px-2.5 py-0.5 rounded-full flex items-center gap-1 font-medium">
+                <CheckCircle2 size={11} /> Client Default Category
+              </span>
+            )}
+          </div>
+
+          <div className="relative">
+            <select
+              className="w-full glass-input rounded-xl p-3.5 sm:p-4 outline-none appearance-none cursor-pointer text-sm sm:text-base text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-10"
+              value={formData.category}
+              onChange={(e) => {
+                const newCat = e.target.value;
+                setFormData({ 
+                  ...formData, 
+                  category: newCat,
+                  subCategory: supportsSubCategories(newCat) ? (formData.subCategory || 'Standard Container / General Cargo') : undefined
+                });
+              }}
+            >
+              <option value="" className="bg-slate-900 text-gray-400">-- Select Primary Category --</option>
+              {CATEGORIES.map(cat => (
+                <option key={cat} value={cat} className="bg-slate-900 text-white">
+                  {cat}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={20} />
+          </div>
+
+          {/* Dynamic Cargo / Equipment Sub-Category Dropdown */}
+          {supportsSubCategories(formData.category) && (
+            <div className="space-y-1.5 pt-2 animate-fade-in">
+              <label className="flex items-center justify-between text-xs font-semibold text-amber-300">
+                <span className="flex items-center gap-1.5">
+                  <Truck size={14} /> Cargo / Equipment Sub-Category
+                </span>
+                <span className="text-[10px] text-gray-400">Specialized Transport Equipment</span>
+              </label>
+              <div className="relative">
+                <select
+                  className="w-full glass-input rounded-xl p-3 sm:p-3.5 outline-none appearance-none cursor-pointer text-xs sm:text-sm text-amber-200 bg-amber-950/20 border border-amber-500/30 focus:border-amber-400 pr-10"
+                  value={formData.subCategory || 'Standard Container / General Cargo'}
+                  onChange={(e) => setFormData({ ...formData, subCategory: e.target.value })}
+                >
+                  {SUB_CATEGORY_OPTIONS.map(sub => (
+                    <option key={sub} value={sub} className="bg-slate-900 text-white">
+                      {sub}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 transform -translate-y-1/2 text-amber-400 pointer-events-none" size={18} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 3. Port of Loading & Port of Destination (Route Selection) */}
+        <div className="glass-panel p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-sm font-semibold text-white">
+              <Ship size={16} className="text-brand-400" />
+              <span>Route Selection (Ports)</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowPortModal(true)}
+              className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1"
+            >
+              <Plus size={13} /> Add Port
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* POL */}
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-1.5 text-xs text-brand-300 font-medium">
+                <Anchor size={14} /> Port of Loading (POL)
+              </label>
+              <div className="relative">
+                <select 
+                  className="w-full glass-input rounded-xl p-3 sm:p-3.5 outline-none appearance-none text-sm text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-9"
+                  value={formData.pol}
+                  onChange={(e) => setFormData({...formData, pol: e.target.value})}
+                >
+                  <option value="" className="bg-slate-900 text-gray-400">Select POL</option>
+                  {ports.map(p => (
+                    <option key={`pol-${p.code}`} value={p.name} className="bg-slate-900 text-white">
+                      {p.name} {p.code !== p.name ? `(${p.code})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+
+            {/* POD */}
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-1.5 text-xs text-brand-300 font-medium">
+                <MapPin size={14} /> Port of Destination (POD)
+              </label>
+              <div className="relative">
+                <select 
+                  className="w-full glass-input rounded-xl p-3 sm:p-3.5 outline-none appearance-none text-sm text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-9"
+                  value={formData.pod}
+                  onChange={(e) => setFormData({...formData, pod: e.target.value})}
+                >
+                  <option value="" className="bg-slate-900 text-gray-400">Select POD</option>
+                  {ports.map(p => (
+                    <option key={`pod-${p.code}`} value={p.name} className="bg-slate-900 text-white">
+                      {p.name} {p.code !== p.name ? `(${p.code})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Document Upload & Camera (Single unified upload button + Camera button) */}
+        <div ref={documentsSectionRef} className="glass-panel p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 text-sm font-semibold text-white">
+              <FileText size={16} className="text-brand-400" />
+              <span>Shipping Documents</span>
+            </label>
+            {uploadedDocs.length > 0 && (
+              <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1">
+                <CheckCircle2 size={12} /> {uploadedDocs.length} {uploadedDocs.length === 1 ? 'file' : 'files'} attached
+              </span>
+            )}
+          </div>
+
+          {/* Attaching progress indicator */}
+          {isAttachingFiles && (
+            <div className="flex items-center justify-center gap-2 py-2 px-3 bg-brand-500/10 border border-brand-500/30 rounded-xl text-brand-300 text-xs animate-pulse">
+              <Loader2 size={15} className="animate-spin text-brand-400" />
+              <span>Attaching & verifying document...</span>
+            </div>
+          )}
+
+          {/* Standard accessible file and camera inputs (sr-only avoids Chromium layout drop/compositor flash) */}
+          <input 
+            ref={multiFileInputRef}
+            type="file"
+            accept=".pdf,image/*,application/pdf"
+            multiple
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={handleFileUpload}
+          />
+          <input 
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={handleFileUpload}
+          />
+
+          {/* Dropzone container */}
+          <div 
+            data-dropzone="true"
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+                await processFiles(Array.from(e.dataTransfer.files));
+              }
+            }}
+            className="border-2 border-dashed border-white/20 hover:border-brand-400/60 rounded-2xl p-5 sm:p-6 bg-slate-950/60 hover:bg-slate-950/80 transition-all text-center space-y-4"
+          >
+            {/* The Two Main Action Buttons: Upload Documents + Camera */}
+            <div className="flex flex-col sm:flex-row items-stretch justify-center gap-3 sm:gap-4 max-w-md mx-auto">
+              {/* 1. Single Multi-Document Upload Button */}
+              <button
+                type="button"
+                onClick={() => multiFileInputRef.current?.click()}
+                className="flex-1 py-3.5 px-4 bg-gradient-to-r from-blue-600 to-brand-600 hover:from-blue-500 hover:to-brand-500 text-white font-semibold rounded-xl flex items-center justify-center gap-2.5 shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                title="Select multiple documents or single multi-page PDF"
+              >
+                <UploadCloud size={20} className="text-cyan-200" />
+                <div className="text-left">
+                  <div className="text-sm font-bold leading-tight">Upload Documents</div>
+                  <div className="text-[10px] text-cyan-100/80 font-normal leading-tight">Multi-file or Single PDF</div>
+                </div>
+              </button>
+
+              {/* 2. Camera Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  startCamera();
+                }}
+                className="py-3.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold rounded-xl flex items-center justify-center gap-2.5 shadow-lg shadow-purple-600/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
+                title="Capture document photo via camera"
+              >
+                <Camera size={20} className="text-purple-200" />
+                <div className="text-left">
+                  <div className="text-sm font-bold leading-tight">Camera</div>
+                  <div className="text-[10px] text-purple-100/80 font-normal leading-tight">Take document photo</div>
+                </div>
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-400">
+              Drag & drop shipping documents (B/L, Invoice, Packing List) here
+            </p>
+
+            {/* Uploaded Documents List */}
+            {uploadedDocs.length > 0 && (
+              <div className="pt-3 border-t border-white/10 text-left space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-300">
+                    Selected Documents ({uploadedDocs.length})
+                  </span>
+                  {uploadedDocs.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadedDocs([]);
+                        setFiles([]);
+                        safeAppStorage.removeItem('dpl_reg_docs');
+                      }}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {uploadedDocs.map((doc, idx) => {
+                    const isImage = (doc.type && doc.type.startsWith('image/')) || /\.(jpg|jpeg|png|webp|gif)$/i.test(doc.name);
+                    const fileSizeFormatted = doc.size > 1024 * 1024 
+                      ? `${(doc.size / (1024 * 1024)).toFixed(1)} MB`
+                      : `${Math.max(1, Math.round(doc.size / 1024))} KB`;
+
+                    return (
+                      <div 
+                        key={doc.id || `${doc.name}-${idx}`}
+                        className="bg-slate-900/90 border border-white/10 rounded-xl p-2.5 flex items-center justify-between gap-2 shadow-sm"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="p-1.5 rounded-lg bg-brand-600/20 text-brand-300 flex-shrink-0">
+                            <FileText size={16} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-medium text-white truncate" title={doc.name}>
+                              {doc.name}
+                            </p>
+                            <p className="text-[10px] text-gray-400">
+                              {fileSizeFormatted}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          {isImage && doc.url && (
+                            <button
+                              type="button"
+                              onClick={() => setLightboxImage(doc.url)}
+                              className="p-1 text-gray-400 hover:text-white rounded hover:bg-white/10"
+                              title="Preview"
+                            >
+                              <Eye size={14} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUploadedDocs(prev => {
+                                const updated = prev.filter((_, i) => i !== idx);
+                                safeAppStorage.setJSON('dpl_reg_docs', updated);
+                                return updated;
+                              });
+                              setFiles(prev => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="p-1 text-red-400 hover:text-red-300 rounded hover:bg-red-500/10"
+                            title="Remove"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Direct Instant AI Scan & Extract Button */}
+                <div className="pt-3 border-t border-brand-500/20 flex flex-col sm:flex-row items-center justify-between gap-3 bg-brand-950/40 p-3 rounded-xl border border-brand-500/30">
+                  <div className="text-left text-xs">
+                    <div className="font-semibold text-brand-200 flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-brand-400 animate-pulse" />
+                      <span>Optical Document Reader Ready</span>
+                    </div>
+                    <div className="text-[11px] text-gray-400">
+                      Reads Bill of Lading, Consignee, Shipper, Shipping Agent, Containers, Packages, & Commercial Invoice.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => triggerDocumentReading()}
+                    className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all hover:scale-105 active:scale-95 flex-shrink-0"
+                  >
+                    <Sparkles size={15} />
+                    <span>Scan & Auto-Extract All Data</span>
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+
+  const renderDocumentReadingView = () => (
+    <div className="w-full max-w-lg md:max-w-xl mx-auto px-2 sm:px-4 py-4 sm:py-8 space-y-4 sm:space-y-6 text-center overflow-hidden">
+      {/* 1. TOP: Circular Rotating / Spinning Loader */}
+      <div className="relative w-28 h-28 sm:w-36 sm:h-36 md:w-40 md:h-40 mx-auto flex items-center justify-center my-1 sm:my-2 flex-shrink-0">
+        {/* Soft atmospheric glow */}
+        <div className="absolute inset-0 rounded-full bg-cyan-500/15 blur-xl sm:blur-2xl animate-pulse" />
+        
+        {/* Outer orbital spinning ring (Clockwise) */}
+        <div 
+          className="absolute inset-0 rounded-full border-3 sm:border-4 border-transparent border-t-cyan-400 border-r-blue-500 animate-spin" 
+          style={{ animationDuration: '1.8s' }} 
+        />
+
+        {/* Middle counter-spinning ring (Counter-Clockwise) */}
+        <div 
+          className="absolute inset-2 sm:inset-2.5 rounded-full border-2 sm:border-3 border-transparent border-b-cyan-300 border-l-blue-400 animate-spin" 
+          style={{ animationDuration: '2.4s', animationDirection: 'reverse' }} 
+        />
+
+        {/* Third subtle dashed rotating track */}
+        <div 
+          className="absolute inset-4 sm:inset-5 rounded-full border border-dashed border-cyan-400/30 animate-spin" 
+          style={{ animationDuration: '6s' }} 
+        />
+
+        {/* Glowing Center Optical Lens Orb */}
+        <div className="w-16 h-16 sm:w-20 sm:h-20 md:w-22 md:h-22 rounded-full bg-gradient-to-br from-slate-900 via-brand-950 to-slate-950 border border-cyan-400/50 shadow-[0_0_25px_rgba(56,189,248,0.35)] flex flex-col items-center justify-center relative overflow-hidden">
+          {/* Radar sweeping scanline */}
+          <div 
+            className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-400/25 to-transparent animate-pulse"
+            style={{ animationDuration: '1.2s' }}
+          />
+          {readingProgress >= 100 ? (
+            <CheckCircle2 className="text-emerald-400" size={30} />
+          ) : (
+            <>
+              <Scan className="text-cyan-400 animate-pulse w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7" />
+              <span className="text-[10px] sm:text-xs font-mono font-bold text-cyan-300 mt-0.5 sm:mt-1">
+                {readingProgress}%
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* 2. BELOW: Clearly Written "Reading Document..." */}
+      <div className="space-y-1 sm:space-y-2 px-1">
+        <h2 className="text-lg sm:text-2xl md:text-3xl font-bold text-white tracking-tight sm:tracking-wide">
+          Reading Shipping Documents...
+        </h2>
+        <p className="text-xs sm:text-sm text-cyan-300/90 font-medium line-clamp-2 max-w-md mx-auto leading-relaxed">
+          {readingPhase}
+        </p>
+      </div>
+
+      {/* 3. Progress Bar & Phase Info */}
+      <div className="glass-panel p-3.5 sm:p-5 rounded-2xl border border-white/10 space-y-3 text-left shadow-xl w-full overflow-hidden">
+        <div className="flex justify-between items-center text-xs font-medium gap-2 min-w-0">
+          <span className="text-cyan-300 flex items-center gap-1.5 min-w-0 flex-1">
+            <Loader2 size={13} className="animate-spin text-cyan-400 flex-shrink-0" />
+            <span className="truncate text-[11px] sm:text-xs text-cyan-200">{readingPhase}</span>
+          </span>
+          <span className="text-white font-mono bg-cyan-500/20 px-2 py-0.5 rounded border border-cyan-500/30 flex-shrink-0 font-bold text-[11px] sm:text-xs">
+            {readingProgress}%
+          </span>
+        </div>
+
+        {/* Progress Track */}
+        <div className="w-full bg-white/10 rounded-full h-2 sm:h-2.5 overflow-hidden p-0.5 border border-white/10">
+          <div 
+            className="bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400 h-full rounded-full transition-all duration-300 shadow-[0_0_12px_rgba(56,189,248,0.5)]"
+            style={{ width: `${Math.max(8, readingProgress)}%` }}
+          />
+        </div>
+
+        {/* Real-time Document Reading Checklist */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2.5 border-t border-white/10 text-[11px] sm:text-xs">
+          <div className={`flex items-center gap-2 min-w-0 ${readingProgress >= 25 ? 'text-emerald-400 font-medium' : 'text-gray-400'}`}>
+            <CheckCircle size={14} className={`flex-shrink-0 ${readingProgress >= 25 ? 'text-emerald-400' : 'text-gray-600'}`} />
+            <span className="truncate sm:whitespace-normal">Shipping Line & B/L Format Recognition</span>
+          </div>
+          <div className={`flex items-center gap-2 min-w-0 ${readingProgress >= 50 ? 'text-emerald-400 font-medium' : 'text-gray-400'}`}>
+            <CheckCircle size={14} className={`flex-shrink-0 ${readingProgress >= 50 ? 'text-emerald-400' : 'text-gray-600'}`} />
+            <span className="truncate sm:whitespace-normal">B/L No, Vessel, Voyage, POL & POD</span>
+          </div>
+          <div className={`flex items-center gap-2 min-w-0 ${readingProgress >= 70 ? 'text-emerald-400 font-medium' : 'text-gray-400'}`}>
+            <CheckCircle size={14} className={`flex-shrink-0 ${readingProgress >= 70 ? 'text-emerald-400' : 'text-gray-600'}`} />
+            <span className="truncate sm:whitespace-normal">Commercial Invoice & Incoterms</span>
+          </div>
+          <div className={`flex items-center gap-2 min-w-0 ${readingProgress >= 85 ? 'text-emerald-400 font-medium' : 'text-gray-400'}`}>
+            <CheckCircle size={14} className={`flex-shrink-0 ${readingProgress >= 85 ? 'text-emerald-400' : 'text-gray-600'}`} />
+            <span className="truncate sm:whitespace-normal">Packing List Weights, Cartons & CBM</span>
+          </div>
+          <div className={`flex items-center gap-2 min-w-0 sm:col-span-2 ${readingProgress >= 95 ? 'text-emerald-400 font-medium' : 'text-gray-400'}`}>
+            <CheckCircle size={14} className={`flex-shrink-0 ${readingProgress >= 95 ? 'text-emerald-400' : 'text-gray-600'}`} />
+            <span className="truncate sm:whitespace-normal">ISO Containers (MSKU/CMAU) & Seals</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Uploaded Documents Being Scanned */}
+      {uploadedDocs.length > 0 && (
+        <div className="text-left space-y-1.5 w-full overflow-hidden px-1">
+          <p className="text-[11px] sm:text-xs text-gray-400 font-medium">Scanned Documents ({uploadedDocs.length}):</p>
+          <div className="flex flex-wrap gap-1.5 sm:gap-2">
+            {uploadedDocs.map((doc, idx) => (
+              <div 
+                key={doc.id || idx} 
+                className="bg-white/5 border border-cyan-500/20 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg flex items-center gap-2 text-[11px] sm:text-xs text-gray-300 max-w-full min-w-0"
+              >
+                <FileText size={13} className="text-cyan-400 flex-shrink-0" />
+                <span className="truncate max-w-[140px] sm:max-w-[200px] text-white font-medium">{doc.name}</span>
+                <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Reassurance text */}
+      <p className="text-[11px] sm:text-xs text-gray-400 max-w-md mx-auto leading-relaxed px-2">
+        The form will open automatically once reading completes with detected fields pre-filled. Any unread information can be entered manually.
+      </p>
+    </div>
+  );
+
+  const renderStep5_DataReview = () => {
+    const extracted = formData.extractedData || {};
+    const autoFilledCount = Object.values(extracted).filter(v => v !== undefined && v !== null && String(v).trim() !== '').length;
+
+    return (
+      <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+        {/* Compact Single-Line Document Status Bar */}
+        <div className="flex items-center justify-between gap-3 px-3 py-1.5 rounded-lg bg-emerald-950/30 border border-emerald-500/20 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <CheckCircle size={14} className="text-emerald-400 shrink-0" />
+            <span className="font-medium text-emerald-200 text-xs truncate">
+              Your documents have been read
+            </span>
+          </div>
+          <span className="text-[10px] font-mono text-emerald-300/90 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 shrink-0">
+            {autoFilledCount} fields read
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* Group 1: Parties Involved */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-brand-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <User size={15} /> Parties Involved
+              </h4>
+              <span className="text-[10px] text-gray-400">Shipper & Consignee</span>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Shipper Name</label>
+                  {extracted.shipperName ? (
+                    <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={10} /> Read from doc</span>
+                  ) : (
+                    <span className="text-[10px] text-amber-400/80">Manual entry</span>
+                  )}
+                </div>
+                <input 
+                  className={`w-full rounded-lg p-2.5 text-sm text-white transition-colors outline-none border ${
+                    extracted.shipperName ? 'border-emerald-500/30 bg-emerald-500/5 focus:border-emerald-400' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.shipperName || ''} 
+                  onChange={(e) => updateExtractedData('shipperName', e.target.value)} 
+                  placeholder="Enter Shipper Name..." 
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Shipper Address</label>
+                  {extracted.shipperAddress ? (
+                    <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={10} /> Read from doc</span>
+                  ) : (
+                    <span className="text-[10px] text-amber-400/80">Manual entry</span>
+                  )}
+                </div>
+                <textarea 
+                  className={`w-full rounded-lg p-2.5 text-sm h-16 text-white transition-colors outline-none border resize-none ${
+                    extracted.shipperAddress ? 'border-emerald-500/30 bg-emerald-500/5 focus:border-emerald-400' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.shipperAddress || ''} 
+                  onChange={(e) => updateExtractedData('shipperAddress', e.target.value)} 
+                  placeholder="Enter Shipper Address..." 
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-300 block mb-1">Shipper Contact</label>
+                  <input 
+                    className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                    value={extracted.shipperContact || ''} 
+                    onChange={(e) => updateExtractedData('shipperContact', e.target.value)} 
+                    placeholder="Phone No." 
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-300 block mb-1">Shipper Email</label>
+                  <input 
+                    className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                    value={extracted.shipperEmail || ''} 
+                    onChange={(e) => updateExtractedData('shipperEmail', e.target.value)} 
+                    placeholder="Email" 
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-3 border-t border-white/10">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Consignee Name</label>
+                  {extracted.consigneeName ? (
+                    <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={10} /> Read from doc</span>
+                  ) : (
+                    <span className="text-[10px] text-amber-400/80">Manual entry</span>
+                  )}
+                </div>
+                <input 
+                  className={`w-full rounded-lg p-2.5 text-sm text-white transition-colors outline-none border ${
+                    extracted.consigneeName ? 'border-emerald-500/30 bg-emerald-500/5 focus:border-emerald-400' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.consigneeName || ''} 
+                  onChange={(e) => updateExtractedData('consigneeName', e.target.value)} 
+                  placeholder="Enter Consignee Name..." 
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Consignee Address</label>
+                  {extracted.consigneeAddress ? (
+                    <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={10} /> Read from doc</span>
+                  ) : (
+                    <span className="text-[10px] text-amber-400/80">Manual entry</span>
+                  )}
+                </div>
+                <textarea 
+                  className={`w-full rounded-lg p-2.5 text-sm h-16 text-white transition-colors outline-none border resize-none ${
+                    extracted.consigneeAddress ? 'border-emerald-500/30 bg-emerald-500/5 focus:border-emerald-400' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.consigneeAddress || ''} 
+                  onChange={(e) => updateExtractedData('consigneeAddress', e.target.value)} 
+                  placeholder="Enter Consignee Address..." 
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-300 block mb-1">Consignee Contact</label>
+                  <input 
+                    className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                    value={extracted.consigneeContact || ''} 
+                    onChange={(e) => updateExtractedData('consigneeContact', e.target.value)} 
+                    placeholder="Phone No." 
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-300 block mb-1">Consignee Email</label>
+                  <input 
+                    className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                    value={extracted.consigneeEmail || ''} 
+                    onChange={(e) => updateExtractedData('consigneeEmail', e.target.value)} 
+                    placeholder="Email" 
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Group 2: Shipping Line & B/L Details */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-brand-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <Ship size={15} /> Bill of Lading & Maritime Route
+              </h4>
+              <span className="text-[10px] text-blue-300 font-mono bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                B/L Intelligence
+              </span>
+            </div>
+
+            {/* Bill of Lading */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">B/L Number</label>
+                  {extracted.blNumber && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /> Read</span>}
+                </div>
+                <input 
+                  className={`w-full rounded-lg p-2 text-sm text-white font-mono outline-none border ${
+                    extracted.blNumber ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.blNumber || ''} 
+                  onChange={(e) => updateExtractedData('blNumber', e.target.value)} 
+                  placeholder="e.g. MSKU12345678"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">B/L Date</label>
+                <input 
+                  type="date" 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.blDate || ''} 
+                  onChange={(e) => updateExtractedData('blDate', e.target.value)} 
+                />
+              </div>
+            </div>
+
+            {/* Shipping Line & Vessel */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Shipping Line</label>
+                  {extracted.shippingLine && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /> Read</span>}
+                </div>
+                <input 
+                  className={`w-full rounded-lg p-2 text-sm text-white outline-none border ${
+                    extracted.shippingLine ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.shippingLine || ''} 
+                  onChange={(e) => updateExtractedData('shippingLine', e.target.value)} 
+                  placeholder="e.g. Maersk, MSC, COSCO"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Shipping Agent</label>
+                  {extracted.shippingAgent && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /> Read</span>}
+                </div>
+                <input 
+                  className={`w-full rounded-lg p-2 text-sm text-white outline-none border ${
+                    extracted.shippingAgent ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.shippingAgent || ''} 
+                  onChange={(e) => updateExtractedData('shippingAgent', e.target.value)} 
+                  placeholder="e.g. RIAZEDA (PVT) LTD"
+                />
+              </div>
+            </div>
+
+            {/* Vessel Name & Voyage No */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Vessel Name</label>
+                  {extracted.vesselName && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /></span>}
+                </div>
+                <input 
+                  className={`w-full rounded-lg p-2 text-sm text-white outline-none border ${
+                    extracted.vesselName ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.vesselName || ''} 
+                  onChange={(e) => updateExtractedData('vesselName', e.target.value)} 
+                  placeholder="e.g. MSC OSCAR"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">Voyage No.</label>
+                <input 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none font-mono" 
+                  value={extracted.voyageNo || ''} 
+                  onChange={(e) => updateExtractedData('voyageNo', e.target.value)} 
+                  placeholder="e.g. 2401E"
+                />
+              </div>
+            </div>
+
+            {/* POL & POD */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Port of Loading (POL)</label>
+                  {extracted.pol && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /></span>}
+                </div>
+                <input 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.pol || ''} 
+                  onChange={(e) => updateExtractedData('pol', e.target.value)} 
+                  placeholder="e.g. Shanghai, Jebel Ali"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Port of Discharge (POD)</label>
+                  {extracted.pod && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /></span>}
+                </div>
+                <input 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.pod || ''} 
+                  onChange={(e) => updateExtractedData('pod', e.target.value)} 
+                  placeholder="e.g. Karachi, Port Qasim"
+                />
+              </div>
+            </div>
+
+            {/* Free Days & Freight Terms */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">Demurrage Free Days</label>
+                <input 
+                  type="number"
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.freeDays || ''} 
+                  onChange={(e) => updateExtractedData('freeDays', parseInt(e.target.value) || 0)} 
+                  placeholder="e.g. 14 Days"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">Freight Terms</label>
+                <select
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none"
+                  value={extracted.freightTerms || 'Prepaid'}
+                  onChange={(e) => updateExtractedData('freightTerms', e.target.value)}
+                >
+                  <option value="Prepaid">Prepaid</option>
+                  <option value="Collect">Collect</option>
+                  <option value="Payable at Destination">Payable at Destination</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Goods Declaration (GD) & IGM */}
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">GD Number</label>
+                  {extracted.gdNo && <span className="text-[10px] text-emerald-400"><CheckCircle size={9} /></span>}
+                </div>
+                <input 
+                  className={`w-full rounded-lg p-2 text-sm text-white outline-none border ${
+                    extracted.gdNo ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.gdNo || ''} 
+                  onChange={(e) => updateExtractedData('gdNo', e.target.value)} 
+                  placeholder="e.g. KAPE-HC-12345"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">GD Date</label>
+                <input 
+                  type="date" 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.gdDate || ''} 
+                  onChange={(e) => updateExtractedData('gdDate', e.target.value)} 
+                />
+              </div>
+            </div>
+
+            {/* IGM No & Index No */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">IGM No</label>
+                <input 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none font-mono" 
+                  value={extracted.igmNo || ''} 
+                  onChange={(e) => updateExtractedData('igmNo', e.target.value)} 
+                  placeholder="IGM Number"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">Index No</label>
+                <input 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none font-mono" 
+                  value={extracted.indexNo || ''} 
+                  onChange={(e) => updateExtractedData('indexNo', e.target.value)} 
+                  placeholder="Index No"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Group 3: Commercial Invoice & Packing Specifications */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-brand-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <Receipt size={15} /> Commercial Invoice & Packing List
+              </h4>
+              <span className="text-[10px] text-amber-300 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                Invoice & Cargo Data
+              </span>
+            </div>
+
+            {/* Commercial Invoice No & Date */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Commercial Invoice No.</label>
+                  {extracted.invoiceNo && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /> Read</span>}
+                </div>
+                <input 
+                  className={`w-full rounded-lg p-2 text-sm text-white outline-none border font-mono ${
+                    extracted.invoiceNo ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.invoiceNo || ''} 
+                  onChange={(e) => updateExtractedData('invoiceNo', e.target.value)} 
+                  placeholder="e.g. INV-2024-8891"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">Invoice Date</label>
+                <input 
+                  type="date" 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.invoiceDate || ''} 
+                  onChange={(e) => updateExtractedData('invoiceDate', e.target.value)} 
+                />
+              </div>
+            </div>
+
+            {/* Invoice Value & Currency */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2">
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Invoice Value</label>
+                  {extracted.invoiceValue && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /> Read</span>}
+                </div>
+                <input 
+                  type="number" 
+                  className={`w-full rounded-lg p-2 text-sm text-white outline-none border ${
+                    extracted.invoiceValue ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.invoiceValue || ''} 
+                  onChange={(e) => updateExtractedData('invoiceValue', parseFloat(e.target.value))} 
+                  placeholder="Total amount"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">Currency</label>
+                <select
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none"
+                  value={extracted.invoiceCurrency || 'USD'}
+                  onChange={(e) => updateExtractedData('invoiceCurrency', e.target.value)}
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="PKR">PKR (Rs)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="CNY">CNY (¥)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="AED">AED (Dirham)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Incoterms & HS Code */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">Incoterms</label>
+                <select
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none font-medium"
+                  value={extracted.incoTerms || 'CIF'}
+                  onChange={(e) => updateExtractedData('incoTerms', e.target.value)}
+                >
+                  <option value="CIF">CIF — Cost, Insurance & Freight</option>
+                  <option value="CFR">CFR — Cost & Freight</option>
+                  <option value="FOB">FOB — Free on Board</option>
+                  <option value="EXW">EXW — Ex Works</option>
+                  <option value="DDP">DDP — Delivered Duty Paid</option>
+                  <option value="CIP">CIP — Carriage and Insurance Paid</option>
+                </select>
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">HS / PCT Code</label>
+                  {extracted.hsCode && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /></span>}
+                </div>
+                <input 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none font-mono" 
+                  value={extracted.hsCode || ''} 
+                  onChange={(e) => updateExtractedData('hsCode', e.target.value)} 
+                  placeholder="e.g. 8471.30"
+                />
+              </div>
+            </div>
+
+            {/* Item Name / Description */}
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-xs text-gray-300 font-medium">Cargo Description</label>
+                {extracted.itemName && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /></span>}
+              </div>
+              <input 
+                className={`w-full rounded-lg p-2 text-sm text-white outline-none border ${
+                  extracted.itemName ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                }`}
+                value={extracted.itemName || ''} 
+                onChange={(e) => updateExtractedData('itemName', e.target.value)} 
+                placeholder="Description of goods..."
+              />
+            </div>
+
+            {/* Packing List: Packaging & Count */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">Packaging Type</label>
+                <input 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.packagingType || ''} 
+                  onChange={(e) => updateExtractedData('packagingType', e.target.value)} 
+                  placeholder="Cartons, Pallets, Drums"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1">No. of Packages / Cartons</label>
+                <input 
+                  type="number" 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.packageCount || ''} 
+                  onChange={(e) => updateExtractedData('packageCount', parseFloat(e.target.value))} 
+                  placeholder="e.g. 850"
+                />
+              </div>
+            </div>
+
+            {/* Packing List: Gross Weight, Net Weight & Volume CBM */}
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium truncate">Gross Wt (Kg)</label>
+                  {(extracted.grossWeight || extracted.totalWeight) && <span className="text-[10px] text-emerald-400">✓</span>}
+                </div>
+                <input 
+                  type="number" 
+                  className={`w-full rounded-lg p-2 text-sm text-white outline-none border ${
+                    (extracted.grossWeight || extracted.totalWeight) ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-brand-400'
+                  }`}
+                  value={extracted.grossWeight || extracted.totalWeight || ''} 
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    updateExtractedData('grossWeight', val);
+                    updateExtractedData('totalWeight', val);
+                  }} 
+                  placeholder="Gross Kgs"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1 truncate">Net Wt (Kg)</label>
+                <input 
+                  type="number" 
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.netWeight || ''} 
+                  onChange={(e) => updateExtractedData('netWeight', parseFloat(e.target.value))} 
+                  placeholder="Net Kgs"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1 truncate">Volume (CBM)</label>
+                <input 
+                  type="number" 
+                  step="0.01"
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
+                  value={extracted.volumeCBM || ''} 
+                  onChange={(e) => updateExtractedData('volumeCBM', parseFloat(e.target.value))} 
+                  placeholder="e.g. 54.2"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Group 4: Pakistan Customs & Regulatory Declarations */}
+          <div className="glass-panel p-5 rounded-xl border border-amber-500/30 space-y-4 bg-slate-900/60">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <FileCheck size={16} /> Pakistan Customs & Regulatory Declarations
+              </h4>
+              <span className="text-[10px] text-amber-300/80 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                WeBOC / PSW / FBR
+              </span>
+            </div>
+
+            {/* GD Type & NTN */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-300 block mb-1 font-medium">Goods Declaration (GD) Type</label>
+                <select
+                  className="w-full rounded-lg p-2 text-xs sm:text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.gdType || (formData.category === 'Bonded Carrier' ? 'TP' : formData.category === 'Afghan Transit' ? 'AT-GD' : 'GD-HC')}
+                  onChange={(e) => updateExtractedData('gdType', e.target.value)}
+                >
+                  <option value="TP">TP — Transhipment Permit (Sec 121)</option>
+                  <option value="AT-GD">AT-GD — Afghan Transit Trade (APTTA)</option>
+                  <option value="GD-HC">GD-HC — Home Consumption Import (Sec 79)</option>
+                  <option value="GD-IB">GD-IB — Into-Bond Warehousing (Sec 84)</option>
+                  <option value="GD-EB">GD-EB — Ex-Bond Clearance (Sec 104)</option>
+                  <option value="GD-EXP">GD-EXP — Commercial Export (Sec 131)</option>
+                  <option value="TIR">TIR Carnet — International Transit</option>
+                  <option value="COASTAL">Coastal Cargo / Domestic Transit</option>
+                </select>
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs text-gray-300 font-medium">Importer / Consignee NTN</label>
+                  {extracted.ntnNumber && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /> Read</span>}
+                </div>
+                <input
+                  type="text"
+                  className={`w-full rounded-lg p-2 text-sm text-white font-mono outline-none border ${
+                    extracted.ntnNumber ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-amber-400'
+                  }`}
+                  value={extracted.ntnNumber || ''}
+                  onChange={(e) => updateExtractedData('ntnNumber', e.target.value)}
+                  placeholder="e.g. 1234567-8"
+                />
+              </div>
+            </div>
+
+            {/* STRN & PSW / WeBOC User ID */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-300 block mb-1 font-medium">Sales Tax Reg. No (STRN)</label>
+                <input
+                  type="text"
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none font-mono"
+                  value={extracted.strnNumber || ''}
+                  onChange={(e) => updateExtractedData('strnNumber', e.target.value)}
+                  placeholder="e.g. 3277876123456"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1 font-medium">PSW / WeBOC Trader ID</label>
+                <input
+                  type="text"
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none font-mono"
+                  value={extracted.pswUserId || ''}
+                  onChange={(e) => updateExtractedData('pswUserId', e.target.value)}
+                  placeholder="e.g. PSW-TRD-99881"
+                />
+              </div>
+            </div>
+
+            {/* FBR Satellite Tracker ID & Regulatory Guarantee Ref */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-300 block mb-1 font-medium">FBR Satellite Tracker / E-Seal ID</label>
+                <input
+                  type="text"
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none font-mono"
+                  value={extracted.trackerId || ''}
+                  onChange={(e) => updateExtractedData('trackerId', e.target.value)}
+                  placeholder="e.g. FBR-TRK-77441"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-300 block mb-1 font-medium">
+                  {formData.category === 'Afghan Transit' 
+                    ? 'Jawaznama / Transit Pass No.' 
+                    : formData.category === 'TIR' 
+                    ? 'TIR Carnet Reference No.' 
+                    : 'Carrier Bond / Revolving Guarantee No.'}
+                </label>
+                <input
+                  type="text"
+                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none font-mono"
+                  value={extracted.jawaznamaNo || extracted.carrierBondNo || extracted.tirCarnetNo || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (formData.category === 'Afghan Transit') updateExtractedData('jawaznamaNo', val);
+                    else if (formData.category === 'TIR') updateExtractedData('tirCarnetNo', val);
+                    else updateExtractedData('carrierBondNo', val);
+                  }}
+                  placeholder="Reference number..."
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStep6_Containers = () => (
+    <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
+        <div>
+          <h3 className="text-lg sm:text-xl font-semibold text-white">Step 6: Container List</h3>
+          <p className="text-xs text-gray-400">Specify container numbers, sizes, and cargo weights</p>
+        </div>
+        <button 
+          type="button"
+          onClick={addContainer}
+          className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all self-start sm:self-auto"
+        >
+          <Box size={16} /> Add Container
+        </button>
+      </div>
+      
+      {/* Mobile View (Cards) - Optimized for vertical thumb scrolling */}
+      <div className="block sm:hidden space-y-3 touch-pan-y">
+        {formData.containers.map((c: any, index: number) => (
+          <div key={c.id} className="glass-panel border border-white/10 p-3.5 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-bold text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded">
+                Container #{index + 1}
+              </span>
+              <button 
+                type="button"
+                onClick={() => removeContainer(c.id)}
+                className="p-1 rounded text-red-400 hover:text-red-300 hover:bg-red-500/20 transition-colors"
+                title="Remove container"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-gray-400 uppercase font-semibold block mb-1">Container Number</label>
+              <input 
+                type="text" 
+                placeholder="e.g. MSKU1234567"
+                value={c.number} 
+                onChange={(e) => updateContainer(c.id, 'number', e.target.value)}
+                className="glass-input rounded-lg px-3 py-2 w-full outline-none text-sm text-white font-mono"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-semibold block mb-1">Size</label>
+                <select 
+                  value={c.size} 
+                  onChange={(e) => updateContainer(c.id, 'size', e.target.value)}
+                  className="glass-input rounded-lg px-2.5 py-2 w-full outline-none text-xs text-white bg-slate-900"
+                >
+                  <option value="20ft" className="bg-slate-900 text-white">20ft</option>
+                  <option value="40ft" className="bg-slate-900 text-white">40ft</option>
+                  <option value="45ft" className="bg-slate-900 text-white">45ft</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-semibold block mb-1">Weight (Kg)</label>
+                <input 
+                  type="number" 
+                  placeholder="0"
+                  value={c.weight} 
+                  onChange={(e) => updateContainer(c.id, 'weight', parseFloat(e.target.value) || 0)}
+                  className="glass-input rounded-lg px-2.5 py-2 w-full outline-none text-xs text-white"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] text-gray-400 uppercase font-semibold block mb-1">Seal Number (Optional)</label>
+              <input 
+                type="text" 
+                placeholder="e.g. SL-98765"
+                value={c.seal || ''} 
+                onChange={(e) => updateContainer(c.id, 'seal', e.target.value)}
+                className="glass-input rounded-lg px-3 py-2 w-full outline-none text-xs text-white"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop View (Table) */}
+      <div className="hidden sm:block glass-panel border border-white/10 rounded-xl overflow-hidden overflow-x-auto custom-scrollbar touch-pan-y">
+        <table className="w-full text-left text-sm text-gray-200 min-w-[650px]"> 
+          <thead className="bg-white/5 uppercase text-[11px] font-semibold text-gray-300 border-b border-white/10">
+            <tr>
+              <th className="p-3 sm:p-4 w-12 text-center">#</th>
+              <th className="p-3 sm:p-4">Container No</th>
+              <th className="p-3 sm:p-4 w-32">Size</th>
+              <th className="p-3 sm:p-4 w-36">Weight (Kg)</th>
+              <th className="p-3 sm:p-4 w-36">Seal No</th>
+              <th className="p-3 sm:p-4 w-16 text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {formData.containers.map((c: any, index: number) => (
+              <tr key={c.id} className="hover:bg-white/5 transition-colors">
+                <td className="p-3 text-center text-gray-400 font-mono text-xs">{index + 1}</td>
+                <td className="p-3">
+                  <input 
+                    type="text" 
+                    placeholder="e.g. MSKU1234567"
+                    value={c.number} 
+                    onChange={(e) => updateContainer(c.id, 'number', e.target.value)}
+                    className="glass-input rounded-lg px-3 py-1.5 w-full outline-none text-sm text-white font-mono"
+                  />
+                </td>
+                <td className="p-3">
+                  <select 
+                    value={c.size} 
+                    onChange={(e) => updateContainer(c.id, 'size', e.target.value)}
+                    className="glass-input rounded-lg px-3 py-1.5 w-full outline-none text-sm text-white bg-slate-900"
+                  >
+                    <option value="20ft" className="bg-slate-900 text-white">20ft</option>
+                    <option value="40ft" className="bg-slate-900 text-white">40ft</option>
+                    <option value="45ft" className="bg-slate-900 text-white">45ft</option>
+                  </select>
+                </td>
+                <td className="p-3">
+                  <input 
+                    type="number" 
+                    placeholder="0"
+                    value={c.weight} 
+                    onChange={(e) => updateContainer(c.id, 'weight', parseFloat(e.target.value) || 0)}
+                    className="glass-input rounded-lg px-3 py-1.5 w-full outline-none text-sm text-white"
+                  />
+                </td>
+                <td className="p-3">
+                  <input 
+                    type="text" 
+                    placeholder="Optional"
+                    value={c.seal || ''} 
+                    onChange={(e) => updateContainer(c.id, 'seal', e.target.value)}
+                    className="glass-input rounded-lg px-3 py-1.5 w-full outline-none text-sm text-white"
+                  />
+                </td>
+                <td className="p-3 text-center">
+                  <button 
+                    type="button"
+                    onClick={() => removeContainer(c.id)}
+                    className="p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/20 transition-colors"
+                    title="Remove container"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Customs Tariff & Service Bill Breakdown */}
+      <div className="glass-panel border border-amber-500/30 rounded-xl p-4 sm:p-5 space-y-4 bg-slate-900/80">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
+          <div>
+            <h4 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+              <FileText size={17} className="text-amber-400" />
+              <span>Customs Tariff & Service Bill Breakdown</span>
+            </h4>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Statutory billing heads & tariffs for {formData.category || 'Transit'} ({formData.containers.length || 1} container/unit)
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const std = getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length));
+                setFormData(prev => ({ ...prev, charges: std }));
+              }}
+              className="text-xs text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1 font-medium"
+              title="Reload statutory Pakistan Customs tariff for this category"
+            >
+              <FileCheck size={13} />
+              <span>Reload Statutory Tariff</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const newCharge: CaseCharge = {
+                  id: `ch_${Date.now()}`,
+                  category: formData.category,
+                  description: 'Port / Terminal Examination Surcharge',
+                  amount: 5000,
+                  taxable: true
+                };
+                setFormData(prev => ({ ...prev, charges: [...(prev.charges || []), newCharge] }));
+              }}
+              className="text-xs text-white bg-brand-600 hover:bg-brand-500 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 font-medium shadow-sm"
+            >
+              <Plus size={13} />
+              <span>Add Charge Item</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Charges Table */}
+        <div className="space-y-2">
+          {((formData.charges && formData.charges.length > 0)
+            ? formData.charges
+            : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length))
+          ).map((ch, cIdx) => (
+            <div key={cIdx} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-2.5 bg-white/5 border border-white/5 rounded-lg hover:border-white/10 transition-colors">
+              <div className="flex-1">
+                <input
+                  type="text"
+                  value={ch.description}
+                  onChange={(e) => {
+                    const currentList = (formData.charges && formData.charges.length > 0)
+                      ? [...formData.charges]
+                      : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length));
+                    currentList[cIdx] = { ...currentList[cIdx], description: e.target.value };
+                    setFormData(prev => ({ ...prev, charges: currentList }));
+                  }}
+                  placeholder="Charge description"
+                  className="w-full bg-transparent border-b border-white/15 focus:border-amber-400 text-xs sm:text-sm text-white px-2 py-1 outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <span className="text-xs text-gray-400 font-mono">PKR</span>
+                <input
+                  type="number"
+                  value={ch.amount}
+                  onChange={(e) => {
+                    const currentList = (formData.charges && formData.charges.length > 0)
+                      ? [...formData.charges]
+                      : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length));
+                    currentList[cIdx] = { ...currentList[cIdx], amount: parseFloat(e.target.value) || 0 };
+                    setFormData(prev => ({ ...prev, charges: currentList }));
+                  }}
+                  className="w-28 sm:w-32 bg-black/40 border border-white/15 rounded px-2 py-1 text-xs sm:text-sm text-right text-emerald-400 font-mono font-semibold outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentList = (formData.charges && formData.charges.length > 0)
+                      ? [...formData.charges]
+                      : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length));
+                    const updated = currentList.filter((_, idx) => idx !== cIdx);
+                    setFormData(prev => ({ ...prev, charges: updated }));
+                  }}
+                  className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/15 rounded transition-colors"
+                  title="Remove charge item"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Total Summary Footer */}
+        <div className="pt-3 border-t border-white/10 flex items-center justify-between">
+          <span className="text-xs sm:text-sm font-semibold uppercase text-gray-300">
+            Total Freight & Customs Billing:
+          </span>
+          <span className="text-base sm:text-lg font-bold text-amber-400 font-mono">
+            PKR {((formData.charges && formData.charges.length > 0)
+              ? formData.charges
+              : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length))
+            ).reduce((sum, item) => sum + (Number(item.amount) || 0), 0).toLocaleString()}
+          </span>
+        </div>
+      </div>
+
+      <div className="p-3.5 rounded-xl bg-slate-900/60 border border-white/10 text-xs text-gray-400 flex items-center gap-2.5">
+        <div className="p-1 rounded bg-brand-500/20 text-brand-300">
+          <Truck size={14} />
+        </div>
+        <span>
+          Vehicle allocation, driver credentials, and gate inspection photos are captured in Terminal and Dispatch Operations.
+        </span>
+      </div>
+    </div>
+  );
+
+  const renderStep7_Submit = () => (
+    <div className="text-center py-12 animate-in zoom-in duration-300">
+      <div className="bg-white/5 rounded-full w-24 h-24 flex items-center justify-center mx-auto mb-6 border-4 border-green-500/20 shadow-[0_0_30px_rgba(34,197,94,0.1)]">
+        <CheckCircle className="text-green-500" size={48} />
+      </div>
+      <h2 className="text-3xl font-bold text-white mb-2">Case Submitted Successfully</h2>
+      <p className="text-gray-400 mb-8 max-w-lg mx-auto">
+        Your case has been registered. Automated notifications have been sent to 
+        <strong className="text-brand-400"> Admin</strong>, 
+        <strong className="text-brand-400"> CRO</strong>, and 
+        <strong className="text-brand-400"> Operations Manager</strong>.
+      </p>
+      
+      <div className="glass-panel inline-block rounded-xl p-6 border border-white/10 mb-8 bg-white/5">
+        <p className="text-sm text-gray-400 uppercase mb-1 tracking-widest">Generated Case Number</p>
+        <p className="text-3xl font-mono text-brand-400 font-bold tracking-wider">{generatedCaseNo}</p>
+      </div>
+
+      <div className="flex justify-center gap-4">
+        <button onClick={() => { setView('list'); setStep(1); }} className="bg-white/10 hover:bg-white/20 text-white px-8 py-3 rounded-lg font-medium transition-colors border border-white/10">
+          View All Cases
+        </button>
+        <button onClick={handleStartRegistration} className="bg-brand-600 hover:bg-brand-500 text-white px-8 py-3 rounded-lg font-medium transition-all shadow-lg shadow-brand-600/30">
+          Create Another Case
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {view === 'list' && renderCaseList()}
+      {view === 'details' && renderCaseDetails()}
+      {view === 'register' && (
+        <div className="max-w-7xl mx-auto pb-12 w-full overflow-hidden">
+           <button onClick={() => setView('list')} className="text-gray-400 hover:text-white flex items-center gap-2 mb-4 text-sm font-medium transition-colors">
+              <ArrowLeft size={16} /> Cancel Registration
+           </button>
+           
+           <div className="glass-card rounded-2xl shadow-2xl flex flex-col relative w-full overflow-hidden">
+        {/* Stepper Header (hidden during full-page document reading) */}
+        {!isReadingDocuments && (
+          <div className="bg-black/30 p-3 sm:p-5 border-b border-white/5 backdrop-blur-sm z-20 rounded-t-2xl">
+            <div className="flex justify-between items-center relative max-w-xl mx-auto">
+              <div className="absolute top-1/2 left-0 w-full h-0.5 bg-white/10 -z-0 rounded"></div>
+              {[
+                { s: 1, label: 'Case & Documents' },
+                { s: 2, label: 'Data Review' },
+                { s: 3, label: 'Containers' },
+                { s: 4, label: 'Submit' }
+              ].map(({ s, label }) => (
+                <div key={s} className="relative z-10 flex flex-col items-center group cursor-default">
+                  <div 
+                    className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-xs sm:text-sm font-bold border-2 sm:border-4 transition-all duration-300 shadow-lg
+                      ${step >= s 
+                        ? 'bg-brand-600 text-white border-brand-900/50 scale-105 sm:scale-110 shadow-brand-500/30' 
+                        : 'bg-slate-900 text-gray-600 border-slate-800'}`}
+                  >
+                    {s}
+                  </div>
+                  <span className={`text-[11px] mt-1.5 font-medium whitespace-nowrap hidden sm:block ${step >= s ? 'text-brand-300' : 'text-gray-500'}`}>
+                    {label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Content Area */}
+        <div className="p-3 sm:p-6 flex-1 w-full overflow-hidden">
+          {isReadingDocuments ? (
+            <div className="min-h-[380px] sm:min-h-[440px] flex flex-col justify-center items-center w-full">
+              {renderDocumentReadingView()}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {step === 1 && renderStep1_Merged()}
+              {step === 2 && renderStep5_DataReview()}
+              {step === 3 && renderStep6_Containers()}
+              {step === 4 && renderStep7_Submit()}
+            </div>
+          )}
+        </div>
+
+        {step < 4 && !isReadingDocuments && (
+          <div className="p-3 sm:p-5 bg-slate-900/95 border-t border-white/10 flex justify-between items-center backdrop-blur-md z-20 sticky bottom-0 rounded-b-2xl shadow-xl">
+            <button 
+              disabled={step === 1}
+              onClick={() => setStep(s => s - 1)}
+              className={`px-3 sm:px-6 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${step === 1 ? 'opacity-0 cursor-default pointer-events-none' : 'text-gray-400 hover:text-white hover:bg-white/10'}`}
+            >
+              ← Back
+            </button>
+            <button 
+              onClick={() => {
+                if (step === 1) {
+                  if (!generatedCaseNo) {
+                    const freshCaseNo = generateCaseNumber();
+                    setGeneratedCaseNo(freshCaseNo);
+                    safeAppStorage.setItem('dpl_reg_caseno', freshCaseNo);
+                  }
+                  if (isOtherClient && otherClientName.trim()) {
+                    const trimmed = otherClientName.trim();
+                    saveClientToFirestore({ name: trimmed }).catch(() => {});
+                    if (!registeredClients.includes(trimmed)) {
+                      setRegisteredClients(prev => [...prev, trimmed]);
+                    }
+                  }
+                  if (files.length > 0 || uploadedDocs.length > 0) {
+                    triggerDocumentReading();
+                    return;
+                  }
+                  setStep(2);
+                  return;
+                }
+                if (step === 2) {
+                  // Auto-add container if empty when entering container step
+                  if (formData.containers.length === 0) {
+                    const totalWeight = formData.extractedData.totalWeight || 0;
+                    const extractedCntr = formData.extractedData.containerNo || `CNTR-${Math.floor(Math.random()*10000)}`;
+                    const extractedSize = formData.extractedData.containerSize || '40ft';
+                    setFormData(prev => ({
+                      ...prev,
+                      containers: [
+                        { 
+                          id: Date.now(), 
+                          number: extractedCntr, 
+                          size: (extractedSize === '20ft' || extractedSize === '45ft') ? extractedSize : '40ft', 
+                          weight: totalWeight,
+                          sealNo: prev.extractedData.sealNo || '',
+                          status: 'Pending'
+                        }
+                      ]
+                    }));
+                  }
+                  setStep(3);
+                  return;
+                }
+                if (step === 3) {
+                  handleFinalSubmit();
+                  return;
+                }
+                setStep(s => s + 1);
+              }}
+              disabled={
+                step === 1 && (files.length === 0 && uploadedDocs.length === 0) && (!formData.client || !formData.client.trim() || !formData.category)
+              }
+              className={`bg-brand-600 hover:bg-brand-500 text-white px-5 sm:px-8 py-2.5 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              <span>
+                {step === 3
+                  ? 'Submit Case' 
+                  : step === 1 && (files.length > 0 || uploadedDocs.length > 0)
+                    ? 'Scan Documents & Continue'
+                    : step === 2
+                      ? 'Next: Containers'
+                      : 'Next Step'}
+              </span>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+    )}
+
+      {/* Global Camera Modal */}
+      {showCamera && (
+        <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4 no-print">
+           <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-2xl w-full border border-white/10 shadow-2xl">
+              <div className="relative">
+                 <video ref={videoRef} autoPlay playsInline className="w-full bg-black h-96 object-cover" />
+                 <button onClick={stopCamera} className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full hover:bg-red-500 transition-colors">
+                    <X size={24} />
+                 </button>
+              </div>
+              <div className="p-6 flex flex-col items-center">
+                 <p className="text-gray-400 mb-4 text-sm">Align document within the frame</p>
+                 <button onClick={captureImage} className="w-16 h-16 rounded-full border-4 border-white flex items-center justify-center hover:bg-white/20 transition-all">
+                    <div className="w-12 h-12 bg-white rounded-full"></div>
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Global Lightbox Modal */}
+      {lightboxImage && (
+         <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4 backdrop-blur-sm cursor-zoom-out no-print" onClick={() => setLightboxImage(null)}>
+            <button className="absolute top-6 right-6 text-white/50 hover:text-white bg-black/50 hover:bg-black/80 rounded-full p-2 transition-all">
+               <X size={32} />
+            </button>
+            <img src={lightboxImage} alt="Document View" className="max-w-full max-h-[90vh] object-contain shadow-2xl border border-white/10" />
+         </div>
+      )}
+
+      {/* Add Custom Charge Modal */}
+      {showAddChargeModal && (
+        <div 
+          className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm no-print overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowAddChargeModal(false);
+              setIsAddingNewCategory(false);
+            }
+          }}
+        >
+          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-lg w-full border border-white/15 shadow-2xl animate-fade-in my-8">
+            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-950/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-brand-500/10 text-brand-400 flex items-center justify-center border border-brand-500/20">
+                  <Receipt size={18} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Add Billing Charge</h3>
+                  <p className="text-xs text-gray-400">Select charge category, amount and attach payment receipt</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowAddChargeModal(false);
+                  setIsAddingNewCategory(false);
+                }}
+                className="text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Charge Category Selection */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                  Select Charge Category
+                </label>
+                <select
+                  value={selectedChargeCategory}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedChargeCategory(val);
+                    if (val && val !== '__CUSTOM__') {
+                      setNewChargeDesc(val);
+                    } else if (val === '__CUSTOM__') {
+                      setNewChargeDesc('');
+                    }
+                  }}
+                  className="w-full bg-slate-800 border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500 transition-colors"
+                >
+                  <option value="">-- Select Category --</option>
+                  <optgroup label="Standard Customs & Shipping Charges">
+                    {STANDARD_CHARGE_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </optgroup>
+                  {customChargeCategories.length > 0 && (
+                    <optgroup label="Custom Created Categories">
+                      {customChargeCategories.map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <option value="__CUSTOM__">✍ Custom Category...</option>
+                </select>
+
+                {/* Button to Add New Category */}
+                <div className="mt-2 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingNewCategory(prev => !prev)}
+                    className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 font-medium transition-colors"
+                  >
+                    <Plus size={13} />
+                    <span>+ Add New Charge Category</span>
+                  </button>
+                  {customChargeCategories.length > 0 && (
+                    <span className="text-[11px] text-gray-500">
+                      {customChargeCategories.length} custom {customChargeCategories.length === 1 ? 'category' : 'categories'} available
+                    </span>
+                  )}
+                </div>
+
+                {/* Inline New Category Creation Box */}
+                {isAddingNewCategory && (
+                  <div className="mt-2.5 p-3 rounded-xl bg-slate-950/80 border border-amber-500/30 space-y-2">
+                    <p className="text-xs text-gray-300 font-medium">
+                      Enter new charge category name (will be saved across all cases):
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newCategoryInput}
+                        onChange={(e) => setNewCategoryInput(e.target.value)}
+                        placeholder="e.g. Scanning Surcharge, Security Escort Fee..."
+                        className="flex-1 bg-slate-900 border border-white/15 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-amber-400"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (newCategoryInput.trim()) {
+                              const trimmed = newCategoryInput.trim();
+                              const updatedCats = Array.from(new Set([...customChargeCategories, trimmed]));
+                              setCustomChargeCategories(updatedCats);
+                              safeLocalStorage.setItem('custom_billing_categories', JSON.stringify(updatedCats));
+                              setSelectedChargeCategory(trimmed);
+                              setNewChargeDesc(trimmed);
+                              setNewCategoryInput('');
+                              setIsAddingNewCategory(false);
+                            }
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (newCategoryInput.trim()) {
+                            const trimmed = newCategoryInput.trim();
+                            const updatedCats = Array.from(new Set([...customChargeCategories, trimmed]));
+                            setCustomChargeCategories(updatedCats);
+                            safeLocalStorage.setItem('custom_billing_categories', JSON.stringify(updatedCats));
+                            setSelectedChargeCategory(trimmed);
+                            setNewChargeDesc(trimmed);
+                            setNewCategoryInput('');
+                            setIsAddingNewCategory(false);
+                          }
+                        }}
+                        disabled={!newCategoryInput.trim()}
+                        className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-semibold text-xs transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingNewCategory(false);
+                          setNewCategoryInput('');
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 text-xs transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Service / Item Description */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                  Service / Item Description
+                </label>
+                <input 
+                  type="text"
+                  value={newChargeDesc}
+                  onChange={(e) => setNewChargeDesc(e.target.value)}
+                  placeholder="e.g. Weighbridge charges, Terminal detention, Wharfage surcharge"
+                  className="w-full bg-slate-800 border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 transition-colors"
+                />
+              </div>
+
+              {/* Amount (PKR) */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                  Amount in PKR
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-mono text-gray-400 font-bold">
+                    PKR
+                  </span>
+                  <input 
+                    type="number"
+                    value={newChargeAmount}
+                    onChange={(e) => setNewChargeAmount(e.target.value)}
+                    placeholder="e.g. 15000"
+                    className="w-full bg-slate-800 border border-white/10 rounded-xl pl-14 pr-3.5 py-2.5 text-sm font-mono font-semibold text-emerald-400 placeholder-gray-500 focus:outline-none focus:border-brand-500 transition-colors"
+                  />
+                </div>
+              </div>
+
+              {/* Receipt Upload Option */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-1.5">
+                  Upload Payment Receipt / Voucher
+                </label>
+                
+                {newChargeReceipt ? (
+                  <div className="p-3 rounded-xl bg-slate-800 border border-emerald-500/30 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0">
+                        {newChargeReceipt.name.toLowerCase().endsWith('.pdf') ? (
+                          <FileText size={18} />
+                        ) : (
+                          <Receipt size={18} />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-white truncate">{newChargeReceipt.name}</p>
+                        <p className="text-[10px] text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 size={10} /> Receipt Attached
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setLightboxImage(newChargeReceipt.url)}
+                        className="p-1.5 text-gray-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg text-xs transition-colors"
+                        title="Preview"
+                      >
+                        <Eye size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewChargeReceipt(null)}
+                        className="p-1.5 text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-xs transition-colors"
+                        title="Remove"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="border-2 border-dashed border-white/15 hover:border-brand-400/50 rounded-xl p-4 flex flex-col items-center justify-center gap-1.5 cursor-pointer bg-slate-800/40 hover:bg-slate-800/80 transition-all text-center">
+                    {isUploadingReceipt ? (
+                      <Loader2 size={22} className="text-brand-400 animate-spin" />
+                    ) : (
+                      <UploadCloud size={22} className="text-gray-400" />
+                    )}
+                    <span className="text-xs font-medium text-gray-300">
+                      {isUploadingReceipt ? 'Processing receipt...' : 'Click to browse or drop payment receipt / voucher'}
+                    </span>
+                    <span className="text-[10px] text-gray-500">
+                      Supports JPG, PNG, WEBP or PDF receipt document
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      disabled={isUploadingReceipt}
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setIsUploadingReceipt(true);
+                        try {
+                          const proc = await compressAndPrepareFile(file);
+                          const dataUrl = proc?.dataUrl || proc?.base64 || '';
+                          setNewChargeReceipt({ url: dataUrl, name: file.name });
+                        } catch (err) {
+                          console.warn("Failed compression, fallback to FileReader:", err);
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            setNewChargeReceipt({ url: reader.result as string, name: file.name });
+                          };
+                          reader.readAsDataURL(file);
+                        } finally {
+                          setIsUploadingReceipt(false);
+                        }
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-white/10 bg-slate-950/50 flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddChargeModal(false);
+                  setIsAddingNewCategory(false);
+                  setNewChargeReceipt(null);
+                }}
+                className="px-4 py-2 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!newChargeDesc.trim() || !newChargeAmount) return;
+                  const active = selectedCase;
+                  if (!active) return;
+                  const currentCharges = (active.charges && active.charges.length > 0)
+                    ? [...active.charges]
+                    : [...getStandardChargesForCategory(active.category, active.containers?.length || 1)];
+                  
+                  const updatedCharges = [
+                    ...currentCharges,
+                    {
+                      id: `chg_${Date.now()}`,
+                      category: selectedChargeCategory || active.category,
+                      description: newChargeDesc.trim(),
+                      amount: parseFloat(newChargeAmount) || 0,
+                      receiptUrl: newChargeReceipt?.url,
+                      receiptName: newChargeReceipt?.name,
+                    }
+                  ];
+
+                  const updatedCase = { ...active, charges: updatedCharges };
+                  setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
+                  setSelectedCase(updatedCase);
+                  if (isEditingCase) setEditedCase(updatedCase);
+                  updateCaseInFirestore(updatedCase).catch(e => console.warn("Firestore charge error:", e));
+                  setShowAddChargeModal(false);
+                  setSelectedChargeCategory('');
+                  setNewChargeDesc('');
+                  setNewChargeAmount('');
+                  setNewChargeReceipt(null);
+                  setIsAddingNewCategory(false);
+                }}
+                disabled={!newChargeDesc.trim() || !newChargeAmount || isUploadingReceipt}
+                className="bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white px-5 py-2 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-brand-600/30 flex items-center gap-1.5"
+              >
+                <Save size={15} />
+                <span>Save Charge</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8-Step Streamlined Workflow Interactive Modal */}
+      {showStepModal && selectedStepStatus && selectedCase && (
+        <WorkflowStepModal
+          isOpen={showStepModal}
+          onClose={() => setShowStepModal(false)}
+          targetCase={selectedCase}
+          stepStatus={selectedStepStatus}
+          stepIndex={stepModalIndex}
+          userRole={mockUserRole}
+          onSaveCase={(updatedCase) => {
+            setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
+            setSelectedCase(updatedCase);
+            if (isEditingCase) setEditedCase(updatedCase);
+            updateCaseInFirestore(updatedCase).catch(e => console.warn("Firestore step update error:", e));
+          }}
+          onReportIncident={(caseWithIncident) => {
+            setCases(prev => prev.map(c => c.id === caseWithIncident.id ? caseWithIncident : c));
+            setSelectedCase(caseWithIncident);
+            if (isEditingCase) setEditedCase(caseWithIncident);
+            updateCaseInFirestore(caseWithIncident).catch(e => console.warn("Firestore incident error:", e));
+            setActiveWorkflowTab('incident_vault');
+          }}
+        />
+      )}
+
+      {/* Download Documents Modal */}
+      {showDownloadDocsModal && selectedCase && (
+        <div 
+          className="fixed inset-0 bg-black/75 z-[100] flex items-center justify-center p-4 backdrop-blur-sm no-print"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowDownloadDocsModal(false);
+          }}
+        >
+          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-xl w-full border border-white/15 shadow-2xl animate-fade-in max-h-[92vh] flex flex-col">
+            {/* Header */}
+            <div className="p-5 sm:p-6 border-b border-white/10 flex justify-between items-center bg-slate-950/60 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-brand-500/15 text-brand-400 flex items-center justify-center border border-brand-500/30">
+                  <Download size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <span>Download Documents</span>
+                    
+                  </h3>
+                  <p className="text-xs text-gray-400 font-mono">Case No: {selectedCase.caseNo}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowDownloadDocsModal(false)}
+                className="text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="p-5 sm:p-6 space-y-4 overflow-y-auto">
+              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                Select Document to Download:
+              </p>
+
+              {/* Options Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 1. Case Details */}
+                <div 
+                  onClick={() => setSelectedDownloadType('caseDetails')}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                    selectedDownloadType === 'caseDetails'
+                      ? 'bg-brand-600/15 border-brand-500 ring-2 ring-brand-500/30 shadow-lg shadow-brand-600/10'
+                      : 'bg-white/[0.02] border-white/10 hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <input 
+                      type="radio" 
+                      name="downloadChoice" 
+                      checked={selectedDownloadType === 'caseDetails'} 
+                      onChange={() => setSelectedDownloadType('caseDetails')}
+                      className="accent-brand-500 w-4 h-4 mt-0.5"
+                    />
+                    <div>
+                      <h4 className="font-bold text-white text-sm">Case Details</h4>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Print or download full single-page case summary with all particulars and metadata.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-brand-300 bg-brand-500/10 px-2 py-0.5 rounded border border-brand-500/20 self-start mt-3">
+                    Single Page Document
+                  </span>
+                </div>
+
+                {/* 2. Invoice */}
+                <div 
+                  onClick={() => setSelectedDownloadType('invoice')}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                    selectedDownloadType === 'invoice'
+                      ? 'bg-brand-600/15 border-brand-500 ring-2 ring-brand-500/30 shadow-lg shadow-brand-600/10'
+                      : 'bg-white/[0.02] border-white/10 hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <input 
+                      type="radio" 
+                      name="downloadChoice" 
+                      checked={selectedDownloadType === 'invoice'} 
+                      onChange={() => setSelectedDownloadType('invoice')}
+                      className="accent-brand-500 w-4 h-4 mt-0.5"
+                    />
+                    <div>
+                      <h4 className="font-bold text-white text-sm">Commercial Invoice</h4>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Official billing breakdown and disbursed charges with corporate endorsement.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 self-start mt-3">
+                    Itemized Billing Charges
+                  </span>
+                </div>
+
+                {/* 3. Attached Documents */}
+                <div 
+                  onClick={() => setSelectedDownloadType('attachments')}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                    selectedDownloadType === 'attachments'
+                      ? 'bg-brand-600/15 border-brand-500 ring-2 ring-brand-500/30 shadow-lg shadow-brand-600/10'
+                      : 'bg-white/[0.02] border-white/10 hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <input 
+                      type="radio" 
+                      name="downloadChoice" 
+                      checked={selectedDownloadType === 'attachments'} 
+                      onChange={() => setSelectedDownloadType('attachments')}
+                      className="accent-brand-500 w-4 h-4 mt-0.5"
+                    />
+                    <div>
+                      <h4 className="font-bold text-white text-sm">Attached Shipping Documents</h4>
+                      <p className="text-xs text-gray-400 mt-1">
+                        All scanned shipping paperwork including BL, GD, packing lists, and verification photos.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 self-start mt-3">
+                    {selectedCase.documents?.length || 0} Attached File(s)
+                  </span>
+                </div>
+
+                {/* 4. All Documents */}
+                <div 
+                  onClick={() => setSelectedDownloadType('all')}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
+                    selectedDownloadType === 'all'
+                      ? 'bg-brand-600/15 border-brand-500 ring-2 ring-brand-500/30 shadow-lg shadow-brand-600/10'
+                      : 'bg-white/[0.02] border-white/10 hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <input 
+                      type="radio" 
+                      name="downloadChoice" 
+                      checked={selectedDownloadType === 'all'} 
+                      onChange={() => setSelectedDownloadType('all')}
+                      className="accent-brand-500 w-4 h-4 mt-0.5"
+                    />
+                    <div>
+                      <h4 className="font-bold text-white text-sm">Complete Unified Dossier</h4>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Comprehensive unified package combining Case Details, Commercial Invoice, and all attachments.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 self-start mt-3">
+                    Complete Unified Dossier
+                  </span>
+                </div>
+              </div>
+
+              {/* If Attached Documents is selected, render list of individual files for direct access */}
+              {selectedDownloadType === 'attachments' && (
+                <div className="pt-2 border-t border-white/10 space-y-2">
+                  <h5 className="text-xs font-semibold text-gray-300 flex items-center justify-between">
+                    <span>Attached Files List:</span>
+                    <span className="text-gray-400 font-normal">{selectedCase.documents?.length || 0} files</span>
+                  </h5>
+                  {selectedCase.documents && selectedCase.documents.length > 0 ? (
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {selectedCase.documents.map((doc: any, idx: number) => {
+                        const docName = doc.name || `Document_${idx + 1}`;
+                        const docCategory = doc.docCategory || doc.type || 'Customs Doc';
+                        const docSrc = doc.url || (doc instanceof File ? URL.createObjectURL(doc) : '');
+
+                        return (
+                          <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg bg-slate-800/80 border border-white/5 text-xs">
+                            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                              <FileText size={16} className="text-brand-400 shrink-0" />
+                              <div className="truncate">
+                                <p className="text-white font-medium truncate">{docName}</p>
+                                <span className="text-[10px] text-gray-400">{docCategory}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {docSrc && (
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxImage(docSrc)}
+                                  className="text-gray-300 hover:text-white bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded transition-colors"
+                                  title="Preview Document"
+                                >
+                                  View
+                                </button>
+                              )}
+                              {docSrc && (
+                                <a
+                                  href={docSrc}
+                                  download={docName}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-brand-400 hover:text-brand-300 bg-brand-500/10 hover:bg-brand-500/20 px-2.5 py-1 rounded border border-brand-500/20 transition-colors flex items-center gap-1"
+                                  title="Download File"
+                                >
+                                  <Download size={12} />
+                                  <span>Save</span>
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400 italic py-2">
+                      No document attachments currently uploaded for this case.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* If Invoice or All is selected, and there are charge receipts, list them for direct download */}
+              {(selectedDownloadType === 'invoice' || selectedDownloadType === 'all' || selectedDownloadType === 'attachments') && (
+                selectedCase.charges?.some((c: any) => c.receiptUrl) && (
+                  <div className="pt-2 border-t border-white/10 space-y-2">
+                    <h5 className="text-xs font-semibold text-gray-300 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Receipt size={14} className="text-emerald-400" />
+                        <span>Attached Payment Receipts:</span>
+                      </span>
+                      <span className="text-xs text-emerald-400 font-mono">
+                        {selectedCase.charges.filter((c: any) => c.receiptUrl).length} receipt(s)
+                      </span>
+                    </h5>
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      {selectedCase.charges.filter((c: any) => c.receiptUrl).map((ch: any, rIdx: number) => (
+                        <div key={rIdx} className="flex items-center justify-between p-2 rounded-lg bg-slate-800/80 border border-white/5 text-xs">
+                          <div className="truncate pr-2">
+                            <p className="text-white font-medium truncate">{ch.description}</p>
+                            <span className="text-[10px] text-emerald-400 font-mono">PKR {Number(ch.amount || 0).toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setLightboxImage(ch.receiptUrl)}
+                              className="text-gray-300 hover:text-white bg-white/5 hover:bg-white/10 px-2 py-1 rounded text-xs transition-colors"
+                              title="Preview Receipt"
+                            >
+                              View
+                            </button>
+                            <a
+                              href={ch.receiptUrl}
+                              download={ch.receiptName || `Receipt_${ch.description.replace(/\s+/g, '_')}.png`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 px-2 py-1 rounded border border-emerald-500/30 transition-colors flex items-center gap-1"
+                              title="Download Receipt"
+                            >
+                              <Download size={11} />
+                              <span>Download</span>
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              )}
+
+              {/* Status / Success Banner */}
+              {pdfDownloadSuccess && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between gap-3 text-xs text-emerald-300">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={16} className="shrink-0" />
+                    <span>File ready: <strong>{pdfDownloadSuccess}</strong></span>
+                  </div>
+                  {directDownloadUrl && (
+                    <a
+                      href={directDownloadUrl}
+                      download={directDownloadFilename || 'Document.pdf'}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg font-medium transition-all"
+                    >
+                      Save File
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {pdfDownloadError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-2 text-xs text-red-300">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span>{pdfDownloadError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-5 sm:p-6 border-t border-white/10 bg-slate-950/60 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowDownloadDocsModal(false)}
+                className="px-4 py-2 rounded-xl text-xs sm:text-sm text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                Close
+              </button>
+
+              <div className="flex items-center gap-2">
+                {/* Print Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const opts = {
+                      withAttachments: selectedDownloadType === 'attachments' || selectedDownloadType === 'all',
+                      withInvoice: selectedDownloadType === 'invoice' || selectedDownloadType === 'all',
+                      onlyInvoice: selectedDownloadType === 'invoice'
+                    };
+                    if (selectedCase) {
+                      setSelectedCase(selectedCase);
+                    }
+                    setPrintOptions(opts);
+                    setShowDownloadDocsModal(false);
+                    setTimeout(() => {
+                      window.focus();
+                      window.print();
+                    }, 200);
+                  }}
+                  className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-colors"
+                  title="Print to connected paper or WiFi printer"
+                >
+                  <Printer size={15} />
+                  <span>Print Page</span>
+                </button>
+
+                {/* Primary Download PDF Button */}
+                <button
+                  type="button"
+                  disabled={isDownloadingPdf}
+                  onClick={() => {
+                    if (selectedDownloadType === 'caseDetails') {
+                      handleDownloadPdfFile(selectedCase, {
+                        onlyCaseDetails: true,
+                        withInvoice: false,
+                        withAttachments: false
+                      });
+                    } else if (selectedDownloadType === 'invoice') {
+                      handleDownloadPdfFile(selectedCase, {
+                        onlyInvoice: true,
+                        withInvoice: true,
+                        withAttachments: false,
+                        onlyCaseDetails: false
+                      });
+                    } else if (selectedDownloadType === 'attachments') {
+                      handleDownloadPdfFile(selectedCase, {
+                        withAttachments: true,
+                        withInvoice: false,
+                        onlyInvoice: false,
+                        onlyCaseDetails: false
+                      });
+                    } else {
+                      handleDownloadPdfFile(selectedCase, {
+                        withAttachments: true,
+                        withInvoice: true,
+                        onlyInvoice: false,
+                        onlyCaseDetails: false
+                      });
+                    }
+                  }}
+                  className="bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-105 active:scale-95"
+                >
+                  {isDownloadingPdf ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Generating PDF...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download size={16} />
+                      <span>Download PDF</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Print Options Modal (Universally available in Case Details & Management) */}
+      {showPrintModal && (
+        <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={(e) => {
+          if (e.target === e.currentTarget) setShowPrintModal(false);
+        }}>
+          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-md w-full border border-white/15 shadow-2xl animate-fade-in">
+            <div className="p-5 sm:p-6 border-b border-white/10 flex justify-between items-center bg-slate-950/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-brand-500/10 text-brand-400 flex items-center justify-center border border-brand-500/20">
+                  <Printer size={18} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Print Dossier</h3>
+                  <p className="text-xs text-gray-400">Select components for physical print or PDF export</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowPrintModal(false)} 
+                className="text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-5 sm:p-6 space-y-3">
+               <label className="flex items-start gap-3 p-3.5 rounded-xl border border-white/10 hover:border-brand-500/40 hover:bg-white/5 cursor-pointer transition-all bg-white/[0.02]">
+                  <input 
+                    type="checkbox" 
+                    checked={printOptions.withAttachments} 
+                    onChange={(e) => setPrintOptions({...printOptions, withAttachments: e.target.checked})} 
+                    className="w-5 h-5 accent-brand-500 rounded mt-0.5" 
+                  />
+                  <div>
+                    <p className="text-white font-medium text-sm">Include Attached Files & Documents</p>
+                    <p className="text-gray-400 text-xs mt-0.5">Attach copies of scanned BL, GD, and custom documents</p>
+                  </div>
+               </label>
+               
+               <label className="flex items-start gap-3 p-3.5 rounded-xl border border-white/10 hover:border-brand-500/40 hover:bg-white/5 cursor-pointer transition-all bg-white/[0.02]">
+                  <input 
+                    type="checkbox" 
+                    checked={printOptions.withInvoice} 
+                    onChange={(e) => setPrintOptions({...printOptions, withInvoice: e.target.checked, onlyInvoice: false})} 
+                    className="w-5 h-5 accent-brand-500 rounded mt-0.5" 
+                  />
+                  <div>
+                    <p className="text-white font-medium text-sm">Include Commercial Invoice</p>
+                    <p className="text-gray-400 text-xs mt-0.5">Append freight terminal charges and official payment voucher</p>
+                  </div>
+               </label>
+
+               <label className="flex items-start gap-3 p-3.5 rounded-xl border border-white/10 hover:border-brand-500/40 hover:bg-white/5 cursor-pointer transition-all bg-white/[0.02]">
+                  <input 
+                    type="checkbox" 
+                    checked={printOptions.onlyInvoice} 
+                    onChange={(e) => {
+                        setPrintOptions({ withAttachments: false, withInvoice: false, onlyInvoice: e.target.checked });
+                    }} 
+                    className="w-5 h-5 accent-brand-500 rounded mt-0.5" 
+                  />
+                  <div>
+                    <p className="text-white font-medium text-sm">Invoice Only</p>
+                    <p className="text-gray-400 text-xs mt-0.5">Print only the commercial freight invoice without case details</p>
+                  </div>
+               </label>
+
+               {/* In-progress status banner */}
+               {isDownloadingPdf && (
+                 <div className="p-3 bg-brand-500/10 border border-brand-500/30 rounded-xl flex items-center gap-3 text-brand-300 text-xs animate-pulse">
+                    <Loader2 size={18} className="animate-spin text-brand-400 shrink-0" />
+                    <span>Generating & downloading PDF...</span>
+                 </div>
+               )}
+
+               {/* Success notification banner */}
+               {pdfDownloadSuccess && (
+                 <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl space-y-1.5 text-xs text-emerald-300 animate-fade-in">
+                    <div className="flex items-center gap-2">
+                       <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
+                       <span className="font-semibold text-white">File successfully downloaded! ({pdfDownloadSuccess})</span>
+                    </div>
+                    <p className="text-gray-300 text-[11px] pl-6">
+                      The PDF is saved in your mobile Downloads folder.
+                    </p>
+                    {directDownloadUrl && (
+                      <div className="pl-6 pt-1">
+                        <a 
+                          href={directDownloadUrl} 
+                          download={directDownloadFilename}
+                          className="inline-flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 underline font-bold"
+                        >
+                          <Download size={13} /> Tap here to download again
+                        </a>
+                      </div>
+                    )}
+                 </div>
+               )}
+
+               {/* Error notification banner */}
+               {pdfDownloadError && (
+                 <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-2 text-red-300 text-xs">
+                    <AlertCircle size={18} className="text-red-400 shrink-0" />
+                    <span>{pdfDownloadError}</span>
+                 </div>
+               )}
+            </div>
+
+            <div className="p-4 sm:p-5 bg-black/40 border-t border-white/10 flex flex-wrap justify-between items-center gap-3">
+              <button 
+                type="button"
+                onClick={() => {
+                  setShowPrintModal(false);
+                  setPdfDownloadSuccess(null);
+                  setPdfDownloadError(null);
+                }} 
+                className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+              >
+                Close
+              </button>
+              
+              <div className="flex items-center gap-2">
+                {/* Secondary: Browser Print */}
+                <button 
+                  type="button"
+                  onClick={() => {
+                     try {
+                       window.focus();
+                       window.print();
+                     } catch (err) {
+                       console.error("Print execution failed:", err);
+                     }
+                  }} 
+                  className="bg-slate-800 hover:bg-slate-700 text-gray-300 px-3.5 py-2.5 rounded-xl font-medium border border-white/10 flex items-center gap-1.5 text-xs transition-all"
+                  title="Send to WiFi/Physical Printer"
+                >
+                   <Printer size={15} /> Physical Print
+                </button>
+
+                {/* Primary: Real PDF File Download */}
+                <button 
+                  type="button"
+                  disabled={isDownloadingPdf}
+                  onClick={() => handleDownloadPdfFile(selectedCase)} 
+                  className="bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-semibold shadow-lg shadow-emerald-600/30 flex items-center gap-2 text-sm transition-all"
+                  id="btn-download-pdf-dossier"
+                >
+                   {isDownloadingPdf ? (
+                     <>
+                       <Loader2 size={16} className="animate-spin" />
+                       <span>Downloading...</span>
+                     </>
+                   ) : (
+                     <>
+                       <Download size={16} />
+                       <span>Download & Save PDF</span>
+                     </>
+                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pakistan Customs & International Logistics Statutory Compliance Guide Modal */}
+      {showCustomsGuideModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6 animate-in fade-in">
+          <div className="bg-slate-900 border border-amber-500/30 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-white/10 bg-black/40 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <FileCheck size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <span>Pakistan Customs Act & Regulatory Compliance Guide</span>
+                    <span className="text-[10px] bg-amber-500/20 text-amber-300 font-mono px-2 py-0.5 rounded border border-amber-500/30">
+                      FBR / WeBOC / PSW
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-400">
+                    Statutory acts, required documents, procedures & standard tariffs for all 10 logistics services
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowCustomsGuideModal(false)}
+                className="p-2 rounded-xl text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content Body: Left Categories List, Right Details */}
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
+              {/* Categories Sidebar */}
+              <div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-white/10 overflow-y-auto bg-black/20 p-2 space-y-1 shrink-0">
+                {CATEGORIES.map(cat => {
+                  const isSelected = activeGuideCategory === cat;
+                  const item = PAKISTAN_CUSTOMS_COMPLIANCE[cat];
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setActiveGuideCategory(cat)}
+                      className={`w-full text-left p-2.5 rounded-xl text-xs transition-all flex items-center justify-between ${
+                        isSelected 
+                          ? 'bg-amber-500/20 border border-amber-500/40 text-amber-200 font-semibold shadow-sm' 
+                          : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
+                      }`}
+                    >
+                      <div className="truncate min-w-0 pr-2">
+                        <p className="truncate">{cat}</p>
+                        {item && (
+                          <p className="text-[10px] text-gray-500 font-mono truncate">
+                            {item.id.toUpperCase()}
+                          </p>
+                        )}
+                      </div>
+                      {isSelected && <ChevronRight size={14} className="text-amber-400 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Selected Service Compliance Breakdown */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 bg-slate-900/40">
+                {PAKISTAN_CUSTOMS_COMPLIANCE[activeGuideCategory] ? (
+                  (() => {
+                    const detail = PAKISTAN_CUSTOMS_COMPLIANCE[activeGuideCategory];
+                    return (
+                      <div className="space-y-5">
+                        {/* Title & Acts Badge */}
+                        <div className="space-y-2 border-b border-white/10 pb-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h4 className="text-lg font-bold text-white flex items-center gap-2">
+                              <span>{detail.name}</span>
+                            </h4>
+                            <span className="text-xs bg-amber-500/20 text-amber-300 font-mono px-2.5 py-1 rounded-full border border-amber-500/30">
+                              {detail.legalAct}
+                            </span>
+                          </div>
+                          <p className="text-xs text-brand-300 font-medium font-mono">
+                            Statutory Reference: {detail.customsRulesRef}
+                          </p>
+                        </div>
+
+                        {/* Procedure Summary */}
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-1.5">
+                          <p className="text-xs text-amber-400 font-semibold uppercase tracking-wider">Customs & Regulatory Procedure</p>
+                          <p className="text-xs sm:text-sm text-gray-200 leading-relaxed">
+                            {detail.procedureSummary}
+                          </p>
+                        </div>
+
+                        {/* Mandatory Fields & Compliance Checklist */}
+                        <div className="space-y-2">
+                          <p className="text-xs text-gray-300 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                            <FileCheck size={14} className="text-emerald-400" />
+                            <span>Mandatory Documents & Data Required by Law:</span>
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {detail.mandatoryFields.map((field, idx) => (
+                              <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-black/40 border border-white/5 text-xs text-gray-300">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
+                                <span>{field}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Standard Tariff & Billing Heads */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-gray-300 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                              <FileText size={14} className="text-amber-400" />
+                              <span>Statutory & Standard Tariff Heads (PKR):</span>
+                            </p>
+                            <span className="text-xs font-mono font-bold text-amber-400">
+                              Total: PKR {detail.standardTariff.reduce((sum, ch) => sum + ch.amount, 0).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="rounded-xl border border-white/10 overflow-hidden bg-black/30">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-white/5 text-gray-400 font-semibold uppercase border-b border-white/10">
+                                <tr>
+                                  <th className="p-2.5">Billing Description</th>
+                                  <th className="p-2.5 text-right">Standard Rate (PKR)</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-white/5">
+                                {detail.standardTariff.map((ch, idx) => (
+                                  <tr key={idx} className="hover:bg-white/5">
+                                    <td className="p-2.5 text-gray-200">{ch.description}</td>
+                                    <td className="p-2.5 text-right font-mono font-semibold text-emerald-400">
+                                      PKR {ch.amount.toLocaleString()}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <div className="p-8 text-center text-gray-400 text-sm">
+                    Select a category to view its Pakistan Customs statutory compliance specifications.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-3 sm:p-4 border-t border-white/10 bg-black/40 flex justify-between items-center text-xs text-gray-400">
+              <span className="font-mono">Pakistan Customs Act 1969 & Customs Rules 2001 (SROs 450(I)/2001)</span>
+              <button 
+                type="button"
+                onClick={() => setShowCustomsGuideModal(false)}
+                className="bg-white/10 hover:bg-white/20 text-white px-4 py-1.5 rounded-lg transition-colors font-medium"
+              >
+                Close Guide
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dedicated In-App PDF Viewer Modal */}
+      <PdfViewerModal
+        isOpen={isPdfViewerOpen}
+        onClose={() => setIsPdfViewerOpen(false)}
+        pdfUrl={directDownloadUrl}
+        filename={directDownloadFilename}
+        title={printOptions.onlyInvoice ? "Invoice" : "Case Details"}
+      />
+    </>
+  );
+};
+
+export default CaseManagement;

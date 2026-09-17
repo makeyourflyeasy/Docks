@@ -1,0 +1,447 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+  --color-brand-950: #172554;
+  
+  --color-brand-accent: #06b6d4;
+  
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* High Performance Glass Utilities (Lag-free GPU rendering) */
+.glass-card {
+  @apply bg-slate-900/85 border border-white/10 shadow-xl;
+  contain: paint;
+}
+
+.glass-panel {
+  @apply bg-slate-800/60 border border-white/10 shadow-lg;
+  contain: paint;
+}
+
+.glass-input {
+  @apply bg-black/40 border border-white/10 text-white placeholder-gray-500 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-colors;
+}
+
+/* Fluid Scrollbar & High-Performance Touch/Wheel Scrolling */
+html, body, #root {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: auto !important; /* Prevents wheel lag */
+}
+
+.custom-scrollbar {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: auto;
+  touch-action: pan-x pan-y;
+}
+
+.custom-scrollbar-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.animate-in {
+  animation-duration: 0.3s;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}
+
+.slide-in-from-bottom-2 {
+  animation-name: slideInFromBottom;
+}
+
+@keyframes slideInFromBottom {
+  from { transform: translateY(0.5rem); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.slide-in-from-left-2 {
+  animation-name: slideInFromLeft;
+}
+
+@keyframes slideInFromLeft {
+  from { transform: translateX(-0.5rem); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* ==========================================================================
+   UNIFIED PRINT STYLESHEET CONFIGURATION (ISO A4 STANDARDIZED)
+   Supports: Invoices, Customs Documents, Case Reports, Container Bills & Ledgers
+   Ensures clean A4 formatting without displaying dashboard-specific UI elements.
+   ========================================================================== */
+@media print {
+  /* 1. Page Configuration */
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm 15mm 14mm;
+  }
+
+  @page :first {
+    margin-top: 10mm;
+  }
+
+  @page landscape {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  .print-landscape {
+    page: landscape;
+  }
+
+  /* 2. Global Layout Reset - Allow natural multi-page flow without clipping */
+  html,
+  body,
+  #root,
+  #root > div,
+  main,
+  .overflow-hidden,
+  .overflow-y-auto,
+  .custom-scrollbar {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    display: block !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 3. Dashboard-Specific UI Suppression */
+  /* Hide application sidebar, top navigation, search bars, action buttons, notifications, switchers */
+  header,
+  aside,
+  nav,
+  .no-print,
+  .print\:hidden,
+  [data-no-print="true"],
+  button:not(.print-keep),
+  input[type="checkbox"],
+  input[type="file"],
+  input[type="search"],
+  .search-bar,
+  .filter-bar,
+  .top-mode-switcher,
+  #action-center,
+  .toast,
+  .modal-close-btn,
+  .modal-footer,
+  /* Backdrop blur and translucent masks */
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-xl {
+    display: none !important;
+  }
+
+  /* Scrollbars removal */
+  ::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  /* Hide background dashboard when a printable modal is active */
+  body:has(.fixed.inset-0:not(.no-print)) aside,
+  body:has(.fixed.inset-0:not(.no-print)) header,
+  body:has(.fixed.inset-0:not(.no-print)) .dashboard-main-content {
+    display: none !important;
+  }
+
+  /* 4. Modal Overlays Flattening for Print */
+  /* Unpack modal containers into flat clean documents */
+  .fixed.inset-0:not(.no-print) {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+    z-index: auto !important;
+  }
+
+  .fixed.inset-0:not(.no-print) > div {
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* 5. Document Containers & Card Styling */
+  .printable-content,
+  .printable-area,
+  #printable-area,
+  #container-invoice-sheet,
+  .print-sheet {
+    display: block !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  .glass-card,
+  .glass-panel {
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: 1px solid #d1d5db !important;
+    box-shadow: none !important;
+    color: #111827 !important;
+    border-radius: 4px !important;
+  }
+
+  .glass-input,
+  input,
+  select,
+  textarea {
+    border: none !important;
+    background: transparent !important;
+    color: #111827 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* 6. High-Contrast Typography */
+  body, p, span, h1, h2, h3, h4, h5, h6, td, th, div, label {
+    color: #111827 !important;
+    text-shadow: none !important;
+  }
+
+  .text-white,
+  .text-gray-100,
+  .text-gray-200 {
+    color: #111827 !important;
+  }
+
+  .text-gray-300,
+  .text-gray-400,
+  .text-gray-500 {
+    color: #4b5563 !important;
+  }
+
+  .text-brand-300,
+  .text-brand-400,
+  .text-brand-500,
+  .text-brand-600 {
+    color: #1e3a8a !important;
+    font-weight: 600 !important;
+  }
+
+  .text-green-400,
+  .text-green-500,
+  .text-emerald-400 {
+    color: #065f46 !important;
+    font-weight: 600 !important;
+  }
+
+  .text-red-400,
+  .text-red-500 {
+    color: #991b1b !important;
+    font-weight: 600 !important;
+  }
+
+  .text-amber-300,
+  .text-amber-400,
+  .text-yellow-400 {
+    color: #92400e !important;
+    font-weight: 600 !important;
+  }
+
+  /* 7. Tables Formatting (Invoices, Customs GDs, Ledgers, Manifests, Reports) */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+    margin-top: 8px !important;
+    margin-bottom: 12px !important;
+  }
+
+  thead {
+    display: table-header-group !important; /* Repeats table header across multiple pages */
+    background: #f9fafb !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  th {
+    background: #f3f4f6 !important;
+    color: #111827 !important;
+    font-weight: 700 !important;
+    border: 1px solid #d1d5db !important;
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+  }
+
+  td {
+    border: 1px solid #e5e7eb !important;
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    color: #1f2937 !important;
+  }
+
+  /* 8. Page Breaks & Block Rules */
+  .break-before-page,
+  .print-page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+
+  .break-inside-avoid,
+  .print-avoid-break,
+  .signature-box,
+  .invoice-summary-box,
+  .cargo-specs-card {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* 9. Customs Document Scans & Images */
+  img {
+    max-width: 100% !important;
+    height: auto !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .document-scan,
+  .attached-doc-preview {
+    max-height: 235mm !important;
+    display: block !important;
+    margin: 0 auto !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 4px !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* 10. Status Badges in Print */
+  .badge,
+  span[class*="rounded"] {
+    background: transparent !important;
+    border: 1px solid #6b7280 !important;
+    color: #111827 !important;
+    font-weight: 600 !important;
+    box-shadow: none !important;
+  }
+
+  /* 11. Official Document Header & Footer Utilities */
+  .print-official-header {
+    display: block !important;
+    border-bottom: 2px solid #111827 !important;
+    padding-bottom: 12px !important;
+    margin-bottom: 16px !important;
+  }
+
+  .print-official-footer {
+    display: block !important;
+    border-top: 1px solid #d1d5db !important;
+    padding-top: 10px !important;
+    margin-top: 24px !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-signatures-row {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-end !important;
+    margin-top: 36px !important;
+    padding-top: 24px !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-signature-line {
+    width: 180px !important;
+    border-top: 1px dashed #4b5563 !important;
+    text-align: center !important;
+    font-size: 10px !important;
+    color: #374151 !important;
+    padding-top: 4px !important;
+  }
+}

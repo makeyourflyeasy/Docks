@@ -1,0 +1,150 @@
+{
+  "entities": {
+    "Case": {
+      "title": "Case",
+      "description": "Logistics cargo and customs clearing case record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the case" },
+        "caseNo": { "type": "string", "description": "System-generated case number e.g. DPL-26-000001", "maxLength": 64 },
+        "clientName": { "type": "string", "description": "Name of the client importing or exporting goods", "maxLength": 150 },
+        "category": { "type": "string", "description": "Logistics category such as Afghan Transit or Bonded Carrier", "maxLength": 100 },
+        "status": { "type": "string", "description": "Current processing stage of the case", "maxLength": 80 },
+        "pol": { "type": "string", "description": "Port of Loading code or name", "maxLength": 100 },
+        "pod": { "type": "string", "description": "Port of Discharge code or name", "maxLength": 100 },
+        "createdAt": { "type": "string", "description": "ISO date string when the case was created", "maxLength": 50 },
+        "createdBy": { "type": "string", "description": "UID of the user who logged the case", "maxLength": 128 }
+      },
+      "required": ["caseNo", "clientName", "category", "status", "createdAt"]
+    },
+    "FinanceEntry": {
+      "title": "FinanceEntry",
+      "description": "Financial ledger entry, income, expense, receivable, or payable",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique finance entry ID" },
+        "date": { "type": "string", "description": "Date of the transaction", "maxLength": 50 },
+        "description": { "type": "string", "description": "Details or notes regarding the transaction", "maxLength": 250 },
+        "amount": { "type": "number", "description": "Transaction amount in PKR" },
+        "type": { "type": "string", "description": "Transaction category type (INCOME, EXPENSE, RECEIVABLE, PAYABLE)", "enum": ["INCOME", "EXPENSE", "RECEIVABLE", "PAYABLE"] },
+        "status": { "type": "string", "description": "Status of payment (PAID, PENDING, PARTIAL)", "enum": ["PAID", "PENDING", "PARTIAL"] },
+        "party": { "type": "string", "description": "Client or Vendor involved in transaction", "maxLength": 150 },
+        "category": { "type": "string", "description": "Expense or revenue head", "maxLength": 100 },
+        "reference": { "type": "string", "description": "Invoice or cheque reference", "maxLength": 100 },
+        "paymentMethod": { "type": "string", "description": "Payment instrument method (CASH or BANK)", "maxLength": 20 },
+        "bankName": { "type": "string", "description": "Associated bank name", "maxLength": 100 },
+        "transactionId": { "type": "string", "description": "Bank transaction voucher ID", "maxLength": 100 },
+        "createdBy": { "type": "string", "description": "UID of user who created the finance entry", "maxLength": 128 }
+      },
+      "required": ["date", "description", "amount", "type", "status", "party"]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Fleet or contract trailer and transport vehicle profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique vehicle ID" },
+        "dplSerial": { "type": "string", "description": "DPL Fleet serial tracking number", "maxLength": 50 },
+        "registrationNumber": { "type": "string", "description": "Official vehicle license plate number", "maxLength": 50 },
+        "category": { "type": "string", "description": "Vehicle carrier regulatory classification", "maxLength": 80 },
+        "type": { "type": "string", "description": "Trailer type such as Flatbed or Container carrier", "maxLength": 80 },
+        "driverName": { "type": "string", "description": "Assigned driver's full name", "maxLength": 120 },
+        "driverCnic": { "type": "string", "description": "Assigned driver's national identity card number", "maxLength": 30 },
+        "driverContact": { "type": "string", "description": "Assigned driver's mobile phone number", "maxLength": 40 },
+        "transporterName": { "type": "string", "description": "Transporter company name", "maxLength": 150 },
+        "status": { "type": "string", "description": "Current availability status", "maxLength": 50 },
+        "createdAt": { "type": "string", "description": "Creation timestamp", "maxLength": 50 },
+        "createdBy": { "type": "string", "description": "UID of creator", "maxLength": 128 }
+      },
+      "required": ["dplSerial", "registrationNumber", "category", "driverName", "status"]
+    },
+    "AppUser": {
+      "title": "AppUser",
+      "description": "Registered system user account profile with role and authorization",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase authentication UID", "maxLength": 128 },
+        "name": { "type": "string", "description": "User's full name", "maxLength": 120 },
+        "email": { "type": "string", "description": "User's email address", "maxLength": 150 },
+        "role": { "type": "string", "description": "System role such as ADMIN, CLIENT, etc.", "maxLength": 50 },
+        "contact": { "type": "string", "description": "User phone or WhatsApp contact number", "maxLength": 40 },
+        "status": { "type": "string", "description": "Account status ACTIVE or INACTIVE", "enum": ["ACTIVE", "INACTIVE"] },
+        "clientName": { "type": "string", "description": "Associated company if role is CLIENT", "maxLength": 150 },
+        "createdAt": { "type": "string", "description": "Account creation timestamp", "maxLength": 50 }
+      },
+      "required": ["uid", "name", "email", "role", "status"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "Action center task notification or alert",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Notification ID" },
+        "title": { "type": "string", "description": "Notification summary title", "maxLength": 150 },
+        "description": { "type": "string", "description": "Short explanation", "maxLength": 300 },
+        "details": { "type": "string", "description": "Expanded information", "maxLength": 1000 },
+        "timestamp": { "type": "string", "description": "Notification display time or date", "maxLength": 60 },
+        "type": { "type": "string", "description": "Category ACTION, INFO, or ALERT", "enum": ["ACTION", "INFO", "ALERT"] },
+        "status": { "type": "string", "description": "PENDING or RESOLVED", "enum": ["PENDING", "RESOLVED"] },
+        "priority": { "type": "string", "description": "HIGH, MEDIUM, or LOW", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "actionLabel": { "type": "string", "description": "Action button text", "maxLength": 60 }
+      },
+      "required": ["title", "description", "type", "status"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "System wide configuration and company profile",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string", "description": "Company legal trade name", "maxLength": 150 },
+        "customLogo": { "type": "string", "description": "Custom logo data or URL", "maxLength": 50000 },
+        "updatedAt": { "type": "string", "description": "Last update timestamp", "maxLength": 50 },
+        "updatedBy": { "type": "string", "description": "UID of admin who updated", "maxLength": 128 }
+      }
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Registered client entity for case registration and ledger accounts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique client ID" },
+        "name": { "type": "string", "description": "Legal trading or company name of the client", "maxLength": 150 },
+        "contact": { "type": "string", "description": "Primary phone or WhatsApp contact", "maxLength": 50 },
+        "email": { "type": "string", "description": "Billing or official email address", "maxLength": 150 },
+        "openingBalance": { "type": "number", "description": "Initial ledger opening balance in PKR" },
+        "createdAt": { "type": "string", "description": "Registration date timestamp", "maxLength": 50 }
+      },
+      "required": ["name"]
+    }
+  },
+  "firestore": {
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Master directory of registered clients for cases and ledgers"
+    },
+    "/cases/{caseId}": {
+      "schema": "Case",
+      "description": "Collection of logistics shipment cases"
+    },
+    "/finances/{financeId}": {
+      "schema": "FinanceEntry",
+      "description": "Financial ledger transactions, invoices, and expenses"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Fleet and contractor transport vehicles"
+    },
+    "/users/{userId}": {
+      "schema": "AppUser",
+      "description": "User profiles and RBAC role assignments"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "AppNotification",
+      "description": "System tasks and notification alerts"
+    },
+    "/settings/{settingId}": {
+      "schema": "Setting",
+      "description": "Global company settings and profile"
+    }
+  }
+}
