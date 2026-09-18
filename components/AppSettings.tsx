@@ -357,7 +357,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
           <button 
             disabled={saveLoading}
             onClick={handleSaveSettings} 
-            className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-3 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-105 font-sans disabled:opacity-50"
+            className="w-full sm:w-auto bg-brand-600 hover:bg-brand-500 text-white px-6 py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-105 font-sans disabled:opacity-50"
           >
             {saveLoading ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
             {saveLoading ? 'Saving...' : 'Save General Settings'}
@@ -902,7 +902,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
   );
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 animate-fade-in pb-10">
+    <div className="max-w-5xl mx-auto space-y-6 animate-fade-in pb-36 sm:pb-16">
       <h2 className="text-3xl font-bold text-white mb-6 drop-shadow-md uppercase tracking-tight font-sans">Settings</h2>
 
       <div className="flex gap-4 border-b border-white/10 pb-1 overflow-x-auto no-scrollbar">

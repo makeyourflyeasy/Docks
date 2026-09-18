@@ -357,7 +357,7 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
-      <div className="flex h-screen bg-transparent text-gray-100 font-sans overflow-hidden relative">
+      <div className="flex h-screen h-[100dvh] min-h-[100dvh] max-h-[100dvh] w-full bg-transparent text-gray-100 font-sans overflow-hidden relative">
         
         {/* Sidebar Overlay for Mobile */}
       {mobileSidebarOpen && (
@@ -516,7 +516,7 @@ const App: React.FC = () => {
       </aside>
 
       {/* Content Area */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
+      <main className="flex-1 flex flex-col h-full min-h-0 min-w-0 overflow-hidden relative">
         <header className="h-14 sm:h-16 bg-slate-900/40 backdrop-blur-md border-b border-white/5 flex items-center justify-between px-3 sm:px-6 z-10 flex-shrink-0">
           <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
             <button onClick={() => window.innerWidth < 1024 ? setMobileSidebarOpen(!mobileSidebarOpen) : setDesktopSidebarExpanded(!desktopSidebarExpanded)} className="text-gray-400 hover:text-white p-1">
@@ -592,7 +592,7 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 custom-scrollbar overscroll-contain">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6 pb-32 sm:pb-12 custom-scrollbar overscroll-contain">
           {renderContent()}
         </div>
 

@@ -2,7 +2,6 @@ import React, { useState, useRef, useMemo } from 'react';
 import { 
   ArrowLeft, 
   Download, 
-  Printer, 
   Share2, 
   X, 
   FileText, 
@@ -63,83 +62,6 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
     if (pdfUrl) {
       await sharePdfFile(pdfUrl, filename, title || filename);
     }
-  };
-
-  const handlePrint = () => {
-    if (!pdfUrl) return;
-
-    // Use invisible printable iframe to trigger native browser print pre-formatting immediately
-    try {
-      let printFrame = document.getElementById('native-print-frame') as HTMLIFrameElement | null;
-      if (!printFrame) {
-        printFrame = document.createElement('iframe');
-        printFrame.id = 'native-print-frame';
-        printFrame.style.position = 'fixed';
-        printFrame.style.right = '0';
-        printFrame.style.bottom = '0';
-        printFrame.style.width = '0';
-        printFrame.style.height = '0';
-        printFrame.style.border = '0';
-        printFrame.style.opacity = '0';
-        document.body.appendChild(printFrame);
-      }
-
-      const frameDoc = printFrame.contentDocument || printFrame.contentWindow?.document;
-      if (frameDoc) {
-        frameDoc.open();
-        if (isImage) {
-          frameDoc.write(`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <title>${filename || 'Print Document'}</title>
-                <style>
-                  @page { margin: 8mm; size: auto; }
-                  body { margin: 0; padding: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #ffffff; }
-                  img { max-width: 100%; max-height: 98vh; object-fit: contain; }
-                </style>
-              </head>
-              <body>
-                <img src="${pdfUrl}" onload="window.focus(); window.print();" />
-              </body>
-            </html>
-          `);
-        } else {
-          frameDoc.write(`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <title>${filename || 'Print Document'}</title>
-                <style>
-                  @page { margin: 0; size: auto; }
-                  body, html { margin: 0; padding: 0; height: 100%; width: 100%; }
-                  iframe { border: none; width: 100%; height: 100%; }
-                </style>
-              </head>
-              <body>
-                <iframe src="${pdfUrl}" onload="this.contentWindow.focus(); this.contentWindow.print();"></iframe>
-              </body>
-            </html>
-          `);
-        }
-        frameDoc.close();
-
-        setTimeout(() => {
-          try {
-            printFrame?.contentWindow?.focus();
-            printFrame?.contentWindow?.print();
-          } catch (e) {
-            window.print();
-          }
-        }, 500);
-        return;
-      }
-    } catch (e) {
-      console.warn('Iframe printing encountered error, falling back to window.print()', e);
-    }
-
-    // Direct fallback
-    window.print();
   };
 
   const handleDownload = () => {
@@ -222,18 +144,6 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
             </div>
           )}
 
-          {/* PRINT BUTTON */}
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="px-3 sm:px-3.5 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 shadow-md shadow-blue-600/30 transition-all"
-            title="Print Document"
-            id="btn-viewer-print"
-          >
-            <Printer size={16} className="text-white shrink-0" />
-            <span>Print</span>
-          </button>
-
           {/* DOWNLOAD BUTTON */}
           <button
             type="button"
@@ -243,7 +153,7 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
             id="btn-viewer-download"
           >
             <Download size={16} className="text-white shrink-0" />
-            <span>Download</span>
+            <span>Download PDF</span>
           </button>
 
           {/* Optional Web Share */}
@@ -303,13 +213,6 @@ export const PdfViewerModal: React.FC<PdfViewerModalProps> = ({
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={handlePrint}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 shadow-md shadow-blue-600/30"
-              >
-                <Printer size={15} /> Print Document
-              </button>
               <button
                 type="button"
                 onClick={handleDownload}

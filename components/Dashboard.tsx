@@ -5,7 +5,7 @@ import {
 import { 
   AlertTriangle, Truck, Anchor, DollarSign, Activity, 
   FileText, CheckCircle, Clock, Sparkles, RefreshCw, AlertCircle, Calendar, TrendingUp, TrendingDown, Crosshair, ArrowRight, BarChart2, Filter, X,
-  Building2, MapPin, Search, Printer, ShieldCheck, Globe, ChevronDown, ChevronUp,
+  Building2, MapPin, Search, Download, ShieldCheck, Globe, ChevronDown, ChevronUp,
   Layers, CheckCircle2, Boxes
 } from 'lucide-react';
 import { LogEntry, CaseStatus, Case } from '../types';
@@ -164,11 +164,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
   // Stats Modal State
   const [isStatsModalOpen, setIsStatsModalOpen] = useState(false);
+  const [dateRangePreset, setDateRangePreset] = useState<'all_time' | 'last_30' | 'last_90' | 'custom'>('last_30');
   const [statsFilter, setStatsFilter] = useState({
       fromDate: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
       toDate: new Date().toISOString().split('T')[0],
       portOfLoading: 'ALL',
-      portOfUnloading: 'ALL'
+      portOfUnloading: 'ALL',
+      selectedPort: 'ALL',
+      category: 'ALL'
   });
   const [generatedGraphData, setGeneratedGraphData] = useState<any[]>([]);
   const [stationMovements, setStationMovements] = useState<StationMovementDetail[]>([]);
@@ -177,7 +180,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   // View tabs & filters inside Modal
   const [activeReportTab, setActiveReportTab] = useState<'details' | 'graph'>('details');
   const [stationSearchQuery, setStationSearchQuery] = useState('');
-  const [stationCategoryFilter, setStationCategoryFilter] = useState<'ALL' | 'CLEARANCE' | 'AFGHAN_TRANSIT' | 'BONDED' | 'PRIVATE'>('ALL');
+  const [stationCategoryFilter, setStationCategoryFilter] = useState<'ALL' | 'CLEARANCE' | 'AFGHAN_TRANSIT' | 'BONDED' | 'TIR' | 'PRIVATE'>('ALL');
   const [stationTypeFilter, setStationTypeFilter] = useState<'ALL' | 'Sea Port' | 'Border Terminal' | 'Dry Port'>('ALL');
   const [expandedStationId, setExpandedStationId] = useState<string | null>(null);
 
@@ -193,6 +196,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     setExpandedStationId(null);
   };
 
+  // Helper to update date presets
+  const handleDatePresetChange = (preset: 'all_time' | 'last_30' | 'last_90' | 'custom') => {
+    setDateRangePreset(preset);
+    const today = new Date().toISOString().split('T')[0];
+    if (preset === 'all_time') {
+      setStatsFilter(prev => ({
+        ...prev,
+        fromDate: '2020-01-01',
+        toDate: today
+      }));
+    } else if (preset === 'last_30') {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 1);
+      setStatsFilter(prev => ({
+        ...prev,
+        fromDate: d.toISOString().split('T')[0],
+        toDate: today
+      }));
+    } else if (preset === 'last_90') {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 3);
+      setStatsFilter(prev => ({
+        ...prev,
+        fromDate: d.toISOString().split('T')[0],
+        toDate: today
+      }));
+    }
+  };
+
   const handleGenerateStats = (e: React.FormEvent) => {
     e.preventDefault();
     const data = generateGraphData(statsFilter.fromDate, statsFilter.toDate);
@@ -203,10 +235,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       statsFilter.toDate,
       statsFilter.portOfLoading,
       statsFilter.portOfUnloading,
-      liveCases
+      liveCases,
+      statsFilter.selectedPort,
+      statsFilter.category
     );
     setStationMovements(movements);
     setStationSummary(summary);
+    // Sync the internal quick-filter pill with the form category if selected
+    if (statsFilter.category !== 'ALL') {
+      setStationCategoryFilter(statsFilter.category as any);
+    }
     setActiveReportTab('details'); // Directly present the station detail report!
     
     // Auto-scroll to end after slight delay for render if switching to graph
@@ -425,11 +463,33 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
                         <div className="flex items-center gap-3">
                            <button 
-                             onClick={() => window.print()}
-                             className="px-3.5 py-2 bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 border border-slate-700/60"
+                             onClick={() => {
+                               const rows = [
+                                 ['Report Title', 'Station Analytics & Movement Report'],
+                                 ['Corridor', `${statsFilter.portOfLoading} to ${statsFilter.portOfUnloading}`],
+                                 ['Generated On', new Date().toLocaleString()],
+                                 ...(stationSummary ? [
+                                   ['Total Movements', String(stationSummary.totalContainersMoved || 0)],
+                                   ['Active Stations', String(stationSummary.activeStationsCount || 0)],
+                                   ['Customs Clearance', String(stationSummary.totalCustomsClearance || 0)],
+                                   ['Afghan Transit', String(stationSummary.totalAfghanTransit || 0)],
+                                   ['Bonded Carrier', String(stationSummary.totalBondedCarrier || 0)]
+                                 ] : []),
+                                 ...generatedGraphData.map(d => [d.name, String(d.value)])
+                               ];
+                               const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+                               const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                               const url = URL.createObjectURL(blob);
+                               const a = document.createElement('a');
+                               a.href = url;
+                               a.download = `Station_Analytics_Report_${new Date().toISOString().split('T')[0]}.csv`;
+                               a.click();
+                               URL.revokeObjectURL(url);
+                             }}
+                             className="px-3.5 py-2 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 border border-emerald-600/60"
                            >
-                              <Printer size={15} />
-                              Print Report
+                              <Download size={15} />
+                              Download Report (CSV)
                            </button>
                            <button 
                              onClick={() => {

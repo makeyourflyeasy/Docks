@@ -3,7 +3,6 @@ import {
   CheckCircle2, 
   FileText, 
   Download, 
-  Printer, 
   ShieldCheck, 
   AlertTriangle, 
   Eye, 

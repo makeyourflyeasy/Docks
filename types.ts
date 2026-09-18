@@ -555,6 +555,82 @@ export interface CaseStepDetail {
   warehouseChargesAmount?: number;
   warehouseChargesCommission?: number;
   warehousePickListGenerated?: boolean;
+
+  // Category 11: Import & Export Services
+  tradeDirection?: 'Export' | 'Import';
+  croBookingNumber?: string;
+  croDocumentUrl?: string;
+  croDocumentName?: string;
+  emptyDepotName?: string;
+  emptyContainerAllocated?: string;
+  emptySealNumber?: string;
+  croReleaseDate?: string;
+  shippingLineName?: string;
+  vesselName?: string;
+  voyageNumber?: string;
+  vesselBookingRef?: string;
+  vesselPol?: string;
+  vesselPod?: string;
+  vesselEtd?: string;
+  vesselEta?: string;
+  vesselCutOffDate?: string;
+  vesselBookingConfirmUrl?: string;
+  vesselBookingConfirmName?: string;
+  assignedTrailerNo?: string;
+  assignedTrailerDriver?: string;
+  assignedDriverPhone?: string;
+  truckingWaybillUrl?: string;
+  truckingWaybillName?: string;
+  truckingChargesAmount?: number;
+  truckingArrangedBy?: 'Client' | 'DPL';
+  stuffingLocationWarehouse?: string;
+  stuffingPackagesCount?: number;
+  stuffingGrossWeight?: number;
+  vgmWeightKg?: number;
+  vgmCertificateUrl?: string;
+  vgmCertificateName?: string;
+  stuffingPhotosUrl?: string;
+  stuffingPhotosName?: string;
+  containerSealedVerified?: boolean;
+  warehouseGateOutSlipUrl?: string;
+  warehouseGateOutSlipName?: string;
+  portTerminalName?: string;
+  portTerminalGateInUrl?: string;
+  portTerminalGateInName?: string;
+  exportCustomsGdNo?: string;
+  exportCustomsGdDate?: string;
+  exportCustomsStatus?: 'Examined' | 'Assessed' | 'Out of Charge (OOC)' | 'Export NOC Issued';
+  exportCustomsNocUrl?: string;
+  exportCustomsNocName?: string;
+  customsDutyCharges?: number;
+  customsChargesArrangedBy?: 'Client' | 'DPL';
+  vesselLoadingBayNo?: string;
+  matesReceiptNo?: string;
+  matesReceiptUrl?: string;
+  matesReceiptName?: string;
+  billOfLadingNo?: string;
+  billOfLadingType?: 'Original' | 'Seaway Bill' | 'Telex Release';
+  billOfLadingUrl?: string;
+  billOfLadingName?: string;
+  vesselSailedConfirmed?: boolean;
+  destinationPortName?: string;
+  destinationIgmNo?: string;
+  destinationCustomsClearanceStatus?: 'In Progress' | 'Cleared' | 'DO Issued';
+  destinationDoNumber?: string;
+  destinationDoDocUrl?: string;
+  destinationDoDocName?: string;
+  destinationChargesAmount?: number;
+  destinationChargesArrangedBy?: 'Client' | 'DPL';
+  destuffingComplete?: boolean;
+  destuffingPhotosUrl?: string;
+  destuffingPhotosName?: string;
+  emptyContainerReturnDepot?: string;
+  emptyContainerReturnDate?: string;
+  emptyContainerEirDocUrl?: string;
+  emptyContainerEirDocName?: string;
+  containerDemurrageDetentionAmount?: number;
+  containerSecurityRefunded?: boolean;
+  allChargesSettledVerified?: boolean;
 }
 
 export interface Case {
@@ -663,6 +739,8 @@ export interface FinanceEntry {
   transactionId?: string;
   slipPhoto?: string;
   slipUrl?: string;
+  documentUrl?: string;
+  documentName?: string;
 }
 
 export enum VehicleCategory {
@@ -746,13 +824,16 @@ export interface Vehicle {
   ownerName?: string;
   ownerCnic?: string;
   ownerAddress?: string;
+  ownerIdCardUrl?: string; // Owner CNIC / ID Card image or doc
+  ownerIdCardName?: string;
   
-  // Driver & Transporter
+  // Driver & Transporter / Broker
   driverName: string;
   driverCnic: string;
   driverContact: string;
   transporterId: number;
   transporterName: string;
+  brokerName?: string; // Broker / Agent Name
   
   // Status & Validation
   status: 'AVAILABLE' | 'ON_TRIP' | 'MAINTENANCE' | 'IN_LINE' | 'EXPIRED' | 'EXPIRE_SOON' | 'CANCELLED' | 'TRANSFERRED' | 'INACTIVE';

@@ -2,13 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   FolderKanban, DollarSign, Plus, Search, Filter, Calendar, 
   Truck, ArrowRight, CheckCircle2, Clock, AlertCircle, FileText, 
-  Printer, Camera, Upload, X, Eye, ChevronRight, ShieldCheck, 
+  Camera, Upload, X, Eye, ChevronRight, ShieldCheck, 
   MapPin, Anchor, Box, ArrowUpRight, ArrowDownLeft, CreditCard,
   Building, RefreshCw, FileCheck, Layers, ExternalLink, User, Download, Loader2, LogOut
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
-import { downloadContainerInvoicePdf } from '../services/pdfExportService';
+import { downloadContainerInvoicePdf, downloadCasePdf, downloadClientLedgerPdf } from '../services/pdfExportService';
 import { Case, CaseStatus, Container, FinanceEntry, ExtractedData, MockDocument, UserRole } from '../types';
 import { compressAndPrepareFile } from '../services/fileUtils';
 import TopModeSwitcher, { ModeOption } from './TopModeSwitcher';
@@ -212,7 +212,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
   onOpenAuthModal,
   onSignOut
 }) => {
-  const { companyName, subtitle } = useBranding();
+  const { companyName, subtitle, activeLogo, branding } = useBranding();
   // Navigation: 'cases' or 'finance'
   const [activeTab, setActiveTab] = useState<'cases' | 'finance'>('cases');
   const [casesSubView, setCasesSubView] = useState<'overview' | 'all_cases' | 'register'>('overview');
@@ -1044,11 +1044,17 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                       onChange={(e) => setNewCaseCategory(e.target.value)}
                       className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:border-brand-500 outline-none"
                     >
+                      <option value="Import & Export Services">Import & Export Services</option>
                       <option value="Afghan Transit">Afghan Transit</option>
                       <option value="Bonded Carrier">Bonded Carrier</option>
                       <option value="Customs Clearance">Customs Clearance</option>
                       <option value="TIR">TIR</option>
                       <option value="Transportation of Private Cargo">Transportation of Private Cargo</option>
+                      <option value="Warehousing & Distribution">Warehousing & Distribution</option>
+                      <option value="Car Carrier">Car Carrier</option>
+                      <option value="ISO Tank Service">ISO Tank Service</option>
+                      <option value="Liner & NVOCC">Liner & NVOCC</option>
+                      <option value="Breakbulk / Chartering Services">Breakbulk / Chartering Services</option>
                     </select>
                   </div>
 
@@ -1693,11 +1699,32 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                   Close
                 </button>
                 <button
-                  onClick={() => window.print()}
-                  className="bg-brand-600 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-xs font-medium flex items-center gap-2 shadow-lg shadow-brand-600/30"
+                  onClick={async () => {
+                    await downloadClientLedgerPdf({
+                      clientName: 'Al-Khaleej Importers & Shipping Lines',
+                      statementDate: new Date().toLocaleDateString(),
+                      summary: {
+                        totalDebits: 570000,
+                        totalCredits: 100000,
+                        netBalance: 470000,
+                        totalContainers: 3
+                      },
+                      entries: [
+                        { date: '2026-04-01', reference: 'OPN-BAL', description: 'Opening Balance', debit: 0, credit: 0, balance: 0 },
+                        { date: '2026-04-05', reference: 'DPL-26-0001', description: 'Customs Clearance & Handling - [MSKU-9988221]', debit: 180000, credit: 0, balance: 180000 },
+                        { date: '2026-04-08', reference: 'DPL-26-0002', description: 'Afghan Transit Clearance - [TGHU-4455667]', debit: 260000, credit: 0, balance: 440000 },
+                        { date: '2026-04-10', reference: 'REC-8842', description: 'Bank Transfer Payment via Meezan Bank', debit: 0, credit: 100000, balance: 340000 },
+                        { date: '2026-04-14', reference: 'INV-26-0003', description: 'Port Qasim to Lahore Bonded Transport - [HLCU-1122334]', debit: 130000, credit: 0, balance: 470000 }
+                      ],
+                      companyName,
+                      customLogo: activeLogo,
+                      branding
+                    });
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-600/30"
                 >
-                  <Printer size={15} />
-                  <span>Print Ledger</span>
+                  <Download size={15} />
+                  <span>Download Ledger (PDF)</span>
                 </button>
               </div>
             </div>
@@ -2097,12 +2124,6 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                       >
                         <Download size={14} /> Download PDF
                       </button>
-                      <button
-                        onClick={() => window.print()}
-                        className="bg-slate-800 hover:bg-slate-700 text-gray-300 px-4 py-2 rounded-lg text-xs font-medium flex items-center gap-1.5 border border-white/10"
-                      >
-                        <Printer size={14} /> Print
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -2143,12 +2164,12 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
               <div className="flex items-center gap-2 no-print">
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => downloadCasePdf(selectedCase, { onlyInvoice: true })}
                   className="px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-medium flex items-center gap-1.5 transition-colors"
-                  title="Print / Save Invoice as PDF"
+                  title="Download Invoice as PDF"
                 >
                   <Download size={14} />
-                  <span>Download / Print Invoice</span>
+                  <span>Download Invoice (PDF)</span>
                 </button>
                 <button 
                   onClick={() => setSelectedCase(null)}
@@ -2320,10 +2341,10 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                 Close
               </button>
               <button
-                onClick={() => window.print()}
-                className="bg-brand-600 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-xs font-medium flex items-center gap-2 shadow-lg shadow-brand-600/30"
+                onClick={() => downloadCasePdf(selectedCase)}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-lg text-xs font-medium flex items-center gap-2 shadow-lg shadow-emerald-600/30"
               >
-                <Printer size={15} /> Print Case Summary
+                <Download size={15} /> Download Case Summary (PDF)
               </button>
             </div>
 

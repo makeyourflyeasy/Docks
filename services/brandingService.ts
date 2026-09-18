@@ -255,6 +255,7 @@ export function useBranding() {
   return {
     branding,
     customLogo: branding.customLogo,
+    activeLogo: branding.customLogo,
     companyName: branding.companyName || DEFAULT_BRANDING.companyName,
     subtitle: branding.subtitle || DEFAULT_BRANDING.subtitle,
     address: branding.address || DEFAULT_BRANDING.address,

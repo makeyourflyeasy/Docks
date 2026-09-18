@@ -1,54 +1,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Truck, Plus, Search, FileText, User, Settings, Save, MapPin, Calendar, Clock, AlertTriangle, Trash2, Printer, CheckCircle, X, ChevronRight, Eye, Activity, CreditCard, Filter, AlertCircle, Download, Loader2, Ban, FileCheck, ShieldCheck } from 'lucide-react';
+import { Truck, Plus, Search, FileText, User, Settings, Save, MapPin, Calendar, Clock, AlertTriangle, Trash2, CheckCircle, X, ChevronRight, Eye, Activity, CreditCard, Filter, AlertCircle, Download, Loader2, Ban, FileCheck, ShieldCheck, UploadCloud } from 'lucide-react';
 import { Vehicle, Transporter, VehicleCategory, VehicleType, TrackerInfo, VehicleHistory } from '../types';
 import { autoFillVehicleData } from '../services/geminiService';
 import { safeAppStorage } from '../services/storage';
 import { downloadVehicleDetailsPdf, downloadVehicleNocPdf } from '../services/pdfExportService';
 import { PdfViewerModal } from './PdfViewerModal';
 
-// --- Mock Data ---
+// --- Clean Live Data ---
 
-const INITIAL_TRANSPORTERS: Transporter[] = [
-  { id: 1, name: 'Swift Transport', contact: '0300-1234567', email: 'info@swift.com', address: 'Karachi, Pakistan', activeCasesCount: 12, createdAt: '2023-01-15', status: 'Active' },
-  { id: 2, name: 'City Movers', contact: '0321-9876543', email: 'contact@citymovers.com', address: 'Lahore, Pakistan', activeCasesCount: 5, createdAt: '2023-03-20', status: 'Active' },
-  { id: 3, name: 'Afghan Logistics', contact: '0333-5555555', email: 'logistics@afghan.com', address: 'Peshawar, Pakistan', activeCasesCount: 8, createdAt: '2023-02-10', status: 'Active' },
-];
+const INITIAL_TRANSPORTERS: Transporter[] = [];
 
-const INITIAL_VEHICLES: Vehicle[] = [
-  { 
-    id: 1, dplSerial: 'DPL-20240520-001', registrationNumber: 'KLA-992', category: VehicleCategory.DOMESTIC, type: VehicleType.FLATBED, size: '40ft',
-    engineNo: 'ENG-8822', chassisNo: 'CH-1102', makeModel: 'Hino 2018',
-    driverName: 'Ahmed Ali', driverCnic: '42101-111222-3', driverContact: '0300-1234567', transporterId: 1, transporterName: 'Swift Transport',
-    status: 'ON_TRIP', createdAt: '2024-01-10', history: [],
-    tracker: { id: 'TRK-001', provider: 'Us', companyName: 'Falcon Trackers', installationDate: '2024-01-10', cost: 15000, paymentStatus: 'Paid', status: 'Active' }
-  },
-  { 
-    id: 2, dplSerial: 'DPL-20240521-002', registrationNumber: 'TLX-334', category: VehicleCategory.BONDED_CARRIER, type: VehicleType.LOWBED, size: '20ft',
-    engineNo: 'ENG-1100', chassisNo: 'CH-3321', makeModel: 'Isuzu 2020',
-    driverName: 'Kamran Khan', driverCnic: '42201-999888-1', driverContact: '0333-9876543', transporterId: 2, transporterName: 'City Movers',
-    status: 'AVAILABLE', validationStartDate: '2023-12-01', validationExpiryDate: '2024-06-01', createdAt: '2024-02-15', history: [],
-    tracker: { id: 'TRK-002', provider: 'Client', installationDate: '2024-02-15', status: 'Active' }
-  },
-  { 
-    id: 3, dplSerial: 'DPL-20240522-003', registrationNumber: 'KHI-7721', category: VehicleCategory.AFGHAN_TRANSIT, type: VehicleType.MAZDA, size: 'Loose',
-    engineNo: 'ENG-4455', chassisNo: 'CH-6677', makeModel: 'Mazda Titan',
-    driverName: 'N/A', driverCnic: 'N/A', driverContact: 'N/A', transporterId: 1, transporterName: 'Swift Transport',
-    status: 'MAINTENANCE', validationStartDate: '2023-11-01', validationExpiryDate: '2024-05-01', createdAt: '2024-03-01', history: []
-  },
-  { 
-    id: 4, dplSerial: 'DPL-20240523-004', registrationNumber: 'LHR-1122', category: VehicleCategory.DOMESTIC, type: VehicleType.SHEHZORE, size: 'Loose',
-    engineNo: 'ENG-3344', chassisNo: 'CH-5566', makeModel: 'Hyundai Shehzore',
-    driverName: 'Bilal', driverCnic: '42301-555666-7', driverContact: '0321-5556667', transporterId: 3, transporterName: 'Afghan Logistics',
-    status: 'IN_LINE', createdAt: '2024-04-05', history: [],
-    tracker: { id: 'TRK-004', provider: 'Us', companyName: 'Falcon Trackers', installationDate: '2024-04-05', cost: 12000, paymentStatus: 'Pending', status: 'Active' }
-  },
-  { 
-    id: 5, dplSerial: 'DPL-20240524-005', registrationNumber: 'ISB-9988', category: VehicleCategory.BONDED_CARRIER, type: VehicleType.FLATBED, size: '40ft',
-    engineNo: 'ENG-9900', chassisNo: 'CH-2211', makeModel: 'Bedford',
-    driverName: 'Zahid', driverCnic: '42401-777888-9', driverContact: '0345-7778889', transporterId: 1, transporterName: 'Swift Transport',
-    status: 'EXPIRED', validationStartDate: '2023-10-01', validationExpiryDate: '2024-04-01', createdAt: '2023-10-01', history: []
-  },
-];
+const INITIAL_VEHICLES: Vehicle[] = [];
 
 interface VehicleManagementProps {
   initialFilter?: any;
@@ -56,15 +18,49 @@ interface VehicleManagementProps {
 }
 
 const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, clearFilter }) => {
-  const [activeTab, setActiveTab] = useState<'transporters' | 'vehicles' | 'tracker'>(() => {
-    return (safeAppStorage.getItem('dpl_vehicle_tab') as any) || 'transporters';
+  const [activeTab, setActiveTab] = useState<'transporters' | 'vehicles'>(() => {
+    const saved = safeAppStorage.getItem('dpl_vehicle_tab');
+    return saved === 'transporters' ? 'transporters' : 'vehicles';
   });
 
   useEffect(() => {
     safeAppStorage.setItem('dpl_vehicle_tab', activeTab);
   }, [activeTab]);
-  const [transporters, setTransporters] = useState<Transporter[]>(INITIAL_TRANSPORTERS);
-  const [vehicles, setVehicles] = useState<Vehicle[]>(INITIAL_VEHICLES);
+
+  const getVehicleValidity = (v: Vehicle): { text: 'Valid' | 'Expired' | 'Expiry Soon'; badgeClass: string } => {
+    if (v.status === 'EXPIRED') {
+      return { text: 'Expired', badgeClass: 'bg-red-500/20 text-red-400 border border-red-500/30' };
+    }
+    if (v.status === 'EXPIRE_SOON') {
+      return { text: 'Expiry Soon', badgeClass: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' };
+    }
+    if (v.validationExpiryDate) {
+      const expDate = new Date(v.validationExpiryDate).getTime();
+      const now = Date.now();
+      const diffDays = Math.ceil((expDate - now) / (1000 * 60 * 60 * 24));
+      if (diffDays < 0) {
+        return { text: 'Expired', badgeClass: 'bg-red-500/20 text-red-400 border border-red-500/30' };
+      }
+      if (diffDays <= 30) {
+        return { text: 'Expiry Soon', badgeClass: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' };
+      }
+    }
+    return { text: 'Valid', badgeClass: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' };
+  };
+  const [transporters, setTransporters] = useState<Transporter[]>(() => {
+    return safeAppStorage.getJSON<Transporter[]>('dpl_live_transporters', INITIAL_TRANSPORTERS);
+  });
+  const [vehicles, setVehicles] = useState<Vehicle[]>(() => {
+    return safeAppStorage.getJSON<Vehicle[]>('dpl_live_vehicles', INITIAL_VEHICLES);
+  });
+
+  useEffect(() => {
+    safeAppStorage.setJSON('dpl_live_transporters', transporters);
+  }, [transporters]);
+
+  useEffect(() => {
+    safeAppStorage.setJSON('dpl_live_vehicles', vehicles);
+  }, [vehicles]);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modals
@@ -379,25 +375,49 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
              <button className="p-1.5 bg-white/5 rounded hover:bg-white/10 text-gray-400"><Filter size={16}/></button>
           </div>
         </div>
-        {/* Mobile View (Cards) - Optimized for vertical finger scrolling */}
+        {/* Mobile View (Cards) - Showing Gadi Number, Broker Name, and Validity Status */}
         <div className="block sm:hidden divide-y divide-white/5 touch-pan-y">
           {vehicles.filter(v => 
             v.registrationNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (v.brokerName && v.brokerName.toLowerCase().includes(searchQuery.toLowerCase())) ||
             v.transporterName.toLowerCase().includes(searchQuery.toLowerCase())
-          ).map(v => (
-            <div key={v.id} className="p-4 space-y-3 hover:bg-white/5 transition-colors">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-bold text-white text-sm">{v.registrationNumber}</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-medium border border-white/5
-                    ${v.status === 'ON_TRIP' ? 'bg-blue-500/20 text-blue-400' :
-                      v.status === 'EXPIRED' ? 'bg-red-500/20 text-red-400' :
-                      v.status === 'EXPIRE_SOON' ? 'bg-yellow-500/20 text-yellow-400' :
-                      'bg-green-500/20 text-green-400'}`}>
-                    {v.status.replace('_', ' ')}
+          ).map(v => {
+            const validity = getVehicleValidity(v);
+            return (
+              <div key={v.id} className="p-4 space-y-2.5 hover:bg-white/5 transition-colors">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="font-mono font-bold text-white text-base block">{v.registrationNumber}</span>
+                    <span className="text-xs text-gray-400 font-medium">Broker: <strong className="text-gray-200 font-semibold">{v.brokerName || v.transporterName || 'Direct Broker'}</strong></span>
+                  </div>
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${validity.badgeClass}`}>
+                    {validity.text}
                   </span>
                 </div>
-                <div className="flex items-center gap-1">
+
+                <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-white/5">
+                  {v.status === 'CANCELLED' ? (
+                    <button
+                      onClick={() => handleDirectDownloadNoc(v)}
+                      className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all"
+                      title="Download De-registration NOC PDF"
+                    >
+                      <FileCheck size={13} />
+                      <span>NOC PDF</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setVehicleToCancel(v);
+                        setCancellationReason('Operational De-Registration & Contract Release');
+                      }}
+                      className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg text-xs flex items-center gap-1 bg-white/5 border border-white/5"
+                      title="Cancel / De-register Vehicle & Generate NOC"
+                    >
+                      <Ban size={14} />
+                      <span className="text-[11px]">Cancel</span>
+                    </button>
+                  )}
                   <button 
                     onClick={async () => {
                       try {
@@ -406,304 +426,121 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
                         console.error(err);
                       }
                     }} 
-                    className="text-emerald-400 hover:text-white p-1.5 rounded-lg bg-white/5" 
+                    className="text-emerald-400 hover:text-white p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-medium flex items-center gap-1" 
                     title="Download Vehicle Details PDF"
                   >
-                    <Download size={15}/>
+                    <Download size={14}/>
+                    <span>PDF</span>
                   </button>
-                  <button onClick={() => setSelectedVehicle(v)} className="text-brand-400 hover:text-white p-1.5 rounded-lg bg-white/5" title="View Profile">
-                    <Eye size={15}/>
+                  <button onClick={() => setSelectedVehicle(v)} className="text-brand-400 hover:text-white p-1.5 rounded-lg bg-white/5 text-xs flex items-center gap-1 border border-white/5" title="View Profile">
+                    <Eye size={14}/>
+                    <span>View</span>
                   </button>
                   <button onClick={() => handleDeleteVehicle(v.id)} className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5" title="Delete Vehicle">
-                    <Trash2 size={15}/>
+                    <Trash2 size={14}/>
                   </button>
                 </div>
               </div>
-
-              <div className="grid grid-cols-2 gap-2 text-xs text-gray-400 bg-white/5 p-2.5 rounded-xl border border-white/5">
-                <div>
-                  <span className="text-[10px] uppercase text-gray-500 block">Type / Size</span>
-                  <span className="text-gray-200 font-medium">{v.type} ({v.size})</span>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase text-gray-500 block">Category</span>
-                  <span className="text-gray-200 font-medium">{v.category}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase text-gray-500 block">Transporter</span>
-                  <span className="text-gray-200 font-medium truncate block">{v.transporterName}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase text-gray-500 block">Validation Expiry</span>
-                  <span className={`font-medium ${checkExpiryStatus(v.validationExpiryDate) === 'Expired' ? 'text-red-400' : 'text-gray-300'}`}>
-                    {v.validationExpiryDate || '-'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {vehicles.filter(v => 
             v.registrationNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (v.brokerName && v.brokerName.toLowerCase().includes(searchQuery.toLowerCase())) ||
             v.transporterName.toLowerCase().includes(searchQuery.toLowerCase())
           ).length === 0 && (
             <div className="p-8 text-center text-gray-500 text-xs">No vehicles found.</div>
           )}
         </div>
 
-        {/* Desktop View (Table) */}
+        {/* Desktop View (Table) - Showing Gadi Number, Broker Name, and Validity Status */}
         <div className="hidden sm:block overflow-x-auto touch-pan-y custom-scrollbar">
           <table className="w-full text-left text-sm text-gray-300">
-            <thead className="bg-white/5 text-xs uppercase text-gray-500">
+            <thead className="bg-white/5 text-xs uppercase text-gray-400 border-b border-white/10">
               <tr>
-                <th className="p-3">Reg No</th>
-                <th className="p-3">Type/Size</th>
-                <th className="p-3">Category</th>
-                <th className="p-3">Transporter</th>
-                <th className="p-3">Owner</th>
-                <th className="p-3">Status</th>
-                <th className="p-3">Validation</th>
-                <th className="p-3 text-right">Action</th>
+                <th className="p-3.5 font-bold">Gadi Number</th>
+                <th className="p-3.5 font-bold">Broker Name</th>
+                <th className="p-3.5 font-bold">Status (Validity)</th>
+                <th className="p-3.5 text-right font-bold">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {vehicles.filter(v => 
                 v.registrationNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (v.brokerName && v.brokerName.toLowerCase().includes(searchQuery.toLowerCase())) ||
                 v.transporterName.toLowerCase().includes(searchQuery.toLowerCase())
-              ).map(v => (
-                <tr key={v.id} className="hover:bg-white/5 transition-colors">
-                  <td className="p-3 font-mono font-bold text-white">{v.registrationNumber}</td>
-                  <td className="p-3">{v.type} <span className="text-xs text-gray-500">({v.size})</span></td>
-                  <td className="p-3">{v.category}</td>
-                  <td className="p-3">{v.transporterName}</td>
-                  <td className="p-3 text-gray-400">{v.ownerName || '-'}</td>
-                  <td className="p-3">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium border border-white/5
-                      ${v.status === 'ON_TRIP' ? 'bg-blue-500/20 text-blue-400' :
-                        v.status === 'EXPIRED' ? 'bg-red-500/20 text-red-400' :
-                        v.status === 'EXPIRE_SOON' ? 'bg-yellow-500/20 text-yellow-400' :
-                        'bg-green-500/20 text-green-400'}`}>
-                      {v.status.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td className="p-3 text-xs">
-                    {v.validationExpiryDate ? (
-                      <span className={checkExpiryStatus(v.validationExpiryDate) === 'Expired' ? 'text-red-400' : 'text-gray-400'}>
-                        Exp: {v.validationExpiryDate}
+              ).map(v => {
+                const validity = getVehicleValidity(v);
+                return (
+                  <tr key={v.id} className="hover:bg-white/5 transition-colors">
+                    <td className="p-3.5 font-mono font-bold text-white text-base">{v.registrationNumber}</td>
+                    <td className="p-3.5 font-medium text-gray-200">{v.brokerName || v.transporterName || 'Direct Broker'}</td>
+                    <td className="p-3.5">
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold inline-block ${validity.badgeClass}`}>
+                        {validity.text}
                       </span>
-                    ) : '-'}
-                  </td>
-                  <td className="p-3 text-right flex justify-end items-center gap-1.5">
-                    {/* Vehicle Cancellation & NOC Actions */}
-                    {v.status === 'CANCELLED' ? (
-                      <button
-                        onClick={() => handleDirectDownloadNoc(v)}
-                        className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[11px] font-semibold px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
-                        title="Download De-registration NOC PDF"
-                      >
-                        <FileCheck size={13} />
-                        <span>NOC PDF</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setVehicleToCancel(v);
-                          setCancellationReason('Operational De-Registration & Contract Release');
-                        }}
-                        className="text-gray-400 hover:text-red-400 hover:bg-red-500/10 p-1.5 rounded-lg transition-colors text-xs flex items-center gap-1"
-                        title="Cancel / De-register Vehicle & Generate NOC"
-                      >
-                        <Ban size={15} />
-                        <span className="hidden xl:inline text-[11px]">Cancel</span>
-                      </button>
-                    )}
+                    </td>
+                    <td className="p-3.5 text-right">
+                      <div className="flex justify-end items-center gap-2">
+                        {/* Vehicle Cancellation & NOC Actions */}
+                        {v.status === 'CANCELLED' ? (
+                          <button
+                            onClick={() => handleDirectDownloadNoc(v)}
+                            className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
+                            title="Download De-registration NOC PDF"
+                          >
+                            <FileCheck size={14} />
+                            <span>NOC PDF</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setVehicleToCancel(v);
+                              setCancellationReason('Operational De-Registration & Contract Release');
+                            }}
+                            className="text-gray-400 hover:text-red-400 hover:bg-red-500/10 px-2.5 py-1.5 rounded-lg transition-colors text-xs flex items-center gap-1 border border-white/5"
+                            title="Cancel / De-register Vehicle & Generate NOC"
+                          >
+                            <Ban size={14} />
+                            <span>Cancel</span>
+                          </button>
+                        )}
 
-                    <button 
-                      onClick={async () => {
-                        try {
-                          await downloadVehicleDetailsPdf(v);
-                        } catch (err) {
-                          console.error(err);
-                        }
-                      }} 
-                      className="text-emerald-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/5" 
-                      title="Download Vehicle Dossier PDF"
-                    >
-                      <Download size={15}/>
-                    </button>
-                    <button onClick={() => setSelectedVehicle(v)} className="text-brand-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/5" title="View Profile"><Eye size={15}/></button>
-                    <button onClick={() => handleDeleteVehicle(v.id)} className="text-gray-500 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-white/5" title="Delete Vehicle Record"><Trash2 size={15}/></button>
-                  </td>
+                        <button 
+                          onClick={async () => {
+                            try {
+                              await downloadVehicleDetailsPdf(v);
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }} 
+                          className="bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 hover:text-white transition-colors px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1" 
+                          title="Download Vehicle Dossier PDF"
+                        >
+                          <Download size={14}/>
+                          <span>Download PDF</span>
+                        </button>
+                        <button onClick={() => setSelectedVehicle(v)} className="text-brand-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/5" title="View Profile"><Eye size={16}/></button>
+                        <button onClick={() => handleDeleteVehicle(v.id)} className="text-gray-500 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-white/5" title="Delete Vehicle Record"><Trash2 size={16}/></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {vehicles.filter(v => 
+                v.registrationNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (v.brokerName && v.brokerName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                v.transporterName.toLowerCase().includes(searchQuery.toLowerCase())
+              ).length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-8 text-center text-gray-500 text-xs">No vehicles found.</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
       </div>
     </div>
   );
-
-  const renderTrackerSection = () => {
-    const [trackerTab, setTrackerTab] = useState<'all' | 'pending' | 'received' | 'by_client' | 'by_us'>('all');
-
-    // Mock Data for Tracker Dashboard (Simulating Case-based Trackers)
-    const trackerEntries = [
-      { id: 'T1', vehicle: 'KLA-992', caseNo: 'DPL-24-001', provider: 'Us', status: 'Active', paymentStatus: 'Paid', cost: 15000, date: '2024-05-20' },
-      { id: 'T2', vehicle: 'TLX-334', caseNo: 'DPL-24-002', provider: 'Client', status: 'Active', paymentStatus: 'N/A', cost: 0, date: '2024-05-21' },
-      { id: 'T3', vehicle: 'LHR-1122', caseNo: 'DPL-24-004', provider: 'Us', status: 'Active', paymentStatus: 'Pending', cost: 12000, date: '2024-05-23' },
-      { id: 'T4', vehicle: 'ISB-9988', caseNo: 'DPL-24-005', provider: 'Us', status: 'Inactive', paymentStatus: 'Pending', cost: 12000, date: '2024-05-18' },
-    ];
-
-    const filteredTrackers = trackerEntries.filter(t => {
-      if (trackerTab === 'pending') return t.provider === 'Us' && t.paymentStatus === 'Pending';
-      if (trackerTab === 'received') return t.provider === 'Us' && t.paymentStatus === 'Paid';
-      if (trackerTab === 'by_client') return t.provider === 'Client';
-      if (trackerTab === 'by_us') return t.provider === 'Us';
-      return true;
-    });
-
-    return (
-      <div className="space-y-6 animate-fade-in">
-        {/* Tracker Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="glass-card p-4 rounded-xl border-l-4 border-blue-500 bg-gradient-to-br from-blue-500/10 to-transparent">
-            <div className="text-gray-400 text-xs uppercase font-bold">Total Active</div>
-            <div className="text-2xl font-bold text-white mt-1">{trackerEntries.filter(t => t.status === 'Active').length}</div>
-          </div>
-          <div className="glass-card p-4 rounded-xl border-l-4 border-yellow-500 bg-gradient-to-br from-yellow-500/10 to-transparent">
-            <div className="text-gray-400 text-xs uppercase font-bold">Payment Pending</div>
-            <div className="text-2xl font-bold text-white mt-1">{trackerEntries.filter(t => t.paymentStatus === 'Pending').length}</div>
-          </div>
-          <div className="glass-card p-4 rounded-xl border-l-4 border-green-500 bg-gradient-to-br from-green-500/10 to-transparent">
-            <div className="text-gray-400 text-xs uppercase font-bold">Payment Received</div>
-            <div className="text-2xl font-bold text-white mt-1">{trackerEntries.filter(t => t.paymentStatus === 'Paid').length}</div>
-          </div>
-          <div className="glass-card p-4 rounded-xl border-l-4 border-purple-500 bg-gradient-to-br from-purple-500/10 to-transparent">
-            <div className="text-gray-400 text-xs uppercase font-bold">Client Provided</div>
-            <div className="text-2xl font-bold text-white mt-1">{trackerEntries.filter(t => t.provider === 'Client').length}</div>
-          </div>
-        </div>
-
-        {/* Tracker Filters */}
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          {['all', 'pending', 'received', 'by_client', 'by_us'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setTrackerTab(tab as any)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors border ${
-                trackerTab === tab 
-                  ? 'bg-brand-600 border-brand-500 text-white' 
-                  : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              {tab.replace('_', ' ').toUpperCase()}
-            </button>
-          ))}
-        </div>
-
-        {/* Tracker List */}
-        <div className="glass-card rounded-xl border border-white/10 overflow-hidden">
-          {/* Mobile View (Cards) */}
-          <div className="block sm:hidden divide-y divide-white/5 touch-pan-y">
-            {filteredTrackers.map((t) => (
-              <div key={t.id} className="p-4 space-y-2.5 hover:bg-white/5 transition-colors">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-white text-xs">{t.caseNo}</span>
-                    <span className="font-mono font-bold text-brand-400 text-xs">{t.vehicle}</span>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-medium border border-white/5 ${t.provider === 'Us' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
-                    {t.provider === 'Us' ? 'By Us' : 'By Client'}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between text-xs text-gray-400">
-                  <span>Installed: <strong className="text-gray-200">{t.date}</strong></span>
-                  <span>Cost: <strong className="text-emerald-400 font-mono">{t.cost > 0 ? `PKR ${t.cost.toLocaleString()}` : '-'}</strong></span>
-                </div>
-
-                <div className="flex items-center justify-between pt-1 border-t border-white/5">
-                  <div>
-                    {t.provider === 'Us' ? (
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-medium border border-white/5 ${t.paymentStatus === 'Paid' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                        {t.paymentStatus}
-                      </span>
-                    ) : (
-                      <span className="text-gray-500 text-xs">N/A</span>
-                    )}
-                  </div>
-                  {t.paymentStatus === 'Pending' && (
-                    <button className="text-[10px] bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded transition-colors">
-                      Mark Paid
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-            {filteredTrackers.length === 0 && (
-              <div className="p-8 text-center text-gray-500 text-xs">
-                No tracker records found for this filter.
-              </div>
-            )}
-          </div>
-
-          {/* Desktop View (Table) */}
-          <div className="hidden sm:block overflow-x-auto touch-pan-y custom-scrollbar">
-            <table className="w-full text-left text-sm text-gray-300">
-              <thead className="bg-white/5 text-xs uppercase text-gray-500">
-                <tr>
-                  <th className="p-4">Case No</th>
-                  <th className="p-4">Vehicle</th>
-                  <th className="p-4">Installation Date</th>
-                  <th className="p-4">Provider</th>
-                  <th className="p-4">Cost</th>
-                  <th className="p-4">Payment Status</th>
-                  <th className="p-4 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {filteredTrackers.map((t) => (
-                  <tr key={t.id} className="hover:bg-white/5 transition-colors">
-                    <td className="p-4 font-mono text-white">{t.caseNo}</td>
-                    <td className="p-4 font-mono font-bold text-brand-400">{t.vehicle}</td>
-                    <td className="p-4">{t.date}</td>
-                    <td className="p-4">
-                      <span className={`px-2 py-1 rounded text-[10px] font-medium border border-white/5 ${t.provider === 'Us' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
-                        {t.provider === 'Us' ? 'By Us' : 'By Client'}
-                      </span>
-                    </td>
-                    <td className="p-4 font-mono">{t.cost > 0 ? `PKR ${t.cost.toLocaleString()}` : '-'}</td>
-                    <td className="p-4">
-                      {t.provider === 'Us' ? (
-                        <span className={`px-2 py-1 rounded text-[10px] font-medium border border-white/5 ${t.paymentStatus === 'Paid' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                          {t.paymentStatus}
-                        </span>
-                      ) : (
-                        <span className="text-gray-500 text-xs">N/A</span>
-                      )}
-                    </td>
-                    <td className="p-4 text-right">
-                      {t.paymentStatus === 'Pending' && (
-                        <button className="text-[10px] bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded transition-colors">
-                          Mark Paid
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {filteredTrackers.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="p-8 text-center text-gray-500">
-                      No tracker records found for this filter.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   // --- Main Render ---
 
@@ -718,31 +555,24 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
         <div className="overflow-x-auto max-w-full pb-1 no-scrollbar">
           <div className="flex gap-2 bg-white/5 rounded-lg p-1 border border-white/10 w-max">
             <button 
-              onClick={() => setActiveTab('transporters')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'transporters' ? 'bg-brand-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-            >
-              <User size={16} /> Transporters
-            </button>
-            <button 
               onClick={() => setActiveTab('vehicles')}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'vehicles' ? 'bg-brand-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
             >
               <Truck size={16} /> Vehicles
             </button>
             <button 
-              onClick={() => setActiveTab('tracker')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'tracker' ? 'bg-brand-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+              onClick={() => setActiveTab('transporters')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'transporters' ? 'bg-brand-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
             >
-              <MapPin size={16} /> Vehicle Tracker
+              <User size={16} /> Transporters
             </button>
           </div>
         </div>
       </div>
 
       {/* Content Area */}
-      {activeTab === 'transporters' && renderTransportersSection()}
       {activeTab === 'vehicles' && renderVehiclesSection()}
-      {activeTab === 'tracker' && renderTrackerSection()}
+      {activeTab === 'transporters' && renderTransportersSection()}
 
       {/* Add Transporter Modal */}
       {showAddTransporter && (
@@ -1065,12 +895,32 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
     type: VehicleType.FLATBED,
     size: '40ft',
     registrationNumber: '', engineNo: '', chassisNo: '',
+    brokerName: '',
+    ownerName: '',
+    ownerCnic: '',
+    ownerIdCardUrl: '',
+    ownerIdCardName: '',
     driverName: '', driverCnic: '', driverContact: '',
     validationStartDate: '',
     weightCapacity: ''
   });
 
   const [isExtracting, setIsExtracting] = useState(false);
+
+  const handleOwnerIdUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData((prev: any) => ({
+          ...prev,
+          ownerIdCardUrl: reader.result as string,
+          ownerIdCardName: file.name
+        }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1125,6 +975,82 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
               <option value="">Select Transporter</option>
               {transporters.map((t: Transporter) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Gadi Number (Registration No) *</label>
+              <input 
+                type="text" 
+                placeholder="e.g. KLA-992" 
+                className="w-full glass-input rounded p-2 text-white font-mono font-bold" 
+                value={formData.registrationNumber} 
+                onChange={e => setFormData({...formData, registrationNumber: e.target.value})} 
+                required
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Broker Name *</label>
+              <input 
+                type="text" 
+                placeholder="e.g. Haji Aslam Broker" 
+                className="w-full glass-input rounded p-2 text-white" 
+                value={formData.brokerName} 
+                onChange={e => setFormData({...formData, brokerName: e.target.value})} 
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white/5 p-3 rounded-xl border border-white/10">
+            <div>
+              <label className="text-xs text-brand-300 block mb-1 font-medium">Vehicle Owner Name</label>
+              <input 
+                type="text" 
+                placeholder="Owner Full Name" 
+                className="w-full glass-input rounded p-2 text-white text-sm" 
+                value={formData.ownerName} 
+                onChange={e => setFormData({...formData, ownerName: e.target.value})} 
+              />
+            </div>
+            <div>
+              <label className="text-xs text-brand-300 block mb-1 font-medium">Owner CNIC / ID No</label>
+              <input 
+                type="text" 
+                placeholder="e.g. 42101-1234567-1" 
+                className="w-full glass-input rounded p-2 text-white font-mono text-sm" 
+                value={formData.ownerCnic} 
+                onChange={e => setFormData({...formData, ownerCnic: e.target.value})} 
+              />
+            </div>
+
+            <div className="sm:col-span-2 mt-1">
+              <label className="text-xs text-gray-300 block mb-1 font-medium flex items-center justify-between">
+                <span>Owner ID Card / CNIC Document Upload</span>
+                {formData.ownerIdCardName && (
+                  <span className="text-emerald-400 text-[11px] font-semibold flex items-center gap-1">
+                    <CheckCircle size={12} /> {formData.ownerIdCardName}
+                  </span>
+                )}
+              </label>
+              <div className="relative border border-dashed border-brand-500/40 hover:border-brand-400 bg-brand-500/5 hover:bg-brand-500/10 rounded-xl p-3.5 text-center transition-all">
+                <input 
+                  type="file" 
+                  id="owner-id-upload" 
+                  className="hidden" 
+                  accept="image/*,application/pdf"
+                  onChange={handleOwnerIdUpload} 
+                />
+                <label htmlFor="owner-id-upload" className="cursor-pointer block">
+                  <div className="flex items-center justify-center gap-2 text-brand-300">
+                    <UploadCloud size={18} className="text-brand-400" />
+                    <span className="text-xs font-semibold">
+                      {formData.ownerIdCardName ? 'Change Owner ID Card Document' : 'Upload Owner ID Card (Image / Scan)'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">Accepts PNG, JPG, or PDF</p>
+                </label>
+              </div>
+            </div>
           </div>
 
           <div>
@@ -1185,9 +1111,10 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
             </label>
           </div>
 
-          <input type="text" placeholder="Registration Number" className="glass-input rounded p-2 text-white" value={formData.registrationNumber} onChange={e => setFormData({...formData, registrationNumber: e.target.value})} />
-          <input type="text" placeholder="Engine No" className="glass-input rounded p-2 text-white" value={formData.engineNo} onChange={e => setFormData({...formData, engineNo: e.target.value})} />
-          <input type="text" placeholder="Chassis No" className="glass-input rounded p-2 text-white" value={formData.chassisNo} onChange={e => setFormData({...formData, chassisNo: e.target.value})} />
+          <div className="grid grid-cols-2 gap-3">
+            <input type="text" placeholder="Engine No" className="glass-input rounded p-2 text-white" value={formData.engineNo} onChange={e => setFormData({...formData, engineNo: e.target.value})} />
+            <input type="text" placeholder="Chassis No" className="glass-input rounded p-2 text-white" value={formData.chassisNo} onChange={e => setFormData({...formData, chassisNo: e.target.value})} />
+          </div>
           
           {showValidationDate && (
             <div className="bg-yellow-500/10 p-3 rounded border border-yellow-500/20">
@@ -1201,7 +1128,10 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
           <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
           <button onClick={() => {
              const selectedTransporter = transporters.find((t: Transporter) => t.id === formData.transporterId);
-             onSave({ ...formData, transporterName: selectedTransporter?.name || 'Unknown' });
+             onSave({ 
+               ...formData, 
+               transporterName: selectedTransporter?.name || (formData.brokerName ? `${formData.brokerName} (Broker)` : 'Direct Broker')
+             });
           }} className="bg-brand-600 text-white px-4 py-2 rounded-lg">Save Vehicle</button>
         </div>
       </div>
@@ -1278,17 +1208,6 @@ const VehicleProfileModal = ({
              >
                {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                <span>Download PDF</span>
-             </button>
-             <button 
-               onClick={() => {
-                 window.focus();
-                 window.print();
-               }} 
-               className="bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium px-3 py-2 rounded-xl flex items-center gap-1.5 border border-white/10"
-               title="Print document"
-             >
-               <Printer size={14} />
-               <span>Print</span>
              </button>
              <button onClick={onClose} className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 ml-2"><X size={22}/></button>
            </div>
@@ -1401,6 +1320,18 @@ const VehicleProfileModal = ({
                    <span className="text-gray-400">Address</span>
                    <span className="text-white text-right max-w-[200px] truncate" title={vehicle.ownerAddress}>{vehicle.ownerAddress || '-'}</span>
                  </div>
+                 {vehicle.ownerIdCardUrl ? (
+                   <div className="flex justify-between items-center pt-1">
+                     <span className="text-gray-400">Owner ID Card</span>
+                     <a 
+                       href={vehicle.ownerIdCardUrl} 
+                       download={`Owner_CNIC_${vehicle.registrationNumber}.png`} 
+                       className="text-emerald-400 hover:text-emerald-300 text-xs font-semibold flex items-center gap-1 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20"
+                     >
+                       <Download size={12} /> Download ID Card
+                     </a>
+                   </div>
+                 ) : null}
                </div>
              </div>
            </div>

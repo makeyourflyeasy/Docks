@@ -291,6 +291,39 @@ export const PAKISTAN_CUSTOMS_COMPLIANCE: Record<string, CategoryComplianceDetai
       { id: 'pc_3', category: 'Transportation of Private Cargo', description: 'Transit Toll Taxes, Motorway Weigh Station & Fuel Surcharge', amount: 9500, taxable: false },
       { id: 'pc_4', category: 'Transportation of Private Cargo', description: 'Consignment Note (Bilty) Documentation & Electronic POD Processing', amount: 4500, taxable: true }
     ]
+  },
+
+  "Import & Export Services": {
+    id: "import_export_services",
+    name: "Import & Export Services (Ocean Freight & Multimodal)",
+    legalAct: "Customs Act 1969, Foreign Exchange Regulation Act 1947 & Carriage of Goods by Sea Act 1925",
+    customsRulesRef: "Customs Rules 2001 (Export & Import Procedures), SRO 450(I)/2001 & SOLAS VGM Regulations",
+    mandatoryDocuments: [
+      "Container Release Order (CRO) / Empty Container Allocation Slip",
+      "Shipping Line Vessel Booking Confirmation & Ocean Freight B/L",
+      "WeBOC / PSW Export/Import Goods Declaration (GD)",
+      "SOLAS Certified Verified Gross Mass (VGM) Certificate",
+      "Commercial Invoice, Packing List & Certificate of Origin",
+      "Terminal Gate-In Pass, Mate's Receipt (MR) & Shipping Line Delivery Order (DO)"
+    ],
+    mandatoryFields: [
+      "CRO / Shipping Line Booking Reference",
+      "Vessel Name, Voyage Number & Estimated Sailing (ETD/ETA)",
+      "Port of Loading (POL) & Port of Discharge (POD)",
+      "Container Numbers, ISO Size & High-Security Bullet Seal Numbers",
+      "Verified Gross Mass (VGM Weight in Kg) & Weighbridge Slip",
+      "WebOC/PSW GD Number, Assessment Status & Out of Charge (OOC) NOC"
+    ],
+    procedureSummary: "Comprehensive international import and export workflow covering container box booking (CRO), shipping line vessel booking, inland factory-to-port transportation, warehouse stuffing & VGM certification, port terminal drayage and customs clearance, vessel loading and Bill of Lading (B/L) issuance, destination port clearance and Delivery Order (DO), through to consignee cargo de-stuffing, empty container return to line depot, and financial charges settlement.",
+    standardTariff: [
+      { id: 'ie_1', category: 'Import & Export Services', description: 'Ocean Freight / Vessel Booking (Port of Loading to Destination)', amount: 185000, taxable: false },
+      { id: 'ie_2', category: 'Import & Export Services', description: 'Container Box Booking (CRO) & Empty Depot Handling Fee', amount: 14500, taxable: true },
+      { id: 'ie_3', category: 'Import & Export Services', description: 'Inland Drayage / Trailer Haulage (Depot / Warehouse to Port Terminal)', amount: 65000, taxable: false },
+      { id: 'ie_4', category: 'Import & Export Services', description: 'Warehouse Stuffing, Lashing & SOLAS VGM Weighbridge Certification', amount: 18000, taxable: true },
+      { id: 'ie_5', category: 'Import & Export Services', description: 'Port Terminal Gate-In, Customs GD Filing & Examination Processing', amount: 22500, taxable: true },
+      { id: 'ie_6', category: 'Import & Export Services', description: 'Bill of Lading (B/L) / Delivery Order (DO) Documentation & NOC Issuance', amount: 16500, taxable: true },
+      { id: 'ie_7', category: 'Import & Export Services', description: 'Empty Container Return Interchange (EIR) & Demurrage Settlement', amount: 12000, taxable: true }
+    ]
   }
 };
 
@@ -307,7 +340,8 @@ export function getStandardChargesForCategory(category: string, containerCount: 
   );
 
   if (!matchedKey) {
-    if (norm.includes('afghan') || norm.includes('transit')) matchedKey = "Afghan Transit";
+    if (norm.includes('import') || norm.includes('export')) matchedKey = "Import & Export Services";
+    else if (norm.includes('afghan') || norm.includes('transit')) matchedKey = "Afghan Transit";
     else if (norm.includes('bonded') || norm.includes('carrier')) matchedKey = "Bonded Carrier";
     else if (norm.includes('clearance')) matchedKey = "Customs Clearance";
     else if (norm.includes('tir')) matchedKey = "TIR";

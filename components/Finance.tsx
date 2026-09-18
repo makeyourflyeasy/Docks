@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   DollarSign, FileText, ArrowUpRight, ArrowDownLeft, Plus, 
   Search, Filter, Download, CreditCard, Banknote, Briefcase, X, Save, Calendar, Camera,
-  BookOpen, ChevronDown, CheckCircle2, User, Printer, Layers, RefreshCw, AlertCircle, ArrowRight,
-  Eye, Loader2, Share2
+  BookOpen, ChevronDown, CheckCircle2, User, Layers, RefreshCw, AlertCircle, ArrowRight,
+  Eye, Loader2, Share2, Upload
 } from 'lucide-react';
 import Logo from './Logo';
 import { PdfViewerModal } from './PdfViewerModal';
@@ -32,22 +32,11 @@ import {
 } from '../services/pdfExportService';
 import { getStandardChargesForCategory } from '../services/customsComplianceService';
 
-const INITIAL_FINANCE_DATA: FinanceEntry[] = [
-  { id: 1, date: '2026-04-12', description: 'Advance Payment - Case DPL-26-000004', amount: 150000, type: 'INCOME', status: 'PAID', party: 'Global Traders Ltd', category: 'Logistics Services', reference: 'REC-2026-001', paymentMethod: 'BANK', bankName: 'HBL Corporate', transactionId: 'DEP-88421' },
-  { id: 2, date: '2026-04-14', description: 'Vehicle Rent & Fuel - TL-8842', amount: 45000, type: 'EXPENSE', status: 'PAID', party: 'Swift Transport', category: 'Transportation', reference: 'TR-882', paymentMethod: 'CASH' },
-  { id: 3, date: '2026-04-15', description: 'Port Wharfage & Handling Charges', amount: 15000, type: 'PAYABLE', status: 'PENDING', party: 'Karachi Port Trust', category: 'Port Charges', reference: 'KPT-9941' },
-  { id: 4, date: '2026-04-16', description: 'Customs Clearance & Border TP', amount: 35000, type: 'RECEIVABLE', status: 'PARTIAL', party: 'Afghan Transit Corp', category: 'Customs', reference: 'INV-2026-002' },
-];
+const INITIAL_FINANCE_DATA: FinanceEntry[] = [];
 
-const INITIAL_RECEIVABLES: FinanceEntry[] = [
-  { id: 101, date: '2026-04-15', description: 'Customs Duty Refund Claim', amount: 125000, type: 'RECEIVABLE', status: 'PENDING', party: 'Customs Dept', category: 'Refunds', reference: 'REF-099' },
-  { id: 102, date: '2026-04-18', description: 'Logistics Service Invoice #442', amount: 80000, type: 'RECEIVABLE', status: 'PARTIAL', party: 'Global Traders Ltd', category: 'Services', reference: 'INV-442' },
-];
+const INITIAL_RECEIVABLES: FinanceEntry[] = [];
 
-const INITIAL_PAYABLES: FinanceEntry[] = [
-  { id: 201, date: '2026-04-20', description: 'Office Terminal Electricity Bill', amount: 45000, type: 'PAYABLE', status: 'PENDING', party: 'K-Electric', category: 'Utilities', reference: 'BILL-Apr26' },
-  { id: 202, date: '2026-04-20', description: 'Port Fiber Internet Connectivity', amount: 8500, type: 'PAYABLE', status: 'PENDING', party: 'Nayatel', category: 'Utilities', reference: 'NET-551' },
-];
+const INITIAL_PAYABLES: FinanceEntry[] = [];
 
 interface FinanceProps {
   initialFilter?: any;
@@ -68,15 +57,21 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   }, [activeTab]);
 
   const [activeNotificationId, setActiveNotificationId] = useState<number | null>(null);
-  const [financeData, setFinanceData] = useState<FinanceEntry[]>(INITIAL_FINANCE_DATA);
-  const [receivables, setReceivables] = useState<FinanceEntry[]>(INITIAL_RECEIVABLES);
-  const [payables, setPayables] = useState<FinanceEntry[]>(INITIAL_PAYABLES);
+  const [financeData, setFinanceData] = useState<FinanceEntry[]>(() => {
+    return safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_finance', INITIAL_FINANCE_DATA);
+  });
+  const [receivables, setReceivables] = useState<FinanceEntry[]>(() => {
+    return safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_receivables', INITIAL_RECEIVABLES);
+  });
+  const [payables, setPayables] = useState<FinanceEntry[]>(() => {
+    return safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_payables', INITIAL_PAYABLES);
+  });
   const [cases, setCases] = useState<Case[]>([]);
 
   // Registered Clients Management
   const [clientList, setClientList] = useState<string[]>(DEFAULT_CLIENTS);
   const [selectedLedgerClient, setSelectedLedgerClient] = useState<string>(() => {
-    return safeAppStorage.getItem('dpl_finance_client') || 'Global Traders Ltd';
+    return safeAppStorage.getItem('dpl_finance_client') || 'Trial Client';
   });
 
   useEffect(() => {
@@ -108,7 +103,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const [otherClientName, setOtherClientName] = useState('');
 
   const [newTransaction, setNewTransaction] = useState<Partial<FinanceEntry>>({
-    description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: ''
+    description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: '', documentUrl: '', documentName: ''
   });
 
   const banks = [
@@ -121,19 +116,17 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   // 1. Synchronize finances with Firestore
   useEffect(() => {
     const unsubscribe = subscribeToFinances((items) => {
-      if (items && items.length > 0) {
+      if (items) {
         const cashList = items.filter(i => i.type === 'INCOME' || i.type === 'EXPENSE');
         const recvList = items.filter(i => i.type === 'RECEIVABLE');
         const payList = items.filter(i => i.type === 'PAYABLE');
 
-        if (cashList.length > 0) setFinanceData(cashList);
-        if (recvList.length > 0) setReceivables(recvList);
-        if (payList.length > 0) setPayables(payList);
-      } else {
-        // Initial auto-seed to Firestore
-        [...INITIAL_FINANCE_DATA, ...INITIAL_RECEIVABLES, ...INITIAL_PAYABLES].forEach(item => {
-          saveFinanceToFirestore(item).catch(() => {});
-        });
+        setFinanceData(cashList);
+        setReceivables(recvList);
+        setPayables(payList);
+        safeAppStorage.setJSON('dpl_live_finance', cashList);
+        safeAppStorage.setJSON('dpl_live_receivables', recvList);
+        safeAppStorage.setJSON('dpl_live_payables', payList);
       }
     });
     return () => unsubscribe();
@@ -440,6 +433,29 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     }
   };
 
+  // Handle Document upload for Payable / Receivable
+  const handleDocumentChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        const processed = await compressAndPrepareFile(file);
+        if (processed.dataUrl) {
+          setNewTransaction(prev => ({ 
+            ...prev, 
+            documentUrl: processed.dataUrl,
+            documentName: file.name
+          }));
+        }
+      } catch (err) {
+        console.warn("Document processing notice:", err);
+      } finally {
+        try {
+          e.target.value = '';
+        } catch (_) {}
+      }
+    }
+  };
+
   const handleStatusChange = (id: number, list: FinanceEntry[], setList: React.Dispatch<React.SetStateAction<FinanceEntry[]>>) => {
     setPendingPaymentEntry({ id, list, setList });
     setNewTransaction({ ...newTransaction, paymentMethod: 'CASH', amount: list.find(e => e.id === id)?.amount || 0 });
@@ -495,18 +511,20 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     const entry: FinanceEntry = {
       id: Date.now(),
       date: new Date().toISOString().split('T')[0],
-      description: newTransaction.description?.trim() || (transactionType === 'INCOME' ? 'Payment Received from Client' : 'Transaction Entry'),
+      description: newTransaction.description?.trim() || (transactionType === 'INCOME' ? 'Payment Received' : transactionType === 'PAYABLE' ? 'Payable Bill' : transactionType === 'RECEIVABLE' ? 'Receivable Bill' : 'Transaction Entry'),
       amount: Number(newTransaction.amount),
       type: transactionType,
       status: isDirectPayment ? 'PAID' : 'PENDING',
       party: finalParty,
-      category: transactionType === 'INCOME' ? 'Client Payment' : transactionType === 'EXPENSE' ? 'Operational Expense' : 'General',
-      reference: newTransaction.transactionId || `REF-${Math.floor(1000 + Math.random() * 9000)}`,
-      paymentMethod: newTransaction.paymentMethod as any,
-      bankId: newTransaction.bankId,
-      bankName: newTransaction.bankName,
-      transactionId: newTransaction.transactionId,
-      slipUrl: newTransaction.slipUrl
+      category: transactionType === 'INCOME' ? 'Client Payment' : transactionType === 'EXPENSE' ? 'Operational Expense' : transactionType === 'PAYABLE' ? 'Payable Bill' : 'Receivable Bill',
+      reference: newTransaction.transactionId || (transactionType === 'PAYABLE' ? `PAY-${Math.floor(1000 + Math.random() * 9000)}` : transactionType === 'RECEIVABLE' ? `INV-${Math.floor(1000 + Math.random() * 9000)}` : `REF-${Math.floor(1000 + Math.random() * 9000)}`),
+      paymentMethod: isDirectPayment ? (newTransaction.paymentMethod as any || 'CASH') : undefined,
+      bankId: isDirectPayment ? newTransaction.bankId : undefined,
+      bankName: isDirectPayment ? newTransaction.bankName : undefined,
+      transactionId: isDirectPayment ? newTransaction.transactionId : undefined,
+      slipUrl: isDirectPayment ? newTransaction.slipUrl : undefined,
+      documentUrl: newTransaction.documentUrl,
+      documentName: newTransaction.documentName
     };
 
     if (transactionType === 'PAYABLE') setPayables([entry, ...payables]);
@@ -518,7 +536,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     setShowAddModal(false);
     setIsOtherClient(false);
     setOtherClientName('');
-    setNewTransaction({ description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: '' });
+    setNewTransaction({ description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: '', documentUrl: '', documentName: '' });
 
     // If we're on client ledger, switch selected client to this party
     if (activeTab === 'client_ledger') {
@@ -528,8 +546,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     // Immediately prompt receipt or invoice generation
     if (transactionType === 'RECEIVABLE') {
       handleOpenInvoice(entry);
-    } else {
-      handleOpenReceipt(entry);
+    } else if (transactionType === 'INCOME' || transactionType === 'EXPENSE') {
+      handleDirectDownloadReceipt(entry);
     }
   };
 
@@ -760,10 +778,6 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     ]);
     const filename = `General_Ledger_DPL_${glAccountFilter.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}`;
     exportCSVFile(filename, headers, rows);
-  };
-
-  const handlePrint = () => {
-    window.print();
   };
 
   const StatCard = ({ title, amount, type, icon: Icon, subtitle }: any) => (
@@ -1136,14 +1150,6 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                   <Download size={14} className="text-emerald-400" />
                   <span>Export CSV</span>
                 </button>
-                <button 
-                  onClick={handlePrint}
-                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all"
-                  title="Print or Save as PDF"
-                >
-                  <Printer size={14} className="text-brand-400" />
-                  <span>Print PDF</span>
-                </button>
               </div>
             </div>
 
@@ -1426,14 +1432,6 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 >
                   <Download size={14} className="text-emerald-400" />
                   <span>Export GL (CSV)</span>
-                </button>
-                <button 
-                  onClick={handlePrint}
-                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all"
-                  title="Print or Save General Ledger as PDF"
-                >
-                  <Printer size={14} className="text-brand-400" />
-                  <span>Print Statement</span>
                 </button>
               </div>
             </div>
@@ -1864,7 +1862,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           onClick={() => { 
             setTransactionType('INCOME'); 
             setNewTransaction({
-              description: 'Payment Received from Client',
+              description: 'Payment Received',
               amount: 0,
               party: activeTab === 'client_ledger' ? selectedLedgerClient : '',
               paymentMethod: 'CASH',
@@ -1946,10 +1944,11 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
               <Filter size={16} /> Date Filter
             </button>
             <button 
-              onClick={handlePrint}
+              onClick={handleDownloadGeneralLedger}
               className="flex items-center gap-2 px-3.5 py-2 bg-white/5 border border-white/10 text-gray-300 rounded-lg text-sm hover:bg-white/10 transition-colors"
+              title="Download Statement (PDF)"
             >
-              <Printer size={16} /> Print Statement
+              <Download size={16} className="text-emerald-400" /> Download Statement (PDF)
             </button>
 
             {/* Dropdown Filter */}
@@ -2000,12 +1999,14 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
             <div className="flex justify-between items-center mb-5 pb-3 border-b border-white/10">
               <div>
                 <h3 className="text-lg font-bold text-white">
-                  {transactionType === 'INCOME' ? 'Receive Payment from Client' : 
-                   transactionType === 'EXPENSE' ? 'Make Payment (Expense)' : 
-                   transactionType === 'RECEIVABLE' ? 'Create Client Receivable / Invoice' : 'Add Payable Bill'}
+                  {transactionType === 'INCOME' ? 'Receive Payment' : 
+                   transactionType === 'EXPENSE' ? 'Make Payment' : 
+                   transactionType === 'RECEIVABLE' ? 'Add Receivable' : 'Add Payable'}
                 </h3>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  {transactionType === 'INCOME' ? 'Credit payment to client ledger & deduct outstanding balance' : 'Record financial transaction'}
+                  {transactionType === 'INCOME' ? 'Record received payment & generate instant official receipt' : 
+                   transactionType === 'EXPENSE' ? 'Record expense payment' :
+                   transactionType === 'RECEIVABLE' ? 'Record receivable bill & generate invoice' : 'Record payable bill amount to be settled'}
                 </p>
               </div>
               <button onClick={() => setShowAddModal(false)} className="text-gray-400 hover:text-white p-1">
@@ -2014,24 +2015,23 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
             </div>
             
             <div className="space-y-4">
-              {/* Payment Method Switcher (Cash vs Bank) */}
-              <div className="grid grid-cols-2 gap-2 bg-black/40 p-1.5 rounded-xl border border-white/10">
-                <button 
-                  onClick={() => setNewTransaction({...newTransaction, paymentMethod: 'CASH'})}
-                  className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 border transition-all ${newTransaction.paymentMethod === 'CASH' ? 'bg-brand-600 border-brand-500 text-white shadow-md' : 'border-transparent text-gray-400 hover:text-white'}`}
-                >
-                  <Banknote size={16} /> Cash In Hand
-                </button>
-                <button 
-                  onClick={() => setNewTransaction({...newTransaction, paymentMethod: 'BANK'})}
-                  className={`py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 border transition-all ${newTransaction.paymentMethod === 'BANK' ? 'bg-brand-600 border-brand-500 text-white shadow-md' : 'border-transparent text-gray-400 hover:text-white'}`}
-                >
-                  <CreditCard size={16} /> Bank Deposit / Transfer
-                </button>
-              </div>
+              {/* Payment Method (Dropdown for Payments only) */}
+              {(transactionType === 'INCOME' || transactionType === 'EXPENSE') && (
+                <div className="space-y-1.5">
+                  <label className="text-xs text-gray-300 font-medium">Payment Mode</label>
+                  <select
+                    className="w-full glass-input rounded-xl p-2.5 outline-none text-sm text-white bg-slate-900 border border-white/15"
+                    value={newTransaction.paymentMethod || 'CASH'}
+                    onChange={(e) => setNewTransaction({ ...newTransaction, paymentMethod: e.target.value as 'CASH' | 'BANK' })}
+                  >
+                    <option value="CASH">Cash In Hand</option>
+                    <option value="BANK">Bank Deposit / Transfer</option>
+                  </select>
+                </div>
+              )}
 
-              {/* Bank Details (if Bank selected) */}
-              {newTransaction.paymentMethod === 'BANK' && (
+              {/* Bank Details (if Bank selected for Payments) */}
+              {(transactionType === 'INCOME' || transactionType === 'EXPENSE') && newTransaction.paymentMethod === 'BANK' && (
                 <div className="space-y-3 bg-brand-500/5 p-3.5 rounded-xl border border-brand-500/20 animate-in fade-in slide-in-from-top-2">
                   <div>
                     <label className="text-xs text-gray-300 font-medium block mb-1">Deposit Bank Account</label>
@@ -2070,10 +2070,14 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 </div>
               )}
 
-              {/* CLIENT / PARTY SELECTION DROPDOWN WITH OTHERS OPTION */}
+              {/* PAYEE / PAYER SELECTION */}
               <div className="space-y-1.5">
                 <label className="text-xs text-gray-300 font-medium flex items-center justify-between">
-                  <span>Client / Party Name</span>
+                  <span>
+                    {transactionType === 'PAYABLE' ? 'Payee' : 
+                     transactionType === 'RECEIVABLE' ? 'Payer' : 
+                     transactionType === 'INCOME' ? 'Payer' : 'Payee'}
+                  </span>
                   <span className="text-[11px] text-brand-400">Registered Directory</span>
                 </label>
                 <div className="relative">
@@ -2090,14 +2094,16 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                       }
                     }}
                   >
-                    <option value="" className="bg-slate-900 text-gray-400">-- Select Client / Party --</option>
+                    <option value="" className="bg-slate-900 text-gray-400">
+                      -- Select {transactionType === 'PAYABLE' ? 'Payee' : transactionType === 'RECEIVABLE' ? 'Payer' : transactionType === 'INCOME' ? 'Payer' : 'Payee'} --
+                    </option>
                     {clientList.map((client) => (
                       <option key={client} value={client} className="bg-slate-900 text-white">
                         {client}
                       </option>
                     ))}
                     <option value="__OTHERS__" className="bg-slate-900 text-amber-300 font-bold">
-                      ➕ Others (Add New Client / Party)
+                      ➕ Others (Add New {transactionType === 'PAYABLE' ? 'Payee' : transactionType === 'RECEIVABLE' ? 'Payer' : transactionType === 'INCOME' ? 'Payer' : 'Payee'})
                     </option>
                   </select>
                   <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
@@ -2106,7 +2112,9 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 {/* Others text input when selected */}
                 {isOtherClient && (
                   <div className="mt-2 space-y-1.5 animate-in fade-in slide-in-from-top-1 bg-amber-500/10 p-3 rounded-xl border border-amber-500/40">
-                    <label className="block text-xs text-amber-300 font-semibold">Enter New Client / Party Name</label>
+                    <label className="block text-xs text-amber-300 font-semibold">
+                      Enter New {transactionType === 'PAYABLE' ? 'Payee' : transactionType === 'RECEIVABLE' ? 'Payer' : transactionType === 'INCOME' ? 'Payer' : 'Payee'} Name
+                    </label>
                     <input
                       type="text"
                       placeholder="e.g. Al-Madina Trading Co..."
@@ -2120,7 +2128,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                       autoFocus
                     />
                     <p className="text-[11px] text-amber-300/80">
-                      ⚡ This new client will be added to the clients directory and will be available for future case registrations and transactions.
+                      ⚡ This new party will be added to the directory and will be available for future case registrations and transactions.
                     </p>
                   </div>
                 )}
@@ -2146,12 +2154,26 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 <label className="text-xs text-gray-300 font-medium">Description / Remarks</label>
                 <input 
                   type="text" 
-                  placeholder={transactionType === 'INCOME' ? 'e.g. Part payment against Case DPL-26-000004' : 'e.g. Logistics Service Fee'}
+                  placeholder={transactionType === 'INCOME' ? 'e.g. Part payment against Case DPL-26-000004' : transactionType === 'PAYABLE' ? 'e.g. Port Wharfage & Handling Charges' : 'e.g. Logistics Service Fee'}
                   className="w-full glass-input rounded-xl p-3 outline-none text-sm text-white border border-white/15 focus:border-brand-400"
                   value={newTransaction.description}
                   onChange={(e) => setNewTransaction({...newTransaction, description: e.target.value})}
                 />
               </div>
+
+              {/* Document Upload Button for Payable & Receivable */}
+              {(transactionType === 'PAYABLE' || transactionType === 'RECEIVABLE') && (
+                <div className="space-y-1.5">
+                  <label className="text-xs text-gray-300 font-medium">Upload Document / Bill (Optional)</label>
+                  <label className="flex items-center justify-center gap-2 p-2.5 border-2 border-dashed border-white/15 rounded-xl hover:bg-brand-500/10 hover:border-brand-500/50 transition-all cursor-pointer bg-slate-900/50">
+                    <input type="file" className="hidden" accept="image/*,.pdf" onChange={handleDocumentChange} />
+                    <Upload size={16} className="text-brand-400" />
+                    <span className="text-xs text-gray-300">
+                      {newTransaction.documentName ? `Document: ${newTransaction.documentName} ✅` : newTransaction.documentUrl ? 'Document Attached ✅' : 'Choose Bill / Document'}
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
             
             <div className="flex justify-end gap-2.5 mt-6 pt-3 border-t border-white/10">
@@ -2376,16 +2398,6 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
               <div className="flex items-center gap-2">
                 <button 
                   type="button"
-                  onClick={() => {
-                    window.focus();
-                    window.print();
-                  }}
-                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 border border-white/10 transition-all"
-                >
-                  <Printer size={14} /> Print
-                </button>
-                <button 
-                  type="button"
                   disabled={isExportingPdf}
                   onClick={async () => {
                     if (!selectedReceiptData) return;
@@ -2549,16 +2561,6 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 Close
               </button>
               <div className="flex items-center gap-2">
-                <button 
-                  type="button"
-                  onClick={() => {
-                    window.focus();
-                    window.print();
-                  }}
-                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 border border-white/10 transition-all"
-                >
-                  <Printer size={14} /> Print
-                </button>
                 <button 
                   type="button"
                   disabled={isExportingPdf}

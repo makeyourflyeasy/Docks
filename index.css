@@ -19,15 +19,13 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
-/* High Performance Glass Utilities (Lag-free GPU rendering) */
+/* High Performance Glass Utilities (Lag-free GPU rendering without clipping borders) */
 .glass-card {
   @apply bg-slate-900/85 border border-white/10 shadow-xl;
-  contain: paint;
 }
 
 .glass-panel {
   @apply bg-slate-800/60 border border-white/10 shadow-lg;
-  contain: paint;
 }
 
 .glass-input {
@@ -36,14 +34,16 @@
 
 /* Fluid Scrollbar & High-Performance Touch/Wheel Scrolling */
 html, body, #root {
+  height: 100%;
+  width: 100%;
   -webkit-overflow-scrolling: touch;
   scroll-behavior: auto !important; /* Prevents wheel lag */
 }
 
 .custom-scrollbar {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: auto;
-  touch-action: pan-x pan-y;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
 }
 
 .custom-scrollbar-x {
@@ -213,7 +213,7 @@ html, body, #root {
     height: auto !important;
     max-width: 100% !important;
     overflow: visible !important;
-    background: transparent !important;
+    background: #ffffff !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     padding: 0 !important;
@@ -236,6 +236,19 @@ html, body, #root {
     border: none !important;
     border-radius: 0 !important;
     box-shadow: none !important;
+  }
+
+  /* Specific rule for statistics report printable document */
+  #station-stats-report-print,
+  #station-stats-report-print * {
+    visibility: visible !important;
+  }
+
+  #station-stats-report-print {
+    display: block !important;
+    width: 100% !important;
+    background: #ffffff !important;
+    color: #111827 !important;
   }
 
   /* 5. Document Containers & Card Styling */

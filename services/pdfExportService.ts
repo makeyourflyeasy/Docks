@@ -413,10 +413,22 @@ export function drawAccountantStampAndSignature(
  */
 export async function downloadCasePdf(
   targetCase: Case,
-  branding: BrandingInfo,
-  options: PdfExportOptions = {}
+  brandingOrOptions?: BrandingInfo | PdfExportOptions,
+  maybeOptions?: PdfExportOptions
 ): Promise<{ success: boolean; filename: string; blobUrl?: string }> {
   try {
+    const isOptions = (obj: any): obj is PdfExportOptions => {
+      return !!obj && ('onlyInvoice' in obj || 'accentColor' in obj);
+    };
+
+    const branding: BrandingInfo = (!brandingOrOptions || isOptions(brandingOrOptions))
+      ? getStoredBranding()
+      : (brandingOrOptions as BrandingInfo);
+
+    const options: PdfExportOptions = isOptions(brandingOrOptions)
+      ? (brandingOrOptions as PdfExportOptions)
+      : (maybeOptions || {});
+
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',

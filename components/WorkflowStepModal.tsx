@@ -21,8 +21,7 @@ import {
   ChevronRight,
   RotateCcw,
   Sparkles,
-  AlertCircle,
-  Printer
+  AlertCircle
 } from 'lucide-react';
 import { 
   Case, 
@@ -43,6 +42,7 @@ import {
 } from '../services/workflowConfig';
 import { PdfViewerModal } from './PdfViewerModal';
 import { WorkflowMultiUploader } from './WorkflowMultiUploader';
+import { downloadCasePdf, downloadCustomsDeliveryOrderPdf } from '../services/pdfExportService';
 import { CustomsClearanceSteps } from './workflowSteps/CustomsClearanceSteps';
 import { AfghanTransitSteps } from './workflowSteps/AfghanTransitSteps';
 import { TirSteps } from './workflowSteps/TirSteps';
@@ -53,6 +53,7 @@ import { CarCarrierSteps } from './workflowSteps/CarCarrierSteps';
 import { IsoTankSteps } from './workflowSteps/IsoTankSteps';
 import { BreakbulkSteps } from './workflowSteps/BreakbulkSteps';
 import { LinerNvoccSteps } from './workflowSteps/LinerNvoccSteps';
+import { ImportExportSteps } from './workflowSteps/ImportExportSteps';
 
 interface WorkflowStepModalProps {
   isOpen: boolean;
@@ -82,7 +83,36 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
   const categoryWorkflow = useMemo(() => getCategoryWorkflow(targetCase.category), [targetCase.category]);
   const normCategory = useMemo(() => normalizeCategoryName(targetCase.category), [targetCase.category]);
   const activeStepIdx = useMemo(() => getWorkflowStepIndex(targetCase.category, targetCase.status as string), [targetCase.category, targetCase.status]);
-  const isReadOnly = targetCase.status === CaseStatus.COMPLETED;
+  const canEditStep = useMemo(() => {
+    if (targetCase.status === CaseStatus.COMPLETED) return false;
+    // Admin, Operations Manager (Case Manager), and CEO have unrestricted workflow rights
+    if (userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER || userRole === UserRole.CEO) {
+      return true;
+    }
+    // Client is strictly read-only
+    if (userRole === UserRole.CLIENT) return false;
+
+    const stepStr = String(stepStatus).toLowerCase();
+
+    // Documentation Officer (documentmanager): TP filing, GD, Shipping Line DO, Customs declaration, Excise
+    if (userRole === UserRole.DOCUMENTATION_OFFICER) {
+      return stepIndex <= 3 || stepStr.includes('do') || stepStr.includes('tp') || stepStr.includes('customs') || stepStr.includes('excise') || stepStr.includes('doc') || stepStr.includes('shipping');
+    }
+
+    // Loading Port Staff (loading01): Terminal Wharfage, Port dispatch, Stuffing, Sealing, Weighbridge
+    if (userRole === UserRole.LOADING_PORT_STAFF) {
+      return stepIndex === 3 || stepIndex === 4 || stepIndex === 5 || stepStr.includes('loading') || stepStr.includes('dispatch') || stepStr.includes('wharfage') || stepStr.includes('stuff') || stepStr.includes('vessel');
+    }
+
+    // Unloading Port Staff / Destination Officers (Lahore, Peshawar): Unloading, Gate-in, Gate-out, Terminal DO, Empty Return
+    if (userRole === UserRole.UNLOADING_PORT_STAFF) {
+      return stepIndex >= 4 || stepStr.includes('destination') || stepStr.includes('unload') || stepStr.includes('arrival') || stepStr.includes('gate') || stepStr.includes('return') || stepStr.includes('empty') || stepStr.includes('delivery');
+    }
+
+    return true;
+  }, [userRole, targetCase.status, stepIndex, stepStatus]);
+
+  const isReadOnly = !canEditStep || targetCase.status === CaseStatus.COMPLETED;
 
   // Existing step detail or defaults
   const existingDetail = targetCase.workflowDetails?.[stepStatus] || ({} as CaseStepDetail);
@@ -319,6 +349,35 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
       }
     }
 
+    if (normCategory === 'Import & Export Services') {
+      if (stepAction === 'advance') {
+        if (stepIndex === 0 && !formData.croBookingNumber?.trim()) {
+          return { valid: false, error: 'Container Booking (CRO) reference number is required before advancing.' };
+        }
+        if (stepIndex === 1 && (!formData.vesselName?.trim() || !formData.shippingLineName?.trim())) {
+          return { valid: false, error: 'Vessel Name and Ocean Shipping Line are required before advancing.' };
+        }
+        if (stepIndex === 2 && !formData.assignedTrailerNo?.trim()) {
+          return { valid: false, error: 'Inland Trailer Registration Number is required before advancing.' };
+        }
+        if (stepIndex === 3 && (!formData.vgmWeightKg || formData.vgmWeightKg <= 0)) {
+          return { valid: false, error: 'SOLAS Verified Gross Mass (VGM Weight in Kg) is required before advancing.' };
+        }
+        if (stepIndex === 4 && !formData.exportCustomsGdNo?.trim()) {
+          return { valid: false, error: 'Port Customs Goods Declaration (GD) Number is required before advancing.' };
+        }
+        if (stepIndex === 5 && !formData.billOfLadingNo?.trim()) {
+          return { valid: false, error: 'Ocean Bill of Lading (B/L) Number is required before advancing.' };
+        }
+        if (stepIndex === 6 && !formData.destinationDoNumber?.trim()) {
+          return { valid: false, error: 'Destination Delivery Order (DO) Number is required before advancing.' };
+        }
+        if (stepIndex === 7 && !formData.allChargesSettledVerified) {
+          return { valid: false, error: 'Please confirm that all shipping line, port, and demurrage charges are settled before finalizing.' };
+        }
+      }
+    }
+
     return { valid: true };
   };
 
@@ -415,6 +474,28 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
       }
     }
 
+    // Import & Export Services charges sync
+    if (updatedDetail.truckingArrangedBy === 'DPL' && Number(updatedDetail.truckingChargesAmount) > 0) {
+      dplItemsToSync.push({
+        key: 'dpl_ie_trucking',
+        label: 'Inland Drayage / Haulage (DPL Arranged)',
+        amount: Number(updatedDetail.truckingChargesAmount),
+        commission: 0,
+        receiptUrl: updatedDetail.truckingWaybillUrl,
+        receiptName: updatedDetail.truckingWaybillName
+      });
+    }
+    if (updatedDetail.destinationChargesArrangedBy === 'DPL' && Number(updatedDetail.destinationChargesAmount) > 0) {
+      dplItemsToSync.push({
+        key: 'dpl_ie_dest_charges',
+        label: 'Destination Ocean & Port Charges (DPL Arranged)',
+        amount: Number(updatedDetail.destinationChargesAmount),
+        commission: 0,
+        receiptUrl: updatedDetail.destinationDoDocUrl,
+        receiptName: updatedDetail.destinationDoDocName
+      });
+    }
+
     // Keys to clean up old items if switched back to Client
     const keysToClean: string[] = [];
     if (isDoStep) keysToClean.push('dpl_do_due_charges', 'dpl_do_deposit');
@@ -422,6 +503,8 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     if (isWharfageStep) keysToClean.push('dpl_wharfage');
     if (isVehicleStep) keysToClean.push('dpl_vehicle_rent');
     if (isTrackerStep) keysToClean.push('dpl_tracker', 'dpl_loading');
+    if (updatedDetail.truckingArrangedBy === 'Client') keysToClean.push('dpl_ie_trucking');
+    if (updatedDetail.destinationChargesArrangedBy === 'Client') keysToClean.push('dpl_ie_dest_charges');
     
     // Filter out previous auto-generated items for this step
     let filtered = existingCharges.filter(c => {
@@ -655,16 +738,62 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => window.print()}
-                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 flex items-center gap-1.5 transition-colors shrink-0"
+                onClick={() => downloadCasePdf(targetCase)}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 font-semibold text-xs border border-emerald-500/30 flex items-center gap-1.5 transition-colors shrink-0"
               >
-                <Printer size={14} />
-                <span>Print Dossier</span>
+                <Download size={14} />
+                <span>Download Dossier (PDF)</span>
               </button>
             </div>
           )}
 
+          {/* Role Access Restriction Banner */}
+          {!canEditStep && targetCase.status !== CaseStatus.COMPLETED && (
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 text-amber-200">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle size={18} className="text-amber-400 shrink-0" />
+                <span className="text-xs">
+                  <strong>Restricted Operational Stage:</strong> You are logged in as <strong>{userRole}</strong>. This stage is editable by authorized role personnel or Case Manager/Admin.
+                </span>
+              </div>
+              {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
+                <button
+                  type="button"
+                  onClick={() => downloadCustomsDeliveryOrderPdf({ targetCase })}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs flex items-center gap-1.5 shrink-0 shadow transition-colors"
+                >
+                  <FileText size={14} />
+                  <span>Print Delivery Order (DO)</span>
+                </button>
+              )}
+            </div>
+          )}
+
           {/* DYNAMIC CATEGORY STEP RENDERERS */}
+          {normCategory === 'Import & Export Services' && (
+            <div className="space-y-4">
+              {targetCase.subCategory && targetCase.subCategory !== 'Standard Container / General Cargo' && (
+                <CargoEquipmentSubCategoryFields
+                  subCategory={targetCase.subCategory}
+                  formData={formData}
+                  setFormData={setFormData}
+                  targetCase={targetCase}
+                  setActivePdfPreview={setActivePdfPreview}
+                  isReadOnly={isReadOnly}
+                />
+              )}
+              <ImportExportSteps
+                stepIndex={stepIndex}
+                formData={formData}
+                setFormData={setFormData}
+                targetCase={targetCase}
+                setActivePdfPreview={setActivePdfPreview}
+                isReadOnly={isReadOnly}
+                availableVehicles={availableVehicles}
+              />
+            </div>
+          )}
+
           {normCategory === 'Customs Clearance' && (
             <CustomsClearanceSteps
               stepIndex={stepIndex}
@@ -1968,22 +2097,39 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-white/10 bg-slate-950/70 flex justify-end gap-2.5 shrink-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2.5 rounded-xl text-xs text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-brand-600/30 flex items-center gap-2"
-          >
-            <Save size={15} />
-            <span>Save Step Details</span>
-          </button>
+        <div className="p-4 border-t border-white/10 bg-slate-950/70 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+          <div>
+            {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
+              <button
+                type="button"
+                onClick={() => downloadCustomsDeliveryOrderPdf({ targetCase })}
+                className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-600/30 flex items-center gap-1.5 active:scale-95"
+                title="Print Official Terminal / Customs Delivery Order"
+              >
+                <FileText size={15} />
+                <span>Print Delivery Order (DO)</span>
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2.5 rounded-xl text-xs text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              Close
+            </button>
+            {!isReadOnly && (
+              <button
+                type="button"
+                onClick={handleSave}
+                className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-brand-600/30 flex items-center gap-2 active:scale-95"
+              >
+                <Save size={15} />
+                <span>Save Step Details</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

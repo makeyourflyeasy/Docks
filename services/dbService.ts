@@ -253,24 +253,15 @@ export async function updateNotificationInFirestore(notif: AppNotification): Pro
 // ==========================================
 
 export const DEFAULT_DATABASE_USERS: AppUser[] = [
-  { id: 1, userId: 'EMP-0001', password: 'password123', name: 'Shahid Khan', role: UserRole.CEO, contact: '0300-1111111', email: 'ceo@docks.com', status: 'ACTIVE', isAdmin: true },
-  { id: 2, userId: 'ADMIN', password: 'admin123', name: 'Arbab Khan', role: UserRole.ADMIN, contact: '0300-1234567', email: 'admin@docks.com', status: 'ACTIVE', isAdmin: true },
-  { id: 3, userId: 'EMP-0002', password: 'password123', name: 'Bilal Ahmed', role: UserRole.OPERATIONS_MANAGER, contact: '0321-9876543', email: 'ops@docks.com', status: 'ACTIVE', isAdmin: true },
-  { id: 4, userId: 'EMP-0003', password: 'password123', name: 'Faisal Karim', role: UserRole.FINANCE_MANAGER, contact: '0333-5554444', email: 'finance@docks.com', status: 'ACTIVE', isAdmin: true },
-  { id: 5, userId: 'EMP-0004', password: 'password123', name: 'Kamran Akmal', role: UserRole.CRO, contact: '0333-1122334', email: 'cro@docks.com', status: 'ACTIVE' },
-  { id: 6, userId: 'EMP-0005', password: 'password123', name: 'Sana Mir', role: UserRole.HR_MANAGER, contact: '0345-1122334', email: 'hr@docks.com', status: 'ACTIVE' },
-  { id: 7, userId: 'EMP-0006', password: 'password123', name: 'Usman Qadir', role: UserRole.ACCOUNTANT, contact: '0312-9988776', email: 'accounts@docks.com', status: 'ACTIVE' },
-  { id: 8, userId: 'EMP-0007', password: 'password123', name: 'Fahad Mustafa', role: UserRole.VEHICLE_MANAGER, contact: '0301-2233445', email: 'transport@docks.com', status: 'ACTIVE' },
-  { id: 9, userId: 'EMP-0008', password: 'password123', name: 'Rashid Latif', role: UserRole.LOADING_PORT_STAFF, contact: '0302-3344556', email: 'port.loading@docks.com', status: 'ACTIVE' },
-  { id: 10, userId: 'EMP-0009', password: 'password123', name: 'Moin Khan', role: UserRole.UNLOADING_PORT_STAFF, contact: '0303-4455667', email: 'port.unloading@docks.com', status: 'ACTIVE' },
-  { id: 11, userId: 'EMP-0010', password: 'password123', name: 'Shoaib Akhtar', role: UserRole.DOCUMENTATION_OFFICER, contact: '0304-5566778', email: 'docs@docks.com', status: 'ACTIVE' },
-  { id: 12, userId: 'EMP-0011', password: 'password123', name: 'Wasim Akram', role: UserRole.TRANSPORT_ALLOCATION_OFFICER, contact: '0305-6677889', email: 'allocation@docks.com', status: 'ACTIVE' },
-  { id: 13, userId: 'EMP-0012', password: 'password123', name: 'Inzamam Ul Haq', role: UserRole.DATA_ENTRY_OFFICER, contact: '0306-7788990', email: 'data@docks.com', status: 'ACTIVE' },
-  { id: 14, userId: 'EMP-0013', password: 'password123', name: 'Younis Khan', role: UserRole.CUSTOMER_SUPPORT, contact: '0307-8899001', email: 'support@docks.com', status: 'ACTIVE' },
-  { id: 15, userId: 'EMP-0014', password: 'password123', name: 'Sarfaraz Ahmed', role: UserRole.RIDER, contact: '0308-9900112', email: 'rider@docks.com', status: 'ACTIVE' },
-  { id: 16, userId: 'CLT-001', password: 'client123', name: 'Global Traders Ltd', role: UserRole.CLIENT, contact: '021-111-222-333', email: 'info@globaltraders.com', status: 'ACTIVE', clientName: 'Global Traders Ltd' },
-  { id: 17, userId: 'CLT-002', password: 'client123', name: 'Swift Logistics', role: UserRole.CLIENT, contact: '0300-5555555', email: 'contact@swiftlogistics.com', status: 'ACTIVE', clientName: 'Swift Logistics' },
-  { id: 18, userId: 'CLT-003', password: 'client123', name: 'Pak China Trade Co', role: UserRole.CLIENT, contact: '0321-4444444', email: 'info@pakchina.com', status: 'ACTIVE', clientName: 'Pak China Trade Co' }
+  { id: 1, userId: 'admin', password: 'dpl01234', name: 'System Administrator', role: UserRole.ADMIN, contact: '0300-1234567', email: 'admin@docks.com', status: 'ACTIVE', isAdmin: true },
+  { id: 2, userId: 'finance', password: 'dpl01234', name: 'Finance Manager', role: UserRole.FINANCE_MANAGER, contact: '0333-5554444', email: 'finance@docks.com', status: 'ACTIVE', isAdmin: true },
+  { id: 3, userId: 'casemanager', password: 'dpl01234', name: 'Case Manager', role: UserRole.OPERATIONS_MANAGER, contact: '0321-9876543', email: 'casemanager@docks.com', status: 'ACTIVE', isAdmin: true },
+  { id: 4, userId: 'vehiclemanager', password: 'dpl01234', name: 'Vehicles Manager', role: UserRole.VEHICLE_MANAGER, contact: '0301-2233445', email: 'transport@docks.com', status: 'ACTIVE' },
+  { id: 5, userId: 'documentmanager', password: 'dpl01234', name: 'Documentation Manager', role: UserRole.DOCUMENTATION_OFFICER, contact: '0304-5566778', email: 'docs@docks.com', status: 'ACTIVE' },
+  { id: 6, userId: 'loading01', password: 'dpl01234', name: 'Loading Staff', role: UserRole.LOADING_PORT_STAFF, contact: '0302-3344556', email: 'loading@docks.com', status: 'ACTIVE' },
+  { id: 7, userId: 'lahore', password: 'dpl01234', name: 'Destination Officer (Lahore)', role: UserRole.UNLOADING_PORT_STAFF, contact: '0303-4455667', email: 'lahore.destination@docks.com', status: 'ACTIVE' },
+  { id: 8, userId: 'peshawar', password: 'dpl01234', name: 'Destination Officer (Peshawar)', role: UserRole.UNLOADING_PORT_STAFF, contact: '0303-9988776', email: 'peshawar.destination@docks.com', status: 'ACTIVE' },
+  { id: 9, userId: 'client01', password: 'dpl01234', name: 'Trial Client', role: UserRole.CLIENT, contact: '021-111-222-333', email: 'client01@docks.com', status: 'ACTIVE', clientName: 'Trial Client' }
 ];
 
 let hasSeededInitialUsers = false;
@@ -495,11 +486,7 @@ export async function getUserProfile(userId: string): Promise<AppUser | null> {
 
 // CLIENTS
 export const DEFAULT_CLIENTS: string[] = [
-  'Global Traders Ltd',
-  'Swift Logistics',
-  'Afghan Transit Corp',
-  'Pak China Trade Co',
-  'Sea Green Lines'
+  'Trial Client'
 ];
 
 export function subscribeToClients(

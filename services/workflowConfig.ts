@@ -19,6 +19,7 @@ export interface CategoryWorkflowConfig {
 export function normalizeCategoryName(category?: string): string {
   if (!category) return 'Bonded Carrier';
   const c = category.toLowerCase().trim();
+  if (c.includes('import') || c.includes('export')) return 'Import & Export Services';
   if (c.includes('bonded')) return 'Bonded Carrier';
   if (c.includes('customs')) return 'Customs Clearance';
   if (c.includes('afghan') || c.includes('att')) return 'Afghan Transit';
@@ -33,6 +34,77 @@ export function normalizeCategoryName(category?: string): string {
 }
 
 export const CATEGORY_WORKFLOW_MAP: Record<string, CategoryWorkflowConfig> = {
+  'Import & Export Services': {
+    category: 'Import & Export Services',
+    normalizedCategory: 'Import & Export Services',
+    totalSteps: 8,
+    steps: [
+      {
+        stepIndex: 0,
+        id: 'ie_container_booking',
+        title: 'Container Box Booking (CRO)',
+        shortTitle: 'Container Booking',
+        description: 'Empty container booking from shipping line / depot, Container Release Order (CRO) and container number allocation.',
+        categoryName: 'Import & Export Services'
+      },
+      {
+        stepIndex: 1,
+        id: 'ie_vessel_booking',
+        title: 'Vessel & Ocean Freight Booking',
+        shortTitle: 'Vessel Booking',
+        description: 'Vessel name, voyage number, POL & POD confirmation, sailing schedule, and booking confirmation.',
+        categoryName: 'Import & Export Services'
+      },
+      {
+        stepIndex: 2,
+        id: 'ie_transport_arrangement',
+        title: 'Inland Transportation Arrangement',
+        shortTitle: 'Transportation Dispatch',
+        description: 'Trailer assignment, driver CNIC/phone dispatch, route scheduling from depot/port to warehouse/factory.',
+        categoryName: 'Import & Export Services'
+      },
+      {
+        stepIndex: 3,
+        id: 'ie_cargo_stuffing',
+        title: 'Warehouse Cargo Stuffing & Loading',
+        shortTitle: 'Cargo Stuffing & Loading',
+        description: 'Warehouse cargo loading into container, packages/cartons count, Verified Gross Mass (VGM), seal verification & gate out.',
+        categoryName: 'Import & Export Services'
+      },
+      {
+        stepIndex: 4,
+        id: 'ie_port_customs',
+        title: 'Port Arrival & Customs Clearance',
+        shortTitle: 'Port & Customs Clearance',
+        description: 'Port terminal drayage, WebOC/PSW Goods Declaration (GD) filing, customs examination, assessment & export/import NOC.',
+        categoryName: 'Import & Export Services'
+      },
+      {
+        stepIndex: 5,
+        id: 'ie_vessel_loading',
+        title: 'Vessel Loading & Bill of Lading (B/L)',
+        shortTitle: 'Vessel Loading & B/L',
+        description: 'Container loaded onto vessel, Mate\'s Receipt issuance, Master & House Bill of Lading generation, and vessel sailing confirmation.',
+        categoryName: 'Import & Export Services'
+      },
+      {
+        stepIndex: 6,
+        id: 'ie_dest_clearance_do',
+        title: 'Destination Clearance & Delivery Order (DO)',
+        shortTitle: 'Destination Clearance & DO',
+        description: 'Destination port arrival, import documentation clearance, customs appraisal, and Shipping Line Delivery Order (DO) issuance.',
+        categoryName: 'Import & Export Services'
+      },
+      {
+        stepIndex: 7,
+        id: 'ie_destuff_empty_return',
+        title: 'De-stuffing, Empty Return & Settlement',
+        shortTitle: 'Empty Return & Settlement',
+        description: 'Consignee warehouse cargo de-stuffing, empty container returned to shipping line depot (EIR slip) and all charges settled.',
+        categoryName: 'Import & Export Services'
+      }
+    ]
+  },
   'Bonded Carrier': {
     category: 'Bonded Carrier',
     normalizedCategory: 'Bonded Carrier',
@@ -500,6 +572,7 @@ export const ALL_SERVICE_CATEGORIES: string[] = [
 ];
 
 export const PRIMARY_SERVICE_CATEGORIES = [
+  'Import & Export Services',
   'Bonded Carrier',
   'Customs Clearance',
   'Afghan Transit',
@@ -518,7 +591,7 @@ export const SUB_CATEGORY_OPTIONS = [
 
 export function supportsSubCategories(category?: string): boolean {
   const norm = normalizeCategoryName(category);
-  return norm === 'Bonded Carrier' || norm === 'Afghan Transit' || norm === 'Transportation of Private Cargo';
+  return norm === 'Import & Export Services' || norm === 'Bonded Carrier' || norm === 'Afghan Transit' || norm === 'Transportation of Private Cargo';
 }
 
 export function getCategoryWorkflow(category?: string): CategoryWorkflowConfig {

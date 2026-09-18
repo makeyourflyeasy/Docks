@@ -9,138 +9,14 @@ import {
 import { AppUser, UserRole, Case, FinanceEntry, CaseStatus, Client, ClientDefaultCharge, UNIVERSAL_CHARGE_TYPES } from '../types';
 import { safeAppStorage } from '../services/storage';
 import { compressAndPrepareFile } from '../services/fileUtils';
-import { saveClientToFirestore, subscribeToClients } from '../services/dbService';
+import { saveClientToFirestore, subscribeToClients, DEFAULT_DATABASE_USERS } from '../services/dbService';
 
-const INITIAL_USERS: AppUser[] = [
-  { 
-    id: 1, userId: 'EMP-0001', password: 'password123', name: 'Shahid Khan', 
-    role: UserRole.CEO, contact: '0300-1111111', email: 'ceo@docks.com', status: 'ACTIVE',
-    fatherName: 'Akhtar Khan', residentialAddress: 'Defence Phase 6, Karachi', baseSalary: 250000,
-    allowances: { fuel: 25000, mobile: 5000, internet: 5000 }
-  },
-  { 
-    id: 2, userId: 'ADMIN', password: 'admin123', name: 'Arbab Khan', 
-    role: UserRole.ADMIN, contact: '0300-1234567', email: 'admin@docks.com', status: 'ACTIVE',
-    fatherName: 'Tariq Khan', residentialAddress: 'Clifton Block 4, Karachi', baseSalary: 180000
-  },
-  { 
-    id: 3, userId: 'EMP-0002', password: 'password123', name: 'Bilal Ahmed', 
-    role: UserRole.OPERATIONS_MANAGER, contact: '0321-9876543', email: 'ops@docks.com', status: 'ACTIVE',
-    fatherName: 'Ahmed Ali', residentialAddress: 'Gulshan-e-Iqbal, Karachi', baseSalary: 110000
-  },
-  { 
-    id: 4, userId: 'EMP-0003', password: 'password123', name: 'Faisal Karim', 
-    role: UserRole.FINANCE_MANAGER, contact: '0333-5554444', email: 'finance@docks.com', status: 'ACTIVE',
-    fatherName: 'Karim Ullah', residentialAddress: 'North Nazimabad, Karachi', baseSalary: 120000
-  },
-  { 
-    id: 5, userId: 'EMP-0004', password: 'password123', name: 'Kamran Akmal', 
-    role: UserRole.CRO, contact: '0333-1122334', email: 'cro@docks.com', status: 'ACTIVE',
-    baseSalary: 95000
-  },
-  { 
-    id: 6, userId: 'EMP-0005', password: 'password123', name: 'Sana Mir', 
-    role: UserRole.HR_MANAGER, contact: '0345-1122334', email: 'hr@docks.com', status: 'ACTIVE',
-    baseSalary: 100000
-  },
-  { 
-    id: 7, userId: 'EMP-0006', password: 'password123', name: 'Usman Qadir', 
-    role: UserRole.ACCOUNTANT, contact: '0312-9988776', email: 'accounts@docks.com', status: 'ACTIVE',
-    baseSalary: 85000
-  },
-  { 
-    id: 8, userId: 'EMP-0007', password: 'password123', name: 'Fahad Mustafa', 
-    role: UserRole.VEHICLE_MANAGER, contact: '0301-2233445', email: 'transport@docks.com', status: 'ACTIVE',
-    baseSalary: 90000
-  },
-  { 
-    id: 9, userId: 'EMP-0008', password: 'password123', name: 'Rashid Latif', 
-    role: UserRole.LOADING_PORT_STAFF, contact: '0302-3344556', email: 'port.loading@docks.com', status: 'ACTIVE',
-    baseSalary: 65000
-  },
-  { 
-    id: 10, userId: 'EMP-0009', password: 'password123', name: 'Moin Khan', 
-    role: UserRole.UNLOADING_PORT_STAFF, contact: '0303-4455667', email: 'port.unloading@docks.com', status: 'ACTIVE',
-    baseSalary: 65000
-  },
-  { 
-    id: 11, userId: 'EMP-0010', password: 'password123', name: 'Shoaib Akhtar', 
-    role: UserRole.DOCUMENTATION_OFFICER, contact: '0304-5566778', email: 'docs@docks.com', status: 'ACTIVE',
-    baseSalary: 70000
-  },
-  { 
-    id: 12, userId: 'EMP-0011', password: 'password123', name: 'Wasim Akram', 
-    role: UserRole.TRANSPORT_ALLOCATION_OFFICER, contact: '0305-6677889', email: 'allocation@docks.com', status: 'ACTIVE',
-    baseSalary: 75000
-  },
-  { 
-    id: 13, userId: 'EMP-0012', password: 'password123', name: 'Inzamam Ul Haq', 
-    role: UserRole.DATA_ENTRY_OFFICER, contact: '0306-7788990', email: 'data@docks.com', status: 'ACTIVE',
-    baseSalary: 55000
-  },
-  { 
-    id: 14, userId: 'EMP-0013', password: 'password123', name: 'Younis Khan', 
-    role: UserRole.CUSTOMER_SUPPORT, contact: '0307-8899001', email: 'support@docks.com', status: 'ACTIVE',
-    baseSalary: 60000
-  },
-  { 
-    id: 15, userId: 'EMP-0014', password: 'password123', name: 'Sarfaraz Ahmed', 
-    role: UserRole.RIDER, contact: '0308-9900112', email: 'rider@docks.com', status: 'ACTIVE',
-    baseSalary: 45000, allowances: { fuel: 15000, mobile: 2000 }, loansAdvances: 5000
-  },
-  { 
-    id: 16, userId: 'EMP-0015', password: 'password123', name: 'Sher Khan', 
-    role: UserRole.WATCHMAN, contact: '0345-5566778', email: 'n/a', status: 'ACTIVE',
-    baseSalary: 38000
-  },
-  { 
-    id: 17, userId: 'EMP-0016', password: 'password123', name: 'Gul Zaman', 
-    role: UserRole.PEON, contact: '0311-2233445', email: 'n/a', status: 'ACTIVE',
-    baseSalary: 35000
-  },
-  { 
-    id: 18, userId: 'EMP-0017', password: 'password123', name: 'Raju Bhai', 
-    role: UserRole.SWEEPER, contact: '0322-3344556', email: 'n/a', status: 'ACTIVE',
-    baseSalary: 32000
-  },
-  { 
-    id: 19, userId: 'CLT-001', password: 'client123', name: 'Global Traders Ltd', 
-    role: UserRole.CLIENT, contact: '021-111-222-333', email: 'info@globaltraders.com', status: 'ACTIVE' 
-  },
-  { 
-    id: 20, userId: 'CLT-002', password: 'client123', name: 'Swift Logistics', 
-    role: UserRole.CLIENT, contact: '0300-5555555', email: 'contact@swiftlogistics.com', status: 'ACTIVE' 
-  },
-  { 
-    id: 21, userId: 'CLT-003', password: 'client123', name: 'Pak China Trade Co', 
-    role: UserRole.CLIENT, contact: '0321-4444444', email: 'info@pakchina.com', status: 'INACTIVE' 
-  }
-];
+const INITIAL_USERS: AppUser[] = DEFAULT_DATABASE_USERS;
 
-// Mock Data for Client Details
-const MOCK_CLIENT_CASES: Case[] = [
-  { 
-    id: '1', caseNo: 'DPL-24-00042', clientName: 'Global Traders Ltd', category: 'Afghan Transit', 
-    status: CaseStatus.LOADING_PORT_PROCESSING, pol: 'SHA', pod: 'KDH', createdAt: '2024-05-20', 
-    documents: [], containers: [], extractedData: {} 
-  },
-  { 
-    id: '2', caseNo: 'DPL-24-00015', clientName: 'Global Traders Ltd', category: 'Customs Clearance', 
-    status: CaseStatus.COMPLETED, pol: 'JEA', pod: 'KPT', createdAt: '2024-04-10', 
-    documents: [], containers: [], extractedData: {} 
-  },
-  { 
-    id: '3', caseNo: 'DPL-24-00041', clientName: 'Swift Logistics', category: 'Bonded Carrier', 
-    status: CaseStatus.IN_TRANSIT, pol: 'JEA', pod: 'LHR-NLC', createdAt: '2024-05-18', 
-    documents: [], containers: [], extractedData: {} 
-  }
-];
+// Clean Data for Client Details
+const MOCK_CLIENT_CASES: Case[] = [];
 
-const MOCK_CLIENT_PAYMENTS: FinanceEntry[] = [
-  { id: 1, date: '2024-05-20', description: 'Advance Payment - Case DPL-0042', amount: 50000, type: 'INCOME', status: 'PAID', party: 'Global Traders Ltd', category: 'Logistics Services', reference: 'INV-2024-001' },
-  { id: 2, date: '2024-05-18', description: 'Logistics Service Invoice #442', amount: 80000, type: 'RECEIVABLE', status: 'PARTIAL', party: 'Global Traders Ltd', category: 'Services', reference: 'INV-442' },
-  { id: 3, date: '2024-04-15', description: 'Clearance Charges', amount: 120000, type: 'INCOME', status: 'PAID', party: 'Global Traders Ltd', category: 'Customs', reference: 'INV-2024-005' },
-];
+const MOCK_CLIENT_PAYMENTS: FinanceEntry[] = [];
 
 export const CASE_CATEGORIES = [
   "Afghan Transit",

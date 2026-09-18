@@ -2,13 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   ChevronRight, ChevronDown, CheckCircle2, Upload, FileText, CheckCircle, Loader2, Save, 
   MapPin, Anchor, Box, User, AlertCircle, Calendar, Camera, X, Truck, Briefcase, 
-  Search, Eye, Printer, Share2, AlertTriangle, ArrowLeft, Download, Trash2, Edit, Plus, ListFilter, Filter,
+  Search, Eye, Share2, AlertTriangle, ArrowLeft, Download, Trash2, Edit, Plus, ListFilter, Filter,
   Sparkles, Scan, FileCheck, Globe, Receipt, Scale, Ship, UploadCloud, Play, Clock, ArrowRight, RefreshCw, Layers
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
 import { autoFillCaseData, downloadFile, docDataCache, detectShippingDocumentType } from '../services/geminiService';
-import { downloadCasePdf, sharePdfFile } from '../services/pdfExportService';
+import { downloadCasePdf, sharePdfFile, downloadCustomsDeliveryOrderPdf } from '../services/pdfExportService';
 import { PdfViewerModal } from './PdfViewerModal';
 import { detectMimeType, compressAndPrepareFile } from '../services/fileUtils';
 import { Container, ExtractedData, CaseStatus, Case, MockDocument, UserRole, CaseCharge, Client, CaseStepDetail, WORKFLOW_8_STEPS, Vehicle } from '../types';
@@ -110,100 +110,11 @@ const INITIAL_PORTS = [
 const CATEGORIES = PRIMARY_SERVICE_CATEGORIES;
 
 const MOCK_CLIENTS = [
-  "Global Traders Ltd", "Swift Logistics", "Afghan Transit Corp", "Pak China Trade Co", "Sea Green Lines"
+  "Trial Client"
 ];
 
-// Rich Mock Data
-const INITIAL_CASES: Case[] = [
-  { 
-    id: '1', 
-    caseNo: 'DPL-26-000004', 
-    clientName: 'Global Traders Ltd', 
-    category: 'Afghan Transit', 
-    status: CaseStatus.LOADING_PORT_PROCESSING, 
-    pol: 'SHA',
-    pod: 'KDH',
-    createdAt: '2024-05-20',
-    documents: [
-      { name: 'Bill of Lading.pdf', type: 'application/pdf', url: 'https://placehold.co/600x800/png?text=Bill+of+Lading+Preview' },
-      { name: 'Commercial Invoice.jpg', type: 'image/jpeg', url: 'https://placehold.co/600x800/png?text=Commercial+Invoice+Preview' }
-    ],
-    containers: [
-       { id: 1, number: 'MSKU-1234567', size: '40ft', weight: 28000, status: 'Loaded' }
-    ],
-    extractedData: {
-      shipperName: 'Shanghai Export Co.',
-      shipperAddress: '123 Industrial Zone, Shanghai, China',
-      consigneeName: 'Global Traders Ltd',
-      consigneeAddress: 'Kabul, Afghanistan',
-      blNumber: 'MSK-998877',
-      vesselName: 'Maersk Sealand',
-      arrivalDate: '2024-05-25',
-      totalWeight: 28000,
-      invoiceValue: 50000,
-      itemType: 'Electronics',
-      itemName: 'Solar Panels',
-      packageCount: 500
-    }
-  },
-  { 
-    id: '2', 
-    caseNo: 'DPL-26-000003', 
-    clientName: 'Swift Logistics', 
-    category: 'Bonded Carrier', 
-    status: CaseStatus.IN_TRANSIT, 
-    pol: 'JEA',
-    pod: 'LHR-NLC',
-    createdAt: '2024-05-18',
-    documents: [],
-    containers: [
-       { id: 2, number: 'HLCU-9876543', size: '20ft', weight: 14000, status: 'In Transit' },
-       { id: 3, number: 'HLCU-1122334', size: '20ft', weight: 14500, status: 'In Transit' }
-    ],
-    extractedData: {
-      shipperName: 'Dubai Logistics FZE',
-      consigneeName: 'Swift Logistics',
-      blNumber: 'HLC-554433',
-      vesselName: 'Hapag Lloyd Express',
-      arrivalDate: '2024-05-20',
-      itemType: 'Spare Parts'
-    }
-  },
-  { 
-    id: '3', 
-    caseNo: 'DPL-26-000002', 
-    clientName: 'Pak China Trade Co', 
-    category: 'Customs Clearance', 
-    status: CaseStatus.COMPLETED, 
-    pol: 'SHA',
-    pod: 'KGTL',
-    createdAt: '2024-05-15',
-    documents: [],
-    containers: [],
-    extractedData: {
-       shipperName: 'China Heavy Industry',
-       consigneeName: 'Pak China Trade',
-       blNumber: 'COS-110022',
-       vesselName: 'Cosco Shipping',
-       itemName: 'Steel Machinery'
-    }
-  },
-  { 
-    id: '4', 
-    caseNo: 'DPL-26-000001', 
-    clientName: 'Sea Green Lines', 
-    category: 'Customs Clearance', 
-    status: CaseStatus.SHIPPING_LINE_DO, 
-    pol: 'SHA',
-    pod: 'KPT',
-    createdAt: '2024-05-21',
-    documents: [],
-    containers: [],
-    extractedData: {
-       blNumber: 'COS-123456',
-    }
-  },
-];
+// Clean Initial Cases for Live Operation
+const INITIAL_CASES: Case[] = [];
 
 // Configuration for Report Columns
 const REPORT_COLUMNS = [
@@ -257,7 +168,9 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
   const activeLogo = customLogo || branding.customLogo;
   const [view, setView] = useState<'list' | 'register' | 'details'>('list');
   const [activeNotificationId, setActiveNotificationId] = useState<number | null>(null);
-  const [cases, setCases] = useState<Case[]>(INITIAL_CASES);
+  const [cases, setCases] = useState<Case[]>(() => {
+    return safeAppStorage.getJSON<Case[]>('dpl_live_cases', INITIAL_CASES);
+  });
   const [selectedCase, setSelectedCase] = useState<any>(() => {
     return safeAppStorage.getJSON<any>('dpl_selected_case', null);
   });
@@ -295,18 +208,14 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
   useEffect(() => {
     const unsubscribe = subscribeToCases(
       (firestoreCases) => {
-        if (firestoreCases && firestoreCases.length > 0) {
+        if (firestoreCases) {
           setCases(firestoreCases);
+          safeAppStorage.setJSON('dpl_live_cases', firestoreCases);
           // If viewing details, update selectedCase with live Firestore changes
           if (view === 'details' && selectedCase) {
             const updated = firestoreCases.find(c => c.id === selectedCase.id || c.caseNo === selectedCase.caseNo);
             if (updated) setSelectedCase(updated);
           }
-        } else {
-          // Auto-seed initial baseline cases to Firestore if empty
-          INITIAL_CASES.forEach((c) => {
-            saveCaseToFirestore(c).catch(() => {});
-          });
         }
       },
       (err) => {
@@ -487,6 +396,19 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
       setPdfDownloadError("Unable to download PDF. Please try again.");
     } finally {
       setIsDownloadingPdf(false);
+    }
+  };
+
+  const handleDownloadDeliveryOrder = async (caseToPrint?: Case) => {
+    const activeCase = caseToPrint || selectedCase;
+    if (!activeCase) return;
+    try {
+      await downloadCustomsDeliveryOrderPdf({
+        targetCase: activeCase,
+        branding: { companyName, subtitle, customLogo: activeLogo, ...branding }
+      });
+    } catch (err: any) {
+      console.error("DO PDF generation error:", err);
     }
   };
 
@@ -1314,10 +1236,6 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     }
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   // --- Advanced Report Logic ---
   const getFilteredReportData = () => {
     return cases.filter(c => {
@@ -1376,11 +1294,32 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                  {reportData.length} Records Found
               </div>
               <button
-                onClick={() => window.print()}
-                className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all cursor-pointer"
+                onClick={() => {
+                  const headers = ['Case No', 'Client', 'BL Number', 'Category', 'Containers', 'Vehicle', 'Driver', 'Status', 'Created Date'];
+                  const rows = reportData.map(c => [
+                    c.caseNo,
+                    c.clientName || '',
+                    c.blNumber || '',
+                    c.category,
+                    (c.containers || []).map(cn => cn.number).join('; '),
+                    (c.containers || []).map(cn => cn.vehicleNo).filter(Boolean).join('; ') || '',
+                    (c.containers || []).map(cn => cn.driverName).filter(Boolean).join('; ') || '',
+                    c.status,
+                    c.createdAt || ''
+                  ]);
+                  const csvContent = [headers.join(','), ...rows.map(r => r.map(f => `"${String(f).replace(/"/g, '""')}"`).join(','))].join('\n');
+                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `Case_Report_${new Date().toISOString().split('T')[0]}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-medium flex items-center gap-2 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
               >
-                <Printer size={15} />
-                <span>Print Report</span>
+                <Download size={15} />
+                <span>Download Report (CSV)</span>
               </button>
            </div>
         </div>
@@ -2084,13 +2023,25 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                    </>
                 ) : (
                    <>
-                      {targetCase?.status === CaseStatus.SHIPPING_LINE_DO && mockUserRole !== UserRole.CLIENT && (
+                      {/* Print Delivery Order (DO) button for Destination Staff, Case Manager, and Admin */}
+                      {(effectiveRole === UserRole.UNLOADING_PORT_STAFF || effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.OPERATIONS_MANAGER) && (
+                        <button 
+                          onClick={() => handleDownloadDeliveryOrder(targetCase)} 
+                          className="bg-amber-600 hover:bg-amber-500 active:scale-95 text-white px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm shadow-lg shadow-amber-600/20 transition-all font-medium"
+                          title="Print Customs / Terminal Delivery Order (DO) Document"
+                        >
+                          <FileText size={15} />
+                          <span>Print DO (Delivery Order)</span>
+                        </button>
+                      )}
+
+                      {targetCase?.status === CaseStatus.SHIPPING_LINE_DO && effectiveRole !== UserRole.CLIENT && (
                           <button onClick={handleApproveCase} className="bg-green-600 hover:bg-green-500 text-white px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm shadow-lg shadow-green-600/20 animate-pulse font-medium">
                               <CheckCircle size={15} /> Approve & Process
                           </button>
                       )}
                       
-                      {mockUserRole === UserRole.ADMIN && (
+                      {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.OPERATIONS_MANAGER) && (
                         <>
                           <button onClick={handleEditCaseToggle} className="bg-brand-600/20 hover:bg-brand-600/30 text-brand-400 border border-brand-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-medium">
                               <Edit size={15} /> Edit Case
@@ -4841,7 +4792,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           targetCase={selectedCase}
           stepStatus={selectedStepStatus}
           stepIndex={stepModalIndex}
-          userRole={mockUserRole}
+          userRole={effectiveRole}
           onSaveCase={(updatedCase) => {
             setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
             setSelectedCase(updatedCase);
@@ -5161,31 +5112,6 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
               <div className="flex items-center gap-2">
                 {/* Print Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const opts = {
-                      withAttachments: selectedDownloadType === 'attachments' || selectedDownloadType === 'all',
-                      withInvoice: selectedDownloadType === 'invoice' || selectedDownloadType === 'all',
-                      onlyInvoice: selectedDownloadType === 'invoice'
-                    };
-                    if (selectedCase) {
-                      setSelectedCase(selectedCase);
-                    }
-                    setPrintOptions(opts);
-                    setShowDownloadDocsModal(false);
-                    setTimeout(() => {
-                      window.focus();
-                      window.print();
-                    }, 200);
-                  }}
-                  className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-colors"
-                  title="Print to connected paper or WiFi printer"
-                >
-                  <Printer size={15} />
-                  <span>Print Page</span>
-                </button>
-
                 {/* Primary Download PDF Button */}
                 <button
                   type="button"
@@ -5249,11 +5175,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             <div className="p-5 sm:p-6 border-b border-white/10 flex justify-between items-center bg-slate-950/50">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-brand-500/10 text-brand-400 flex items-center justify-center border border-brand-500/20">
-                  <Printer size={18} />
+                  <Download size={18} />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-white">Print Dossier</h3>
-                  <p className="text-xs text-gray-400">Select components for physical print or PDF export</p>
+                  <h3 className="text-lg font-bold text-white">Export Dossier (PDF)</h3>
+                  <p className="text-xs text-gray-400">Select components for official PDF document export</p>
                 </div>
               </div>
               <button 
@@ -5361,23 +5287,6 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
               </button>
               
               <div className="flex items-center gap-2">
-                {/* Secondary: Browser Print */}
-                <button 
-                  type="button"
-                  onClick={() => {
-                     try {
-                       window.focus();
-                       window.print();
-                     } catch (err) {
-                       console.error("Print execution failed:", err);
-                     }
-                  }} 
-                  className="bg-slate-800 hover:bg-slate-700 text-gray-300 px-3.5 py-2.5 rounded-xl font-medium border border-white/10 flex items-center gap-1.5 text-xs transition-all"
-                  title="Send to WiFi/Physical Printer"
-                >
-                   <Printer size={15} /> Physical Print
-                </button>
-
                 {/* Primary: Real PDF File Download */}
                 <button 
                   type="button"
