@@ -537,3 +537,141 @@ export async function saveClientToFirestore(client: Partial<Client>): Promise<st
     return docId;
   }
 }
+
+/**
+ * Exports complete snapshot of all live collections from Firestore for cloud backup
+ */
+export async function exportCompleteDatabaseSnapshot(): Promise<{
+  version: string;
+  timestamp: string;
+  app: string;
+  stats: {
+    casesCount: number;
+    financeCount: number;
+    vehiclesCount: number;
+    clientsCount: number;
+    usersCount: number;
+  };
+  cases: Case[];
+  finance: FinanceEntry[];
+  vehicles: Vehicle[];
+  clients: Client[];
+  users: AppUser[];
+}> {
+  const [casesSnap, finSnap, vehSnap, clientSnap, userSnap] = await Promise.all([
+    getDocs(collection(db, 'cases')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'finances')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'vehicles')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'clients')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'users')).catch(() => ({ docs: [] } as any)),
+  ]);
+
+  const cases: Case[] = casesSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  const finance: FinanceEntry[] = finSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  const vehicles: Vehicle[] = vehSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  const clients: Client[] = clientSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  const users: AppUser[] = userSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+
+  return {
+    version: '1.0.0',
+    timestamp: new Date().toISOString(),
+    app: 'DOCKS (PVT) LTD - ERP & Logistics Management',
+    stats: {
+      casesCount: cases.length,
+      financeCount: finance.length,
+      vehiclesCount: vehicles.length,
+      clientsCount: clients.length,
+      usersCount: users.length,
+    },
+    cases,
+    finance,
+    vehicles,
+    clients,
+    users
+  };
+}
+
+/**
+ * Restores database collections from a snapshot
+ */
+export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
+  success: boolean;
+  restoredCounts: {
+    cases: number;
+    finance: number;
+    vehicles: number;
+    clients: number;
+    users: number;
+  };
+}> {
+  if (!snapshot || typeof snapshot !== 'object') {
+    throw new Error('Invalid snapshot structure');
+  }
+
+  let casesCount = 0;
+  let finCount = 0;
+  let vehCount = 0;
+  let clientCount = 0;
+  let userCount = 0;
+
+  // Restore cases
+  if (Array.isArray(snapshot.cases)) {
+    for (const c of snapshot.cases) {
+      if (c && c.id) {
+        await setDoc(doc(db, 'cases', String(c.id)), sanitizeForFirestore(c), { merge: true });
+        casesCount++;
+      }
+    }
+  }
+
+  // Restore finance
+  if (Array.isArray(snapshot.finance)) {
+    for (const f of snapshot.finance) {
+      if (f && f.id) {
+        await setDoc(doc(db, 'finances', String(f.id)), sanitizeForFirestore(f), { merge: true });
+        finCount++;
+      }
+    }
+  }
+
+  // Restore vehicles
+  if (Array.isArray(snapshot.vehicles)) {
+    for (const v of snapshot.vehicles) {
+      if (v && v.id) {
+        await setDoc(doc(db, 'vehicles', String(v.id)), sanitizeForFirestore(v), { merge: true });
+        vehCount++;
+      }
+    }
+  }
+
+  // Restore clients
+  if (Array.isArray(snapshot.clients)) {
+    for (const cl of snapshot.clients) {
+      if (cl && cl.id) {
+        await setDoc(doc(db, 'clients', String(cl.id)), sanitizeForFirestore(cl), { merge: true });
+        clientCount++;
+      }
+    }
+  }
+
+  // Restore users
+  if (Array.isArray(snapshot.users)) {
+    for (const u of snapshot.users) {
+      if (u && u.id) {
+        await setDoc(doc(db, 'users', String(u.id)), sanitizeForFirestore(u), { merge: true });
+        userCount++;
+      }
+    }
+  }
+
+  return {
+    success: true,
+    restoredCounts: {
+      cases: casesCount,
+      finance: finCount,
+      vehicles: vehCount,
+      clients: clientCount,
+      users: userCount
+    }
+  };
+}

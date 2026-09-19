@@ -475,30 +475,25 @@ const App: React.FC = () => {
           ))}
         </nav>
 
-        {/* Quick Portal Switcher (Visible on mobile & expanded sidebar) */}
+        {/* Active Session & Account Switcher */}
         <div className={`px-3 py-2 border-t border-white/5 ${!desktopSidebarExpanded && 'lg:hidden'}`}>
-          <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-2 px-1">
-            Portal Mode
-          </p>
-          <div className="grid grid-cols-1 gap-1">
-            {APP_MODES.slice(0, 3).map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                onClick={() => handleSwitchMode(mode)}
-                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
-                  currentRole === mode.role 
-                    ? `${mode.activeBg} ${mode.activeText} border ${mode.activeBorder}` 
-                    : 'text-gray-400 hover:bg-white/5 hover:text-white'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <mode.icon size={14} className={mode.accentColor} />
-                  <span>{mode.name}</span>
-                </div>
-                {currentRole === mode.role && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />}
-              </button>
-            ))}
+          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
+            <div className="min-w-0 pr-2">
+              <span className="text-[10px] text-amber-400 font-mono uppercase block truncate">
+                Role: {currentRole}
+              </span>
+              <span className="text-[11px] text-gray-300 font-bold block truncate">
+                {currentRole === UserRole.CLIENT ? currentClientName : 'Active User'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="text-[10px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 px-2 py-1 rounded-lg transition whitespace-nowrap cursor-pointer"
+              title="Switch user account"
+            >
+              Switch ID
+            </button>
           </div>
         </div>
 
@@ -558,6 +553,7 @@ const App: React.FC = () => {
               <TopModeSwitcher 
                 currentRole={currentRole}
                 onSwitchMode={handleSwitchMode}
+                onSignOut={handleSignOut}
                 onOpenAuthModal={() => setIsAuthModalOpen(true)}
               />
             </div>

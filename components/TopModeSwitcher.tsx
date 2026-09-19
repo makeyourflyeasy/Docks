@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   ShieldCheck, DollarSign, Globe, Briefcase, UserPlus, 
-  ChevronDown, Check, Sparkles, Info, Lock, LogIn, KeyRound, X, ArrowRight
+  ChevronDown, Check, Info, Lock, LogOut, KeyRound, X, ArrowRight, UserCheck
 } from 'lucide-react';
 import { UserRole } from '../types';
 
@@ -63,24 +63,24 @@ export const APP_MODES: ModeOption[] = [
   },
   {
     id: 'employee',
-    name: 'Employee Portal',
-    role: UserRole.DOCUMENTATION_OFFICER,
+    name: 'Operations Portal',
+    role: UserRole.OPERATIONS_MANAGER,
     targetView: 'cases',
-    description: 'Case documentation, TP filing, port clearance, containers, and operations',
-    badge: 'STAFF / OPERATIONS',
+    description: 'Cargo clearing, port logistics, container dispatch, and GD documentation',
+    badge: 'OPERATIONS & CLEARING',
     icon: Briefcase,
-    accentColor: 'text-sky-400',
-    activeBg: 'bg-sky-950/60',
-    activeBorder: 'border-sky-500/60',
-    activeText: 'text-sky-300'
+    accentColor: 'text-cyan-400',
+    activeBg: 'bg-cyan-950/60',
+    activeBorder: 'border-cyan-500/60',
+    activeText: 'text-cyan-300'
   },
   {
     id: 'recruiter',
-    name: 'Recruiter Portal',
-    role: UserRole.HR_MANAGER,
-    targetView: 'users',
-    description: 'Staff hiring, driver & transporter onboarding, user credentials, and fleet registration',
-    badge: 'HR & RECRUITER',
+    name: 'Fleet & HR Portal',
+    role: UserRole.VEHICLE_MANAGER,
+    targetView: 'vehicles',
+    description: 'Fleet carriers, driver validation, transport dispatch, and vehicle assignments',
+    badge: 'FLEET & TRANSPORT',
     icon: UserPlus,
     accentColor: 'text-indigo-400',
     activeBg: 'bg-indigo-950/60',
@@ -92,6 +92,7 @@ export const APP_MODES: ModeOption[] = [
 interface TopModeSwitcherProps {
   currentRole: UserRole;
   onSwitchMode: (mode: ModeOption) => void;
+  onSignOut?: () => void;
   onOpenAuthModal?: () => void;
   className?: string;
   isCompact?: boolean;
@@ -100,6 +101,7 @@ interface TopModeSwitcherProps {
 export const TopModeSwitcher: React.FC<TopModeSwitcherProps> = ({
   currentRole,
   onSwitchMode,
+  onSignOut,
   onOpenAuthModal,
   className = '',
   isCompact = false
@@ -134,148 +136,106 @@ export const TopModeSwitcher: React.FC<TopModeSwitcherProps> = ({
 
   return (
     <div className={`relative ${className}`} ref={dropdownRef}>
-      {/* Switcher Main Trigger Button - Clearly labeled as Portal Login / Mode Switcher */}
+      {/* Switcher Main Trigger Button - Shows Active Logged In Role */}
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-1.5 sm:gap-2.5 px-2.5 sm:px-4 py-1 sm:py-2 rounded-xl border transition-all duration-200 shadow-lg ${currentMode.activeBg} ${currentMode.activeBorder} hover:brightness-110 focus:outline-none ring-1 ring-white/10`}
-        title="Direct Portal Login (No Password Required)"
+        className={`flex items-center gap-1.5 sm:gap-2.5 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-xl border transition-all duration-200 shadow-md ${currentMode.activeBg} ${currentMode.activeBorder} hover:brightness-110 focus:outline-none ring-1 ring-white/10 cursor-pointer`}
+        title="Active Authenticated Session"
       >
         <div className={`p-1 sm:p-1.5 rounded-lg bg-black/50 ${currentMode.accentColor} shadow-inner flex-shrink-0`}>
-          <CurrentIcon size={15} />
+          <CurrentIcon size={14} />
         </div>
 
         <div className="text-left">
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-amber-400 font-semibold uppercase tracking-wider hidden md:inline flex items-center gap-1">
-              <KeyRound size={10} /> Login:
+            <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wider hidden md:inline flex items-center gap-1">
+              <UserCheck size={10} /> Active:
             </span>
             <span className={`text-xs sm:text-sm font-bold ${currentMode.activeText} whitespace-nowrap`}>
               {currentMode.name}
             </span>
           </div>
-          <span className="text-[9px] sm:text-[10px] text-gray-400 font-mono hidden xs:block leading-none truncate max-w-[90px] sm:max-w-none">
-            {currentMode.badge}
+          <span className="text-[9px] sm:text-[10px] text-gray-400 font-mono hidden xs:block leading-none truncate max-w-[100px]">
+            {currentRole}
           </span>
         </div>
 
-        <div className="ml-0.5 sm:ml-1 pl-1 sm:pl-1.5 border-l border-white/10 flex items-center gap-1 flex-shrink-0">
-          <span className="hidden lg:inline-block text-[10px] bg-brand-500/20 text-brand-300 border border-brand-500/30 px-1.5 py-0.5 rounded font-medium">
-            Switch
-          </span>
-          <ChevronDown 
-            size={14} 
-            className={`text-gray-400 transition-transform duration-200 ${isOpen ? 'rotate-180 text-white' : ''}`} 
-          />
-        </div>
+        <ChevronDown 
+          size={14} 
+          className={`text-gray-400 ml-1 transition-transform duration-200 ${isOpen ? 'rotate-180 text-white' : ''}`} 
+        />
       </button>
 
       {/* Dropdown Popup Menu */}
       {isOpen && (
         <div 
-          className="absolute right-0 top-full mt-2 w-[320px] sm:w-[380px] bg-slate-900/98 backdrop-blur-2xl border border-brand-500/40 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95"
+          className="absolute right-0 top-full mt-2 w-[300px] sm:w-[340px] bg-slate-900/98 backdrop-blur-2xl border border-amber-500/40 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
           <div className="p-3.5 border-b border-white/10 bg-slate-950/80 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400">
-                <LogIn size={16} />
+                <Lock size={15} />
               </div>
               <div>
                 <span className="text-xs font-bold text-white uppercase tracking-wider block">
-                  Select Portal to Log In
+                  Authenticated Session
                 </span>
-                <span className="text-[10px] text-emerald-400 font-medium">Direct Access • No Password Required</span>
+                <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
+                  <Check size={11} /> ID & Password Verified
+                </span>
               </div>
             </div>
             <button
               onClick={() => setIsOpen(false)}
-              className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-white/10"
+              className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-white/10 cursor-pointer"
             >
-              <X size={16} />
+              <X size={15} />
             </button>
           </div>
 
-          {/* List of 5 Portals */}
-          <div className="p-2.5 space-y-2 max-h-[390px] overflow-y-auto custom-scrollbar">
-            {APP_MODES.map((mode) => {
-              const isSelected = mode.id === currentMode.id;
-              const Icon = mode.icon;
-
-              return (
-                <button
-                  key={mode.id}
-                  type="button"
-                  onClick={() => {
-                    onSwitchMode(mode);
-                    setIsOpen(false);
-                  }}
-                  className={`w-full p-3 rounded-xl border text-left transition-all flex items-start gap-3 group ${
-                    isSelected
-                      ? `${mode.activeBg} ${mode.activeBorder} shadow-lg shadow-black/40`
-                      : 'bg-white/5 border-white/5 hover:bg-white/10 hover:border-white/20'
-                  }`}
-                >
-                  <div className={`p-2.5 rounded-xl mt-0.5 shrink-0 ${
-                    isSelected ? 'bg-black/50 ' + mode.accentColor : 'bg-white/10 text-gray-400 group-hover:text-white'
-                  }`}>
-                    <Icon size={19} />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-sm font-bold ${isSelected ? 'text-white' : 'text-gray-200 group-hover:text-white'}`}>
-                          {mode.name}
-                        </span>
-                      </div>
-                      {isSelected ? (
-                        <div className="flex items-center gap-1 text-emerald-400 text-xs font-semibold bg-emerald-500/15 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                          <Check size={12} />
-                          <span className="text-[10px]">Logged In</span>
-                        </div>
-                      ) : (
-                        <span className="text-[10px] text-brand-400 opacity-0 group-hover:opacity-100 flex items-center gap-1 font-medium transition-opacity">
-                          Log In <ArrowRight size={11} />
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[10px] font-mono text-gray-400 block mt-0.5">
-                      {mode.badge}
-                    </span>
-                    <p className="text-[11px] text-gray-400 leading-snug mt-1">
-                      {mode.description}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
+          {/* Current Role Details */}
+          <div className="p-3.5 bg-white/5 border-b border-white/5">
+            <div className="text-xs font-bold text-gray-200 mb-1 flex items-center justify-between">
+              <span>Current Role:</span>
+              <span className="text-amber-300 font-mono text-[11px]">{currentRole}</span>
+            </div>
+            <p className="text-[11px] text-gray-400 leading-snug">
+              {currentMode.description}
+            </p>
           </div>
 
-          {/* Optional ID/Password Testing Button */}
-          {onOpenAuthModal && (
-            <div className="p-2.5 border-t border-white/5 bg-slate-950/60">
+          {/* Account Actions */}
+          <div className="p-2.5 space-y-1.5 bg-slate-950/40">
+            {onSignOut && (
               <button
                 type="button"
                 onClick={() => {
                   setIsOpen(false);
-                  onOpenAuthModal();
+                  onSignOut();
                 }}
-                className="w-full py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs text-gray-300 hover:text-white border border-white/10 flex items-center justify-center gap-2 transition"
+                className="w-full p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-amber-200 text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer active:scale-95"
               >
-                <Lock size={13} className="text-amber-400" />
-                <span>Test Login with Email & Password (For Deployment)</span>
+                <KeyRound size={14} />
+                <span>Switch User / Log In with Another ID</span>
               </button>
-            </div>
-          )}
+            )}
 
-          {/* Bottom Clarification Notice */}
-          <div className="p-3 bg-black/70 border-t border-white/5 flex items-start gap-2 text-[11px] text-gray-400">
-            <Info size={14} className="text-brand-400 shrink-0 mt-0.5" />
-            <p className="leading-tight">
-              <span className="text-gray-300 font-medium">Development Mode:</span> You can switch between all 5 portals without credentials. Once ready for deployment, each user will log in with their specific ID/password.
-            </p>
+            {onSignOut && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  onSignOut();
+                }}
+                className="w-full p-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer active:scale-95"
+              >
+                <LogOut size={14} />
+                <span>Sign Out</span>
+              </button>
+            )}
           </div>
         </div>
       )}
