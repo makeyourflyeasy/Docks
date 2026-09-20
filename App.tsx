@@ -44,7 +44,7 @@ const App: React.FC = () => {
     return (saved as UserRole) || UserRole.ADMIN;
   });
   const [currentClientName, setCurrentClientName] = useState(() => {
-    return safeAppStorage.getItem('dpl_client_name') || 'Global Traders Ltd';
+    return safeAppStorage.getItem('dpl_client_name') || '';
   });
 
   // Session Toast for workflow restoration feedback
@@ -105,36 +105,7 @@ const App: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [firestoreConnected, setFirestoreConnected] = useState(true);
   
-  const [notifications, setNotifications] = useState<AppNotification[]>([
-    { 
-      id: 1, 
-      title: 'Approval Pending', 
-      description: 'Case DPL-26-000004 requires admin approval.', 
-      details: 'Case DPL-26-000004 for Global Traders Ltd. has reached the "Shipping Line DO" stage and requires your approval to proceed to TP Filing. All documents have been verified by the Documentation Officer.',
-      timestamp: '10 min ago', 
-      type: 'ACTION', 
-      notificationSubType: 'CASE_APPROVAL',
-      status: 'PENDING', 
-      priority: 'HIGH',
-      actionLabel: 'Review Case',
-      targetView: 'cases',
-      targetFilter: { status: 'Shipping Line DO' }
-    },
-    { 
-      id: 2, 
-      title: 'Verify Payment', 
-      description: 'Deposit slip uploaded by Global Traders Ltd (PKR 100,000).', 
-      details: 'A new payment slip has been uploaded for Invoice #INV-26-0004. Amount: PKR 100,000. Please verify the bank transaction ID (HBL #DEP-884210) and approve the ledger credit.',
-      timestamp: '1 hour ago', 
-      type: 'ACTION', 
-      notificationSubType: 'BUYING',
-      status: 'PENDING', 
-      priority: 'MEDIUM',
-      actionLabel: 'Verify Slip',
-      targetView: 'finance',
-      targetFilter: { tab: 'receivables' }
-    }
-  ]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   // Admin Navigation Items (Dashboard removed from sidebar; clicking Logo at top opens Dashboard)
   const adminNavItems = [
@@ -219,9 +190,7 @@ const App: React.FC = () => {
 
     // Listen to live notifications from Firestore
     const unsubNotifs = subscribeToNotifications((items) => {
-      if (items && items.length > 0) {
-        setNotifications(items);
-      }
+      setNotifications(items || []);
     });
 
     // Prevent accidental browser page navigation / app reload when dragging files into window

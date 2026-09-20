@@ -8,6 +8,17 @@ import {
 import { enhanceDocumentWithAI, fileToBase64, downloadFile } from '../services/geminiService';
 import { CompanyDocument } from '../types';
 import { useBranding, optimizeLogoImage } from '../services/brandingService';
+import { 
+  wipeCompleteDatabase, 
+  exportSelectiveDatabaseBackup, 
+  restoreDatabaseSnapshot 
+} from '../services/dbService';
+import { 
+  getDriveAccessToken, 
+  uploadDatabaseBackupToDrive, 
+  listDatabaseBackupsFromDrive, 
+  deleteDriveFile 
+} from '../services/googleDriveService';
 import Logo from './Logo';
 import GoogleDriveManager from './GoogleDriveManager';
 
@@ -157,68 +168,196 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
 
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
-  const handleCreateBackup = () => {
-      const data = {
+  // Dedicated Selective Backup Modal State
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [backupOptions, setBackupOptions] = useState({
+    full: true,
+    cases: true,
+    finance: true,
+    vehicles: true,
+    clients: true
+  });
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
+
+  // Dedicated Factory Reset Warning Modal State
+  const [showResetWarningModal, setShowResetWarningModal] = useState(false);
+  const [resetConfirmInput, setResetConfirmInput] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
+  const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+
+  // Toggle selection for backup items
+  const handleToggleBackupOption = (key: 'full' | 'cases' | 'finance' | 'vehicles' | 'clients') => {
+    if (key === 'full') {
+      const nextVal = !backupOptions.full;
+      setBackupOptions({
+        full: nextVal,
+        cases: nextVal,
+        finance: nextVal,
+        vehicles: nextVal,
+        clients: nextVal
+      });
+    } else {
+      const next = { ...backupOptions, [key]: !backupOptions[key] };
+      next.full = next.cases && next.finance && next.vehicles && next.clients;
+      setBackupOptions(next);
+    }
+  };
+
+  // Open Backup Modal
+  const handleOpenBackupModal = () => {
+    setBackupSuccessMessage(null);
+    setShowBackupModal(true);
+  };
+
+  // Download chosen backup JSON file and mirror to Google Drive if connected
+  const handleDownloadSelectedBackup = async () => {
+    try {
+      setIsExportingBackup(true);
+      const snapshot = await exportSelectiveDatabaseBackup({
+        cases: backupOptions.cases,
+        finance: backupOptions.finance,
+        vehicles: backupOptions.vehicles,
+        clients: backupOptions.clients,
+        companyInfo: {
           companyName,
           adminUsername,
           adminUserId,
-          companyDocuments,
           banks,
-          backupDate: new Date().toISOString()
-      };
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          companyDocuments
+        }
+      });
+
+      const jsonString = JSON.stringify(snapshot, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const dateStr = new Date().toISOString().split('T')[0];
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `dpl_backup_${new Date().toISOString().split('T')[0]}.json`;
+      link.download = `DOCKS_LTD_Backup_${dateStr}.json`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      alert("System backup created and downloaded successfully!");
-  };
 
-  const handleRestoreBackup = () => {
-      restoreInputRef.current?.click();
-  };
-
-  const onRestoreFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-          try {
-              const data = JSON.parse(event.target?.result as string);
-              if (data.companyName && data.banks) {
-                  // In a real app we would update the actual database. 
-                  // Here we update the local state to simulate restoration.
-                  setAdminUsername(data.adminUsername || adminUsername);
-                  setAdminUserId(data.adminUserId || adminUserId);
-                  setCompanyDocuments(data.companyDocuments || []);
-                  setBanks(data.banks || []);
-                  alert("System data restored successfully from backup!");
-              } else {
-                  alert("Invalid backup file format.");
-              }
-          } catch (err) {
-              alert("Error reading backup file.");
-          }
-      };
-      reader.readAsText(file);
-      // Reset input
-      e.target.value = '';
-  };
-
-  const handleFactoryReset = () => {
-      if(window.confirm("CRITICAL WARNING: This will permanently delete ALL data, documents, and settings. This action cannot be undone. Are you absolutely sure?")) {
-          setAdminUsername('Arbab Khan');
-          setAdminUserId('AK001');
-          setAdminPassword('******');
-          setCompanyDocuments([]);
-          setBanks([{ id: 1, name: 'HBL Corporate', acct: '0011-2233-4455', iban: 'PK36HABB001122334455', branch: 'Clifton' }]);
-          alert("System has been reset to factory defaults.");
+      // Also mirror to Google Drive if connected
+      const driveToken = getDriveAccessToken();
+      if (driveToken) {
+        try {
+          await uploadDatabaseBackupToDrive(snapshot);
+        } catch (driveErr) {
+          console.warn("Drive backup auto-sync notice:", driveErr);
+        }
       }
+
+      setBackupSuccessMessage("Backup file created and downloaded successfully! Keep this file safe.");
+      setShowBackupModal(false);
+    } catch (err: any) {
+      alert("Error generating backup: " + (err.message || String(err)));
+    } finally {
+      setIsExportingBackup(false);
+    }
+  };
+
+  const handleRestoreBackupClick = () => {
+    restoreInputRef.current?.click();
+  };
+
+  const onRestoreFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsRestoring(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data && (Array.isArray(data.cases) || Array.isArray(data.finance) || Array.isArray(data.vehicles) || Array.isArray(data.clients) || data.companyName)) {
+          const result = await restoreDatabaseSnapshot(data);
+
+          // Upload restored snapshot to Google Drive if connected
+          const driveToken = getDriveAccessToken();
+          if (driveToken) {
+            uploadDatabaseBackupToDrive(data).catch(() => {});
+          }
+
+          if (data.companyInfo) {
+            if (data.companyInfo.companyName) setBrandCompanyName(data.companyInfo.companyName);
+            if (data.companyInfo.adminUsername) setAdminUsername(data.companyInfo.adminUsername);
+            if (data.companyInfo.adminUserId) setAdminUserId(data.companyInfo.adminUserId);
+            if (data.companyInfo.companyDocuments) setCompanyDocuments(data.companyInfo.companyDocuments);
+            if (data.companyInfo.banks) setBanks(data.companyInfo.banks);
+          }
+
+          alert(
+            `Data Restored Successfully!\n\n` +
+            `• Cases Restored: ${result.restoredCounts.cases}\n` +
+            `• Finance Records: ${result.restoredCounts.finance}\n` +
+            `• Vehicles: ${result.restoredCounts.vehicles}\n` +
+            `• Clients: ${result.restoredCounts.clients}\n\n` +
+            `Database and cloud storage are synchronized. The application will now refresh.`
+          );
+          window.location.reload();
+        } else {
+          alert("Invalid backup file format. Please upload a valid DOCKS JSON backup file.");
+        }
+      } catch (err: any) {
+        alert("Error restoring data from backup: " + (err.message || String(err)));
+      } finally {
+        setIsRestoring(false);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // Open Factory Reset Warning Window
+  const handleOpenResetWarning = () => {
+    setResetConfirmInput('');
+    setShowResetWarningModal(true);
+  };
+
+  // Execute complete factory reset
+  const handleExecuteFactoryReset = async () => {
+    try {
+      setIsResetting(true);
+
+      // 1. Wipe Firebase Firestore live operational data (cases, finances, vehicles, clients, notifications)
+      const wipeResult = await wipeCompleteDatabase();
+
+      // 2. If Google Drive is connected, delete backup archives from Drive as well
+      const driveToken = getDriveAccessToken();
+      if (driveToken) {
+        try {
+          const driveFiles = await listDatabaseBackupsFromDrive();
+          for (const file of driveFiles) {
+            if (file.id) {
+              await deleteDriveFile(file.id).catch(() => {});
+            }
+          }
+        } catch (driveCleanupErr) {
+          console.warn("Drive cleanup notice:", driveCleanupErr);
+        }
+      }
+
+      // 3. Reset local settings state
+      setCompanyDocuments([]);
+      setBanks([{ id: 1, name: 'HBL Corporate', acct: '0011-2233-4455', iban: 'PK36HABB001122334455', branch: 'Clifton' }]);
+
+      setShowResetWarningModal(false);
+      setResetSuccessMessage(
+        `System Factory Reset Successful: All ${wipeResult.deletedCounts.cases} cases, ${wipeResult.deletedCounts.finances} finance entries, ${wipeResult.deletedCounts.vehicles} vehicles, and ${wipeResult.deletedCounts.clients} clients were deleted from Firebase Firestore, Google Drive archives, and local cache.`
+      );
+
+      // Reload window after brief delay so state starts 100% clean
+      setTimeout(() => {
+        window.location.reload();
+      }, 1600);
+    } catch (err: any) {
+      alert("Error executing factory reset: " + (err.message || String(err)));
+      setIsResetting(false);
+    }
   };
 
   const InputField = ({ label, value, onChange, type = 'text', readOnly = false }: {
@@ -470,47 +609,291 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
         <h3 className="text-xl font-semibold text-white mb-6 border-b border-white/10 pb-3 flex items-center gap-2">
            <Database className="text-brand-400"/> Backup & Restoration
         </h3>
+
+        {/* Success / Info Alerts */}
+        {backupSuccessMessage && (
+           <div className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-sm flex items-center gap-3">
+              <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
+              <span>{backupSuccessMessage}</span>
+           </div>
+        )}
+
+        {resetSuccessMessage && (
+           <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex items-center gap-3">
+              <AlertCircle size={18} className="text-red-400 shrink-0" />
+              <span>{resetSuccessMessage}</span>
+           </div>
+        )}
+
+        {/* Hidden File Input for Restore */}
+        <input 
+           ref={restoreInputRef}
+           type="file" 
+           accept=".json" 
+           className="hidden" 
+           onChange={onRestoreFileChange}
+        />
         
         <div className="space-y-6">
-           <div className="glass-panel p-6 rounded-xl border border-white/10 flex justify-between items-center">
+           <div className="glass-panel p-6 rounded-xl border border-white/10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
-                 <h4 className="text-lg font-medium text-white">Create Full Backup</h4>
-                 <p className="text-sm text-gray-400 font-sans">Download database, documents, and settings.</p>
+                 <h4 className="text-lg font-medium text-white">Create Custom Backup</h4>
+                 <p className="text-sm text-gray-400 font-sans">Choose which modules to export (Full, Cases, Finance, Vehicles, Clients).</p>
               </div>
               <button 
-                  onClick={handleCreateBackup}
-                  className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+                  onClick={handleOpenBackupModal}
+                  className="bg-brand-600 hover:bg-brand-500 text-white px-5 py-2.5 rounded-lg flex items-center gap-2 shadow-lg shadow-brand-600/20 transition-all"
               >
                  <Save size={16} /> Create Backup
               </button>
            </div>
 
-           <div className="glass-panel p-6 rounded-xl border border-white/10 flex justify-between items-center">
+           <div className="glass-panel p-6 rounded-xl border border-white/10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                  <h4 className="text-lg font-medium text-white">Restore from Backup</h4>
-                 <p className="text-sm text-gray-400 font-sans">Upload a previously generated backup file.</p>
+                 <p className="text-sm text-gray-400 font-sans">Upload a previously generated backup file (.json) to restore Firestore & Drive.</p>
               </div>
               <button 
-                  onClick={handleRestoreBackup}
-                  className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg flex items-center gap-2 border border-white/10 font-sans"
+                  disabled={isRestoring}
+                  onClick={handleRestoreBackupClick}
+                  className="bg-white/10 hover:bg-white/20 text-white px-5 py-2.5 rounded-lg flex items-center gap-2 border border-white/10 font-sans transition-all disabled:opacity-50"
               >
-                 <Upload size={16} /> Upload & Restore
+                 {isRestoring ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                 {isRestoring ? 'Restoring Data...' : 'Upload & Restore'}
               </button>
            </div>
 
-           <div className="glass-panel p-6 rounded-xl border border-red-500/20 bg-red-500/5 flex justify-between items-center">
+           <div className="glass-panel p-6 rounded-xl border border-red-500/20 bg-red-500/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                  <h4 className="text-lg font-medium text-red-400">Factory Reset</h4>
-                 <p className="text-sm text-red-400/70 font-sans">Wipe all data and restore to default state.</p>
+                 <p className="text-sm text-red-400/70 font-sans">Wipe all data (Cases, Finance, Vehicles, Clients) and restore to default empty state.</p>
               </div>
               <button 
-                  onClick={handleFactoryReset}
-                  className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white px-4 py-2 rounded-lg flex items-center gap-2 border border-red-500/30 transition-colors font-sans"
+                  onClick={handleOpenResetWarning}
+                  className="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white px-5 py-2.5 rounded-lg flex items-center gap-2 border border-red-500/30 transition-all font-sans"
               >
                  <Trash2 size={16} /> Reset Application
               </button>
            </div>
         </div>
+
+        {/* 1. Dedicated Selective Backup Modal */}
+        {showBackupModal && (
+           <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+              <div className="bg-slate-900 border border-white/15 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+                 <div className="p-6 border-b border-white/10 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                       <div className="w-10 h-10 rounded-xl bg-brand-500/20 flex items-center justify-center text-brand-400 border border-brand-500/30">
+                          <Database size={20} />
+                       </div>
+                       <div>
+                          <h3 className="text-lg font-bold text-white">Export System Backup</h3>
+                          <p className="text-xs text-gray-400">Tick which modules you want to include in the backup</p>
+                       </div>
+                    </div>
+                    <button onClick={() => setShowBackupModal(false)} className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/10">
+                       <X size={18} />
+                    </button>
+                 </div>
+
+                 <div className="p-6 space-y-4">
+                    {/* Full Backup Master Checkbox */}
+                    <div 
+                       onClick={() => handleToggleBackupOption('full')}
+                       className={`p-4 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                          backupOptions.full ? 'bg-brand-500/10 border-brand-500/40' : 'bg-white/5 border-white/10 hover:bg-white/10'
+                       }`}
+                    >
+                       <div className="flex items-center gap-3">
+                          <div className={`w-5 h-5 rounded flex items-center justify-center border transition-colors ${
+                             backupOptions.full ? 'bg-brand-500 border-brand-500 text-white' : 'border-white/30'
+                          }`}>
+                             {backupOptions.full && <Check size={14} />}
+                          </div>
+                          <div>
+                             <p className="text-sm font-bold text-white">Full Backup (All Data)</p>
+                             <p className="text-xs text-gray-400">Selects everything across all ERP logistics modules</p>
+                          </div>
+                       </div>
+                       <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-brand-500/20 text-brand-300 border border-brand-500/30">All</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2.5 pt-2">
+                       {/* All Cases */}
+                       <div 
+                          onClick={() => handleToggleBackupOption('cases')}
+                          className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                             backupOptions.cases ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5 hover:bg-white/5'
+                          }`}
+                       >
+                          <div className="flex items-center gap-3">
+                             <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                backupOptions.cases ? 'bg-brand-500 border-brand-500 text-white' : 'border-white/30'
+                             }`}>
+                                {backupOptions.cases && <Check size={12} />}
+                             </div>
+                             <span className="text-sm font-medium text-white">All Cases</span>
+                          </div>
+                          <span className="text-xs text-gray-400">Shipments, BLs & Containers</span>
+                       </div>
+
+                       {/* All Finance */}
+                       <div 
+                          onClick={() => handleToggleBackupOption('finance')}
+                          className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                             backupOptions.finance ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5 hover:bg-white/5'
+                          }`}
+                       >
+                          <div className="flex items-center gap-3">
+                             <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                backupOptions.finance ? 'bg-brand-500 border-brand-500 text-white' : 'border-white/30'
+                             }`}>
+                                {backupOptions.finance && <Check size={12} />}
+                             </div>
+                             <span className="text-sm font-medium text-white">All Finance</span>
+                          </div>
+                          <span className="text-xs text-gray-400">Ledgers, Receivables, Payables</span>
+                       </div>
+
+                       {/* All Vehicles */}
+                       <div 
+                          onClick={() => handleToggleBackupOption('vehicles')}
+                          className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                             backupOptions.vehicles ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5 hover:bg-white/5'
+                          }`}
+                       >
+                          <div className="flex items-center gap-3">
+                             <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                backupOptions.vehicles ? 'bg-brand-500 border-brand-500 text-white' : 'border-white/30'
+                             }`}>
+                                {backupOptions.vehicles && <Check size={12} />}
+                             </div>
+                             <span className="text-sm font-medium text-white">All Vehicles</span>
+                          </div>
+                          <span className="text-xs text-gray-400">Fleet, Drivers, Tracking</span>
+                       </div>
+
+                       {/* All Clients */}
+                       <div 
+                          onClick={() => handleToggleBackupOption('clients')}
+                          className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                             backupOptions.clients ? 'bg-white/10 border-white/20' : 'bg-black/20 border-white/5 hover:bg-white/5'
+                          }`}
+                       >
+                          <div className="flex items-center gap-3">
+                             <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                                backupOptions.clients ? 'bg-brand-500 border-brand-500 text-white' : 'border-white/30'
+                             }`}>
+                                {backupOptions.clients && <Check size={12} />}
+                             </div>
+                             <span className="text-sm font-medium text-white">All Clients</span>
+                          </div>
+                          <span className="text-xs text-gray-400">Customer directory & default tariffs</span>
+                       </div>
+                    </div>
+                 </div>
+
+                 <div className="p-6 bg-white/5 border-t border-white/10 flex gap-3">
+                    <button 
+                       onClick={() => setShowBackupModal(false)}
+                       className="flex-1 px-4 py-2.5 rounded-lg border border-white/10 text-gray-300 hover:bg-white/10 transition-colors text-sm"
+                    >
+                       Cancel
+                    </button>
+                    <button 
+                       disabled={isExportingBackup || (!backupOptions.cases && !backupOptions.finance && !backupOptions.vehicles && !backupOptions.clients)}
+                       onClick={handleDownloadSelectedBackup}
+                       className="flex-1 px-5 py-2.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white font-medium text-sm flex items-center justify-center gap-2 shadow-lg shadow-brand-600/30 transition-all disabled:opacity-50"
+                    >
+                       {isExportingBackup ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                       {isExportingBackup ? 'Preparing Backup...' : 'Download Backup File (.json)'}
+                    </button>
+                 </div>
+              </div>
+           </div>
+        )}
+
+        {/* 2. Dedicated Factory Reset Warning Window */}
+        {showResetWarningModal && (
+           <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+              <div className="bg-slate-900 border border-red-500/30 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+                 <div className="p-6 bg-red-500/10 border-b border-red-500/20 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                       <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center text-red-400 border border-red-500/40">
+                          <AlertCircle size={22} />
+                       </div>
+                       <div>
+                          <h3 className="text-lg font-bold text-red-300">Warning: Factory Reset</h3>
+                          <p className="text-xs text-red-300/80">Permanent erasure of operational data</p>
+                       </div>
+                    </div>
+                    <button onClick={() => setShowResetWarningModal(false)} className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/10">
+                       <X size={18} />
+                    </button>
+                 </div>
+
+                 <div className="p-6 space-y-4 text-left">
+                    <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/20 text-xs text-red-200/90 leading-relaxed space-y-2">
+                       <p className="font-semibold text-red-300">This action will delete:</p>
+                       <ul className="list-disc pl-5 space-y-1">
+                          <li>All registered Cases, B/Ls, and Containers</li>
+                          <li>All Finance records, Client Ledgers, and Vouchers</li>
+                          <li>All Registered Vehicles and Fleet Drivers</li>
+                          <li>All Saved Clients and Custom Tariffs</li>
+                          <li>Google Drive backup archives and local storage cache</li>
+                       </ul>
+                    </div>
+
+                    {/* Prominent Backup Now Option before Reset */}
+                    <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-4">
+                       <div className="space-y-0.5">
+                          <p className="text-xs font-bold text-amber-300">Backup your data before reset?</p>
+                          <p className="text-[11px] text-amber-300/80">Download a backup file now so you can restore your data later.</p>
+                       </div>
+                       <button 
+                          onClick={() => {
+                             setShowResetWarningModal(false);
+                             handleOpenBackupModal();
+                          }}
+                          className="shrink-0 px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-amber-500/20"
+                       >
+                          <Download size={14} /> Backup Now
+                       </button>
+                    </div>
+
+                    <div className="pt-2">
+                       <label className="block text-xs font-medium text-gray-300 mb-1.5">
+                          To confirm permanent factory reset, type <span className="text-red-400 font-mono font-bold">RESET</span> below:
+                       </label>
+                       <input 
+                          type="text" 
+                          placeholder="Type RESET to confirm"
+                          value={resetConfirmInput}
+                          onChange={e => setResetConfirmInput(e.target.value)}
+                          className="w-full bg-black/40 border border-white/15 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-red-500/60 font-mono uppercase"
+                       />
+                    </div>
+                 </div>
+
+                 <div className="p-6 bg-white/5 border-t border-white/10 flex gap-3">
+                    <button 
+                       onClick={() => setShowResetWarningModal(false)}
+                       className="flex-1 px-4 py-2.5 rounded-lg border border-white/10 text-gray-300 hover:bg-white/10 transition-colors text-sm"
+                    >
+                       Cancel
+                    </button>
+                    <button 
+                       disabled={isResetting || resetConfirmInput.trim().toUpperCase() !== 'RESET'}
+                       onClick={handleExecuteFactoryReset}
+                       className="flex-1 px-5 py-2.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium text-sm flex items-center justify-center gap-2 shadow-lg shadow-red-600/30 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                       {isResetting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                       {isResetting ? 'Wiping All Data...' : 'Confirm Factory Reset'}
+                    </button>
+                 </div>
+              </div>
+           </div>
+        )}
      </div>
   );
 

@@ -1,22 +1,35 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
   Users, UserPlus, Briefcase, Truck, Edit, Trash2, Key, Save, X, CheckCircle, 
   AlertTriangle, Eye, FileText, CreditCard, ChevronRight, Calendar, DollarSign, 
   Clock, Plus, Shield, Phone, MapPin, Building, Percent, Upload, Check, 
-  Receipt, ArrowUpRight, ArrowDownLeft, LayoutGrid, List, Search, Mail, ChevronLeft
+  Receipt, ArrowUpRight, ArrowDownLeft, LayoutGrid, List, Search, Mail, ChevronLeft,
+  Coffee, ShieldCheck, MapPinned, Lock, Unlock, Compass
 } from 'lucide-react';
-import { AppUser, UserRole, Case, FinanceEntry, CaseStatus, Client, ClientDefaultCharge, UNIVERSAL_CHARGE_TYPES } from '../types';
+import { 
+  AppUser, UserRole, Case, FinanceEntry, Client, DestinationStaff, StaffLedgerEntry 
+} from '../types';
 import { safeAppStorage } from '../services/storage';
 import { compressAndPrepareFile } from '../services/fileUtils';
-import { saveClientToFirestore, subscribeToClients, DEFAULT_DATABASE_USERS } from '../services/dbService';
+import { 
+  saveUserToFirestore, 
+  deleteUserFromFirestore, 
+  subscribeToUsers, 
+  subscribeToClients, 
+  saveClientToFirestore, 
+  deleteClientFromFirestore,
+  subscribeToDestinationStaff, 
+  deleteDestinationStaffFromFirestore, 
+  subscribeToStaffLedgers, 
+  subscribeToCases, 
+  subscribeToFinances, 
+  DEFAULT_DATABASE_USERS 
+} from '../services/dbService';
 
-const INITIAL_USERS: AppUser[] = DEFAULT_DATABASE_USERS;
-
-// Clean Data for Client Details
-const MOCK_CLIENT_CASES: Case[] = [];
-
-const MOCK_CLIENT_PAYMENTS: FinanceEntry[] = [];
+import { ClientRegistrationModal } from './ClientRegistrationModal';
+import { StaffLedgerModal } from './StaffLedgerModal';
+import { ClientLedgerModal } from './ClientLedgerModal';
+import { DestinationStaffModal } from './DestinationStaffModal';
 
 export const CASE_CATEGORIES = [
   "Afghan Transit",
@@ -28,7 +41,7 @@ export const CASE_CATEGORIES = [
 ];
 
 const UserManagement: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'office' | 'clients' | 'transporters'>(() => {
+  const [activeTab, setActiveTab] = useState<'office' | 'clients' | 'transporters' | 'destinations'>(() => {
     return (safeAppStorage.getItem('dpl_user_tab') as any) || 'office';
   });
 
@@ -36,43 +49,93 @@ const UserManagement: React.FC = () => {
     safeAppStorage.setItem('dpl_user_tab', activeTab);
   }, [activeTab]);
 
-  const [users, setUsers] = useState<AppUser[]>(INITIAL_USERS);
-  
-  // Onboarding Modal Flow
-  const [showRoleSelectorModal, setShowRoleSelectorModal] = useState(false);
-  const [selectedOnboardingRole, setSelectedOnboardingRole] = useState<'STAFF' | 'CLIENT' | 'TRANSPORTER' | null>(null);
-  const [showModal, setShowModal] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  // Live state from Firestore subscriptions
+  const [users, setUsers] = useState<AppUser[]>(DEFAULT_DATABASE_USERS);
+  const [clientsList, setClientsList] = useState<Client[]>([]);
+  const [destinationStaffList, setDestinationStaffList] = useState<DestinationStaff[]>([]);
+  const [staffLedgerEntries, setStaffLedgerEntries] = useState<StaffLedgerEntry[]>([]);
+  const [casesList, setCasesList] = useState<Case[]>([]);
+  const [financesList, setFinancesList] = useState<FinanceEntry[]>([]);
 
-  // Staff / Employee HR Profile & Cashbook Modal
-  const [selectedStaffUser, setSelectedStaffUser] = useState<AppUser | null>(null);
-  
-  // Delete Confirmation State
-  const [deleteId, setDeleteId] = useState<number | null>(null);
+  // Subscribe to real-time collections
+  useEffect(() => {
+    const unsubUsers = subscribeToUsers((data) => {
+      if (data && data.length > 0) {
+        setUsers(data);
+      }
+    });
 
-  // Client Details & Billing Setup Modal
-  const [selectedClient, setSelectedClient] = useState<AppUser | null>(null);
-  const [detailsTab, setDetailsTab] = useState<'cases' | 'payments' | 'billing'>('cases');
+    const unsubClients = subscribeToClients((data) => {
+      setClientsList(data || []);
+    });
 
-  // Search & View Mode (cards for responsive mobile, table for wide view)
+    const unsubDest = subscribeToDestinationStaff((data) => {
+      setDestinationStaffList(data || []);
+    });
+
+    const unsubLedgers = subscribeToStaffLedgers((data) => {
+      setStaffLedgerEntries(data || []);
+    });
+
+    const unsubCases = subscribeToCases((data) => {
+      setCasesList(data || []);
+    });
+
+    const unsubFinances = subscribeToFinances((data) => {
+      setFinancesList(data || []);
+    });
+
+    return () => {
+      unsubUsers();
+      unsubClients();
+      unsubDest();
+      unsubLedgers();
+      unsubCases();
+      unsubFinances();
+    };
+  }, []);
+
+  // Search & View Mode
   const [viewMode, setViewMode] = useState<'cards' | 'table'>(() => {
     return typeof window !== 'undefined' && window.innerWidth < 768 ? 'cards' : 'table';
   });
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Form State (Handles Staff, Client, and Transporter according to SRS specifications)
+
+  // Modals Flow
+  const [showRoleSelectorModal, setShowRoleSelectorModal] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [selectedOnboardingRole, setSelectedOnboardingRole] = useState<'STAFF' | 'TRANSPORTER' | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingId, setEditingId] = useState<number | string | null>(null);
+
+  // Client modals
+  const [showClientModal, setShowClientModal] = useState(false);
+  const [clientToEdit, setClientToEdit] = useState<Client | null>(null);
+  const [ledgerClient, setLedgerClient] = useState<Client | null>(null);
+
+  // Staff ledger modal
+  const [selectedStaffUser, setSelectedStaffUser] = useState<AppUser | null>(null);
+
+  // Destination staff modal
+  const [showDestinationModal, setShowDestinationModal] = useState(false);
+  const [destinationStaffToEdit, setDestinationStaffToEdit] = useState<DestinationStaff | null>(null);
+
+  // Delete Confirmation State
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: 'USER' | 'CLIENT' | 'DESTINATION';
+    id: string | number;
+    name: string;
+  } | null>(null);
+
+  // Form State for Staff & Transporter/Broker
   const [formData, setFormData] = useState({
-    // Basic Info
-    name: '', // Company Name or Staff Full Name
+    name: '',
     email: '',
-    contact: '', // Primary Phone
+    contact: '',
     role: '' as UserRole | '',
     generatedId: '',
     generatedPass: '',
     profilePicture: '',
-
-    // Staff HR Fields (SRS Section 3)
     fatherName: '',
     residentialAddress: '',
     secondaryPhone: '',
@@ -80,55 +143,47 @@ const UserManagement: React.FC = () => {
     cnicFront: '',
     cnicBack: '',
     baseSalary: 50000,
-    allowanceMobile: 0,
-    allowanceFuel: 0,
-    allowanceInternet: 0,
+    allowanceMobile: 2000,
+    allowanceFuel: 5000,
+    allowanceInternet: 2000,
     loansAdvances: 0,
-
-    // Client Onboarding & Billing Setup (SRS Section 1)
-    ownerName: '',
-    officeAddress: '',
-    officePhone: '',
-    mobileNumber: '',
-    whatsappNumber: '',
-    ntn: '',
-    strn: '',
-    defaultCaseCategory: 'Afghan Transit',
-    clientCharges: UNIVERSAL_CHARGE_TYPES.map(c => ({
-      id: c.id,
-      category: 'Afghan Transit',
-      description: c.name,
-      defaultAmount: c.defaultAmount,
-      enabled: true
-    })),
-
-    // Transporter Onboarding (SRS Section 4)
+    // Transporter/Broker fields
     representativeName: '',
-    landline: '',
     fleetSize: 1,
     containerCompatibility: ['20ft', '40ft'] as string[],
-    preferredRoutes: 'Karachi - Lahore - Peshawar'
+    preferredRoutes: 'Karachi - Lahore - Peshawar',
+    ntn: '',
+    officeAddress: '',
+    whatsappNumber: ''
   });
 
-  // Custom Charge Addition within Client Setup
-  const [newCustomChargeName, setNewCustomChargeName] = useState('');
-  const [newCustomChargeAmount, setNewCustomChargeAmount] = useState<number>(5000);
-  const [showAddCustomChargeInput, setShowAddCustomChargeInput] = useState(false);
-
-  // Step 1: Open Role Selector Prompt
+  // Open primary create button
   const handleOpenAdd = () => {
+    if (activeTab === 'clients') {
+      setClientToEdit(null);
+      setShowClientModal(true);
+      return;
+    }
+    if (activeTab === 'destinations') {
+      setDestinationStaffToEdit(null);
+      setShowDestinationModal(true);
+      return;
+    }
+    if (activeTab === 'transporters') {
+      handleSelectRoleType('TRANSPORTER');
+      return;
+    }
+    // Default office
     setShowRoleSelectorModal(true);
   };
 
-  // Step 2: User selects Staff, Client, or Transporter
-  const handleSelectRoleType = (roleType: 'STAFF' | 'CLIENT' | 'TRANSPORTER') => {
+  const handleSelectRoleType = (roleType: 'STAFF' | 'TRANSPORTER') => {
     setSelectedOnboardingRole(roleType);
     setShowRoleSelectorModal(false);
     setIsEditing(false);
     setEditingId(null);
 
-    // Auto-generate ID prefix
-    const prefix = roleType === 'CLIENT' ? 'CLT-' : roleType === 'TRANSPORTER' ? 'TRP-' : 'EMP-';
+    const prefix = roleType === 'TRANSPORTER' ? 'TRP-' : 'EMP-';
     const existingIds = users
       .map(u => u.userId)
       .filter(id => id && id.startsWith(prefix))
@@ -141,7 +196,7 @@ const UserManagement: React.FC = () => {
       name: '',
       email: '',
       contact: '',
-      role: roleType === 'CLIENT' ? UserRole.CLIENT : roleType === 'TRANSPORTER' ? UserRole.TRANSPORTER : UserRole.DATA_ENTRY_OFFICER,
+      role: roleType === 'TRANSPORTER' ? UserRole.TRANSPORTER : UserRole.DATA_ENTRY_OFFICER,
       generatedId,
       generatedPass,
       profilePicture: '',
@@ -156,39 +211,24 @@ const UserManagement: React.FC = () => {
       allowanceFuel: 5000,
       allowanceInternet: 2000,
       loansAdvances: 0,
-      ownerName: '',
-      officeAddress: '',
-      officePhone: '',
-      mobileNumber: '',
-      whatsappNumber: '',
-      ntn: '',
-      strn: '',
-      defaultCaseCategory: 'Afghan Transit',
-      clientCharges: UNIVERSAL_CHARGE_TYPES.map(c => ({
-        id: c.id,
-        category: 'Afghan Transit',
-        description: c.name,
-        defaultAmount: c.defaultAmount,
-        enabled: true
-      })),
       representativeName: '',
-      landline: '',
       fleetSize: 1,
       containerCompatibility: ['20ft', '40ft'],
-      preferredRoutes: 'Karachi - Lahore - Peshawar'
+      preferredRoutes: 'Karachi - Lahore - Peshawar',
+      ntn: '',
+      officeAddress: '',
+      whatsappNumber: ''
     });
 
-    if (roleType === 'CLIENT') setActiveTab('clients');
-    else if (roleType === 'TRANSPORTER') setActiveTab('transporters');
+    if (roleType === 'TRANSPORTER') setActiveTab('transporters');
     else setActiveTab('office');
 
     setShowModal(true);
   };
 
   const handleEditUser = (user: AppUser) => {
-    const isClient = user.role === UserRole.CLIENT;
     const isTransporter = user.role === UserRole.TRANSPORTER;
-    const roleType = isClient ? 'CLIENT' : isTransporter ? 'TRANSPORTER' : 'STAFF';
+    const roleType = isTransporter ? 'TRANSPORTER' : 'STAFF';
     setSelectedOnboardingRole(roleType);
 
     setFormData({
@@ -210,26 +250,13 @@ const UserManagement: React.FC = () => {
       allowanceFuel: user.allowances?.fuel || 0,
       allowanceInternet: user.allowances?.internet || 0,
       loansAdvances: user.loansAdvances || 0,
-      ownerName: '',
-      officeAddress: '',
-      officePhone: user.contact || '',
-      mobileNumber: user.contact || '',
-      whatsappNumber: '',
-      ntn: '',
-      strn: '',
-      defaultCaseCategory: 'Afghan Transit',
-      clientCharges: UNIVERSAL_CHARGE_TYPES.map(c => ({
-        id: c.id,
-        category: 'Afghan Transit',
-        description: c.name,
-        defaultAmount: c.defaultAmount,
-        enabled: true
-      })),
-      representativeName: '',
-      landline: '',
-      fleetSize: 1,
-      containerCompatibility: ['20ft', '40ft'],
-      preferredRoutes: 'Karachi - Lahore - Peshawar'
+      representativeName: (user as any).representativeName || '',
+      fleetSize: (user as any).fleetSize || 1,
+      containerCompatibility: (user as any).containerCompatibility || ['20ft', '40ft'],
+      preferredRoutes: (user as any).preferredRoutes || 'Karachi - Lahore - Peshawar',
+      ntn: (user as any).ntn || '',
+      officeAddress: (user as any).officeAddress || '',
+      whatsappNumber: (user as any).whatsappNumber || ''
     });
 
     setIsEditing(true);
@@ -243,21 +270,20 @@ const UserManagement: React.FC = () => {
       return;
     }
 
-    const assignedRole = selectedOnboardingRole === 'CLIENT' 
-      ? UserRole.CLIENT 
-      : selectedOnboardingRole === 'TRANSPORTER' 
+    const assignedRole = selectedOnboardingRole === 'TRANSPORTER' 
       ? UserRole.TRANSPORTER 
       : (formData.role || UserRole.DATA_ENTRY_OFFICER);
 
     if (isEditing && editingId) {
-      setUsers(prev => prev.map(u => u.id === editingId ? {
-        ...u,
-        name: formData.name,
-        email: formData.email,
-        contact: formData.contact || formData.mobileNumber || formData.officePhone,
+      const updatedUser: AppUser = {
+        id: Number(editingId) || Date.now(),
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        contact: formData.contact.trim(),
         role: assignedRole as UserRole,
-        userId: formData.generatedId,
-        password: formData.generatedPass,
+        status: 'ACTIVE',
+        userId: formData.generatedId.trim(),
+        password: formData.generatedPass.trim(),
         profilePicture: formData.profilePicture,
         fatherName: formData.fatherName,
         residentialAddress: formData.residentialAddress,
@@ -271,18 +297,34 @@ const UserManagement: React.FC = () => {
           mobile: formData.allowanceMobile,
           internet: formData.allowanceInternet
         },
-        loansAdvances: formData.loansAdvances
-      } : u));
+        loansAdvances: formData.loansAdvances,
+        ...((selectedOnboardingRole === 'TRANSPORTER') ? {
+          representativeName: formData.representativeName,
+          fleetSize: formData.fleetSize,
+          containerCompatibility: formData.containerCompatibility,
+          preferredRoutes: formData.preferredRoutes,
+          ntn: formData.ntn,
+          officeAddress: formData.officeAddress,
+          whatsappNumber: formData.whatsappNumber
+        } : {})
+      } as any;
+
+      setUsers(prev => prev.map(u => String(u.id) === String(editingId) ? updatedUser : u));
+      try {
+        await saveUserToFirestore(updatedUser);
+      } catch (err) {
+        console.warn("Notice: User saved locally", err);
+      }
     } else {
       const newUser: AppUser = {
         id: Date.now(),
-        name: formData.name,
-        email: formData.email,
-        contact: formData.contact || formData.mobileNumber || formData.officePhone,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        contact: formData.contact.trim(),
         role: assignedRole as UserRole,
         status: 'ACTIVE',
-        userId: formData.generatedId,
-        password: formData.generatedPass,
+        userId: formData.generatedId.trim(),
+        password: formData.generatedPass.trim(),
         profilePicture: formData.profilePicture,
         fatherName: formData.fatherName,
         residentialAddress: formData.residentialAddress,
@@ -296,67 +338,48 @@ const UserManagement: React.FC = () => {
           mobile: formData.allowanceMobile,
           internet: formData.allowanceInternet
         },
-        loansAdvances: formData.loansAdvances
-      };
-      setUsers(prev => [...prev, newUser]);
+        loansAdvances: formData.loansAdvances,
+        ...((selectedOnboardingRole === 'TRANSPORTER') ? {
+          representativeName: formData.representativeName,
+          fleetSize: formData.fleetSize,
+          containerCompatibility: formData.containerCompatibility,
+          preferredRoutes: formData.preferredRoutes,
+          ntn: formData.ntn,
+          officeAddress: formData.officeAddress,
+          whatsappNumber: formData.whatsappNumber
+        } : {})
+      } as any;
 
-      // If client, also synchronize to Firestore Clients collection
-      if (selectedOnboardingRole === 'CLIENT') {
-        try {
-          await saveClientToFirestore({
-            name: formData.name,
-            ownerName: formData.ownerName,
-            contact: formData.officePhone || formData.contact,
-            officeAddress: formData.officeAddress,
-            mobileNumber: formData.mobileNumber,
-            whatsappNumber: formData.whatsappNumber,
-            email: formData.email,
-            ntn: formData.ntn,
-            strn: formData.strn,
-            defaultCaseCategory: formData.defaultCaseCategory,
-            defaultCharges: formData.clientCharges.filter(c => c.enabled).map(c => ({
-              id: c.id,
-              category: formData.defaultCaseCategory,
-              description: c.description,
-              defaultAmount: c.defaultAmount,
-              taxable: true
-            }))
-          });
-        } catch (err) {
-          console.warn("Notice: Client stored locally", err);
-        }
+      setUsers(prev => [...prev, newUser]);
+      try {
+        await saveUserToFirestore(newUser);
+      } catch (err) {
+        console.warn("Notice: User saved locally", err);
       }
     }
 
     setShowModal(false);
   };
 
-  const confirmDeleteUser = () => {
-    if (deleteId) {
-      setUsers(users.filter(u => u.id !== deleteId));
-      setDeleteId(null);
-    }
-  };
+  const confirmDeleteTarget = async () => {
+    if (!deleteTarget) return;
 
-  const handleAddCustomCharge = () => {
-    if (!newCustomChargeName.trim()) return;
-    const newId = `custom_${Date.now()}`;
-    setFormData(prev => ({
-      ...prev,
-      clientCharges: [
-        ...prev.clientCharges,
-        {
-          id: newId,
-          category: prev.defaultCaseCategory,
-          description: newCustomChargeName.trim(),
-          defaultAmount: Number(newCustomChargeAmount) || 0,
-          enabled: true
-        }
-      ]
-    }));
-    setNewCustomChargeName('');
-    setNewCustomChargeAmount(5000);
-    setShowAddCustomChargeInput(false);
+    try {
+      if (deleteTarget.type === 'USER') {
+        setUsers(users.filter(u => String(u.id) !== String(deleteTarget.id)));
+        await deleteUserFromFirestore(deleteTarget.id);
+      } else if (deleteTarget.type === 'CLIENT') {
+        setClientsList(prev => prev.filter(c => (c.id || c.name) !== deleteTarget.id));
+        await deleteClientFromFirestore(String(deleteTarget.id));
+      } else if (deleteTarget.type === 'DESTINATION') {
+        setDestinationStaffList(prev => prev.filter(d => d.id !== deleteTarget.id));
+        await deleteDestinationStaffFromFirestore(String(deleteTarget.id));
+      }
+    } catch (err) {
+      console.warn("Notice deleting target:", err);
+    } finally {
+      setDeleteTarget(null);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, fieldName: 'profilePicture' | 'cnicFront' | 'cnicBack') => {
@@ -368,32 +391,67 @@ const UserManagement: React.FC = () => {
           setFormData(prev => ({ ...prev, [fieldName]: processed.dataUrl }));
         }
       } catch (err) {
-        console.warn("File processing note:", err);
+        console.warn("File processing notice:", err);
       } finally {
         e.target.value = '';
       }
     }
   };
 
-  const currentTabUsers = users.filter(u => {
-    if (activeTab === 'office') return u.role !== UserRole.CLIENT && u.role !== UserRole.TRANSPORTER;
-    if (activeTab === 'clients') return u.role === UserRole.CLIENT;
-    if (activeTab === 'transporters') return u.role === UserRole.TRANSPORTER;
-    return true;
-  });
+  // Filter staff users (office vs transporters)
+  const officeUsers = users.filter(u => u.role !== UserRole.CLIENT && u.role !== UserRole.TRANSPORTER);
+  const transporterUsers = users.filter(u => u.role === UserRole.TRANSPORTER);
 
-  const filteredUsers = currentTabUsers.filter(u => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase().trim();
+  // Search filtering
+  const q = searchQuery.toLowerCase().trim();
+
+  const filteredOfficeUsers = officeUsers.filter(u => {
+    if (!q) return true;
     return (
       (u.name && u.name.toLowerCase().includes(q)) ||
       (u.userId && u.userId.toLowerCase().includes(q)) ||
       (u.role && u.role.toLowerCase().includes(q)) ||
-      (u.contact && u.contact.toLowerCase().includes(q)) ||
-      (u.email && u.email.toLowerCase().includes(q)) ||
-      (u.fatherName && u.fatherName.toLowerCase().includes(q))
+      (u.contact && u.contact.toLowerCase().includes(q))
     );
   });
+
+  const filteredClients = clientsList.filter(c => {
+    if (!q) return true;
+    return (
+      (c.name && c.name.toLowerCase().includes(q)) ||
+      (c.ownerName && c.ownerName.toLowerCase().includes(q)) ||
+      (c.mobileNumber && c.mobileNumber.toLowerCase().includes(q)) ||
+      (c.contact && c.contact.toLowerCase().includes(q)) ||
+      (c.defaultCaseCategory && c.defaultCaseCategory.toLowerCase().includes(q)) ||
+      (c.ntn && c.ntn.toLowerCase().includes(q))
+    );
+  });
+
+  const filteredTransporters = transporterUsers.filter(u => {
+    if (!q) return true;
+    return (
+      (u.name && u.name.toLowerCase().includes(q)) ||
+      (u.userId && u.userId.toLowerCase().includes(q)) ||
+      (u.contact && u.contact.toLowerCase().includes(q))
+    );
+  });
+
+  const filteredDestinationStaff = destinationStaffList.filter(d => {
+    if (!q) return true;
+    return (
+      (d.name && d.name.toLowerCase().includes(q)) ||
+      (d.station && d.station.toLowerCase().includes(q)) ||
+      (d.role && d.role.toLowerCase().includes(q)) ||
+      (d.phone && d.phone.toLowerCase().includes(q))
+    );
+  });
+
+  const getActiveCount = () => {
+    if (activeTab === 'office') return filteredOfficeUsers.length;
+    if (activeTab === 'clients') return filteredClients.length;
+    if (activeTab === 'transporters') return filteredTransporters.length;
+    return filteredDestinationStaff.length;
+  };
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-fade-in pb-12 font-sans">
@@ -401,21 +459,24 @@ const UserManagement: React.FC = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2 drop-shadow-md">
-            <Users className="text-brand-400" /> User Management & Onboarding
+            <Users className="text-brand-400" /> User Management & Unified Directory
           </h2>
           <p className="text-xs text-gray-400 mt-1">
-            System RBAC & Profiles: Staff (HR, Payroll & Cashbook), Clients (Billing & Charges), and Transporters (Fleet).
+            Unified Management: Office Staff (HR & Dual Ledgers), Clients (Tariffs & Financial Statements), Transporters/Brokers & Destinations Staff.
           </p>
         </div>
         <button 
           onClick={handleOpenAdd}
           className="w-full sm:w-auto bg-brand-600 hover:bg-brand-500 text-white px-4 sm:px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold shadow-lg shadow-brand-600/30 transition-all hover:scale-102 active:scale-95"
         >
-          <UserPlus size={17} /> Create User ID
+          <UserPlus size={17} /> 
+          <span>
+            {activeTab === 'clients' ? 'Register New Client' : activeTab === 'destinations' ? 'Add Destination Staff' : activeTab === 'transporters' ? 'Add Transporter / Broker' : 'Create User / Staff ID'}
+          </span>
         </button>
       </div>
 
-      {/* Primary Tabs */}
+      {/* Primary 4 Tabs */}
       <div className="flex gap-2 sm:gap-3 border-b border-white/10 pb-1.5 overflow-x-auto custom-scrollbar-x no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}>
         <button
           onClick={() => setActiveTab('office')}
@@ -423,34 +484,49 @@ const UserManagement: React.FC = () => {
             activeTab === 'office' ? 'bg-brand-600/20 text-brand-300 border border-brand-500/40 shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
           }`}
         >
-          <Briefcase size={16} /> Office Staff ({users.filter(u => u.role !== UserRole.CLIENT && u.role !== UserRole.TRANSPORTER).length})
+          <Briefcase size={16} /> Office Staff ({officeUsers.length})
         </button>
+
         <button
           onClick={() => setActiveTab('clients')}
           className={`flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl transition-all whitespace-nowrap text-xs sm:text-sm font-semibold shrink-0 ${
             activeTab === 'clients' ? 'bg-brand-600/20 text-brand-300 border border-brand-500/40 shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
           }`}
         >
-          <Users size={16} /> Clients ({users.filter(u => u.role === UserRole.CLIENT).length})
+          <Building size={16} /> Clients ({clientsList.length})
         </button>
+
         <button
           onClick={() => setActiveTab('transporters')}
           className={`flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl transition-all whitespace-nowrap text-xs sm:text-sm font-semibold shrink-0 ${
             activeTab === 'transporters' ? 'bg-brand-600/20 text-brand-300 border border-brand-500/40 shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
           }`}
         >
-          <Truck size={16} /> Transporters ({users.filter(u => u.role === UserRole.TRANSPORTER).length})
+          <Truck size={16} /> Transporters / Brokers ({transporterUsers.length})
+        </button>
+
+        <button
+          onClick={() => setActiveTab('destinations')}
+          className={`flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl transition-all whitespace-nowrap text-xs sm:text-sm font-semibold shrink-0 ${
+            activeTab === 'destinations' ? 'bg-amber-600/20 text-amber-300 border border-amber-500/40 shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
+          }`}
+        >
+          <MapPin size={16} /> Destinations Staff ({destinationStaffList.length})
         </button>
       </div>
 
       {/* Search & Layout View Mode Switcher */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-white/5 p-2 sm:p-2.5 rounded-2xl border border-white/10">
-        {/* Search Input */}
         <div className="relative flex-1">
           <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
-            placeholder="Search by name, ID, role, or contact..."
+            placeholder={
+              activeTab === 'office' ? "Search office staff by name, ID, role, phone..." :
+              activeTab === 'clients' ? "Search clients by company, owner, category, NTN..." :
+              activeTab === 'transporters' ? "Search transporters / brokers by fleet name, ID..." :
+              "Search destination representatives by name, station, role..."
+            }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-8 py-2 bg-black/40 border border-white/10 rounded-xl text-xs sm:text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 transition"
@@ -465,10 +541,9 @@ const UserManagement: React.FC = () => {
           )}
         </div>
 
-        {/* View Mode Toggle & Total Count */}
         <div className="flex items-center justify-between sm:justify-end gap-2.5 shrink-0">
           <span className="text-xs text-gray-400 px-1 font-mono">
-            {filteredUsers.length} {filteredUsers.length === 1 ? 'user' : 'users'}
+            {getActiveCount()} {getActiveCount() === 1 ? 'record' : 'records'}
           </span>
 
           <div className="flex items-center bg-black/40 p-1 rounded-xl border border-white/10">
@@ -480,7 +555,6 @@ const UserManagement: React.FC = () => {
                   ? 'bg-brand-600 text-white shadow-md' 
                   : 'text-gray-400 hover:text-white hover:bg-white/5'
               }`}
-              title="Cards View (Best for Mobile)"
             >
               <LayoutGrid size={14} />
               <span>Cards</span>
@@ -493,7 +567,6 @@ const UserManagement: React.FC = () => {
                   ? 'bg-brand-600 text-white shadow-md' 
                   : 'text-gray-400 hover:text-white hover:bg-white/5'
               }`}
-              title="Table View"
             >
               <List size={14} />
               <span>Table</span>
@@ -502,333 +575,731 @@ const UserManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Content: Cards or Table */}
-      {filteredUsers.length === 0 ? (
-        <div className="glass-card rounded-2xl p-8 text-center border border-white/10 text-gray-400 space-y-2">
-          <Users size={32} className="mx-auto text-gray-500 mb-2" />
-          <p className="text-sm font-semibold text-white">No users found matching your search</p>
-          <p className="text-xs text-gray-500">Try adjusting your search criteria or switch tabs</p>
-        </div>
-      ) : viewMode === 'cards' ? (
-        /* Cards View (Responsive Mobile & Desktop Grid) */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {filteredUsers.map(user => (
-            <div 
-              key={user.id} 
-              className="glass-card rounded-2xl p-4 border border-white/10 hover:border-brand-500/30 transition-all shadow-lg space-y-3 relative overflow-hidden group"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-11 h-11 rounded-xl bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-sm font-bold text-white shadow-lg overflow-hidden shrink-0">
-                    {user.profilePicture ? (
-                      <img src={user.profilePicture} alt={user.name} className="w-full h-full object-cover" />
-                    ) : (
-                      user.name.charAt(0)
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <h4 className="font-bold text-white text-sm truncate">{user.name}</h4>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-[11px] font-mono font-semibold text-brand-400 bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/20">
-                        {user.userId || 'N/A'}
-                      </span>
-                      <span className="bg-white/10 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-gray-200 font-medium truncate">
-                        {user.role.replace(/_/g, ' ')}
-                      </span>
+      {/* ========================================================================= */}
+      {/* 1. OFFICE STAFF TAB */}
+      {/* ========================================================================= */}
+      {activeTab === 'office' && (
+        filteredOfficeUsers.length === 0 ? (
+          <div className="glass-card rounded-2xl p-8 text-center border border-white/10 text-gray-400 space-y-2">
+            <Users size={32} className="mx-auto text-gray-500 mb-2" />
+            <p className="text-sm font-semibold text-white">No office staff found</p>
+            <p className="text-xs text-gray-500">Click &quot;Create User / Staff ID&quot; to onboard an employee.</p>
+          </div>
+        ) : viewMode === 'cards' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {filteredOfficeUsers.map(user => (
+              <div 
+                key={user.id} 
+                className="glass-card rounded-2xl p-4 border border-white/10 hover:border-brand-500/30 transition-all shadow-lg space-y-3 relative overflow-hidden group"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-sm font-bold text-white shadow-lg overflow-hidden shrink-0">
+                      {user.profilePicture ? (
+                        <img src={user.profilePicture} alt={user.name} className="w-full h-full object-cover" />
+                      ) : (
+                        user.name.charAt(0)
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-white text-sm truncate">{user.name}</h4>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[11px] font-mono font-semibold text-brand-400 bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/20">
+                          {user.userId || `EMP-${user.id}`}
+                        </span>
+                        <span className="bg-white/10 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-gray-200 font-medium truncate">
+                          {user.role.replace(/_/g, ' ')}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <span className="text-green-400 text-[11px] font-bold flex items-center gap-1 shrink-0 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_currentColor]"></span> {user.status}
-                </span>
-              </div>
-
-              {user.fatherName && (
-                <div className="text-xs text-gray-400 flex items-center gap-1.5 px-0.5">
-                  <span className="text-gray-500 font-medium">S/O:</span>
-                  <span className="text-gray-200 font-medium">{user.fatherName}</span>
-                </div>
-              )}
-
-              {/* Contact information with clickable phone call */}
-              <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1.5 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400 flex items-center gap-1.5">
-                    <Phone size={13} className="text-brand-400 shrink-0" /> Contact:
+                  <span className="text-green-400 text-[11px] font-bold flex items-center gap-1 shrink-0 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_currentColor]"></span> {user.status || 'ACTIVE'}
                   </span>
-                  <a 
-                    href={`tel:${user.contact}`} 
-                    className="font-mono text-white hover:text-brand-300 font-semibold transition"
-                  >
-                    {user.contact || 'N/A'}
-                  </a>
                 </div>
-                {user.email && user.email !== 'n/a' && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400 flex items-center gap-1.5">
-                      <Mail size={13} className="text-brand-400 shrink-0" /> Email:
-                    </span>
-                    <span className="text-gray-300 truncate max-w-[180px] font-mono text-[11px]">
-                      {user.email}
-                    </span>
+
+                {user.fatherName && (
+                  <div className="text-xs text-gray-400 flex items-center gap-1.5 px-0.5">
+                    <span className="text-gray-500 font-medium">S/O:</span>
+                    <span className="text-gray-200 font-medium">{user.fatherName}</span>
                   </div>
                 )}
-              </div>
 
-              {/* Salary & Advance (for Office staff) */}
-              {activeTab === 'office' && (
-                <div className="flex items-center justify-between text-xs bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
-                  <span className="text-emerald-300 font-medium">Salary:</span>
-                  <div className="text-right">
-                    <span className="font-mono font-bold text-emerald-400">PKR {(user.baseSalary || 45000).toLocaleString()}</span>
-                    {user.loansAdvances ? (
-                      <p className="text-[10px] text-amber-400 font-mono">Adv: PKR {user.loansAdvances.toLocaleString()}</p>
-                    ) : null}
+                <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400 flex items-center gap-1.5">
+                      <Phone size={13} className="text-brand-400 shrink-0" /> Contact:
+                    </span>
+                    <a href={`tel:${user.contact}`} className="font-mono text-white hover:text-brand-300 font-semibold transition">
+                      {user.contact || 'N/A'}
+                    </a>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400 flex items-center gap-1.5">
+                      <CreditCard size={13} className="text-emerald-400 shrink-0" /> Base Salary:
+                    </span>
+                    <span className="font-mono text-emerald-300 font-bold">
+                      PKR {(user.baseSalary || 45000).toLocaleString()}
+                    </span>
                   </div>
                 </div>
-              )}
 
-              {/* Bottom Action Buttons */}
-              <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
-                <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                  {activeTab === 'office' && (
-                    <button
-                      onClick={() => setSelectedStaffUser(user)}
-                      className="w-full text-emerald-300 hover:text-emerald-200 px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 transition-all text-xs flex items-center justify-center gap-1.5 font-semibold"
-                      title="View HR Profile & Cashbook Ledger"
-                    >
-                      <CreditCard size={14} /> HR / Cashbook
-                    </button>
-                  )}
-                  {activeTab === 'clients' && (
-                    <button 
-                      onClick={() => { setSelectedClient(user); setDetailsTab('cases'); }}
-                      className="w-full text-brand-300 hover:text-brand-200 px-2.5 py-1.5 rounded-lg bg-brand-500/15 hover:bg-brand-500/25 border border-brand-500/30 transition-all text-xs flex items-center justify-center gap-1.5 font-semibold"
-                      title="View Client Details & Billing Setup"
-                    >
-                      <Eye size={14} /> Profile & Charges
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button 
-                    onClick={() => handleEditUser(user)}
-                    className="text-gray-300 hover:text-white p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-                    title="Edit User"
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+                  <button
+                    onClick={() => setSelectedStaffUser(user)}
+                    className="flex-1 text-emerald-300 hover:text-emerald-200 px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 transition-all text-xs flex items-center justify-center gap-1.5 font-semibold"
+                    title="View Salary & Daily Routine Ledgers"
                   >
-                    <Edit size={14} />
+                    <CreditCard size={14} /> Dual Ledgers
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button 
+                      onClick={() => handleEditUser(user)}
+                      className="text-gray-300 hover:text-white p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
+                      title="Edit Staff User ID & Role"
+                    >
+                      <Edit size={14} />
+                    </button>
+                    <button 
+                      onClick={() => setDeleteTarget({ type: 'USER', id: user.id, name: user.name })}
+                      className="text-gray-400 hover:text-red-400 p-2 rounded-xl bg-white/5 hover:bg-red-500/10 transition-colors"
+                      title="Delete Staff"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="glass-card rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+            <div className="overflow-x-auto custom-scrollbar custom-scrollbar-x" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}>
+              <table className="w-full text-left text-sm text-gray-300 min-w-[750px]">
+                <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/10">
+                  <tr>
+                    <th className="p-4">Staff Details</th>
+                    <th className="p-4">Role & Duties</th>
+                    <th className="p-4">Contact Info</th>
+                    <th className="p-4">Base Monthly Salary</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredOfficeUsers.map(user => (
+                    <tr key={user.id} className="hover:bg-white/5 transition-colors">
+                      <td className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-sm font-bold text-white shadow-lg overflow-hidden shrink-0">
+                          {user.profilePicture ? (
+                            <img src={user.profilePicture} alt={user.name} className="w-full h-full object-cover" />
+                          ) : (
+                            user.name.charAt(0)
+                          )}
+                        </div>
+                        <div>
+                          <span className="font-bold text-white block">{user.name}</span>
+                          <span className="text-xs font-mono text-brand-400">{user.userId || `EMP-${user.id}`}</span>
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <span className="bg-white/10 border border-white/10 rounded-md px-2.5 py-1 text-xs text-gray-200 font-medium inline-block">
+                          {user.role.replace(/_/g, ' ')}
+                        </span>
+                        {user.fatherName && (
+                          <p className="text-[11px] text-gray-400 mt-1">S/O: {user.fatherName}</p>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        <p className="text-white font-mono text-xs">{user.contact}</p>
+                        <p className="text-[11px] text-gray-400 truncate max-w-[180px]">{user.email}</p>
+                      </td>
+                      <td className="p-4">
+                        <span className="font-mono text-emerald-400 font-semibold text-xs">
+                          PKR {(user.baseSalary || 45000).toLocaleString()}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <span className="text-green-400 text-xs font-bold flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_currentColor]"></span> {user.status || 'ACTIVE'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => setSelectedStaffUser(user)}
+                            className="text-emerald-400 hover:text-emerald-300 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors text-xs flex items-center gap-1 font-semibold"
+                            title="View Salary & Daily Routine Ledgers"
+                          >
+                            <CreditCard size={14} /> Dual Ledgers
+                          </button>
+                          <button 
+                            onClick={() => handleEditUser(user)}
+                            className="text-gray-300 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                            title="Edit User ID & Role"
+                          >
+                            <Edit size={15} />
+                          </button>
+                          <button 
+                            onClick={() => setDeleteTarget({ type: 'USER', id: user.id, name: user.name })}
+                            className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
+                            title="Delete User"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. CLIENTS TAB */}
+      {/* ========================================================================= */}
+      {activeTab === 'clients' && (
+        filteredClients.length === 0 ? (
+          <div className="glass-card rounded-2xl p-8 text-center border border-white/10 text-gray-400 space-y-2">
+            <Building size={32} className="mx-auto text-gray-500 mb-2" />
+            <p className="text-sm font-semibold text-white">No registered clients found</p>
+            <p className="text-xs text-gray-500">Click &quot;Register New Client&quot; to onboard a client company with automatic tariffs.</p>
+          </div>
+        ) : viewMode === 'cards' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {filteredClients.map(client => (
+              <div 
+                key={client.id || client.name} 
+                className="glass-card rounded-2xl p-4 border border-white/10 hover:border-emerald-500/30 transition-all shadow-lg space-y-3 relative overflow-hidden group"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-sm font-bold text-emerald-400 shadow-lg shrink-0">
+                      <Building size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-white text-sm truncate">{client.name}</h4>
+                      <p className="text-xs text-gray-400 truncate">{client.ownerName || client.contact || 'Owner N/A'}</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-medium">
+                    {client.defaultCaseCategory || 'Bonded Carrier'}
+                  </span>
+                </div>
+
+                <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Phone:</span>
+                    <a href={`tel:${client.mobileNumber || client.phone}`} className="text-white font-mono font-medium hover:text-brand-300">
+                      {client.mobileNumber || client.phone || client.contact || 'N/A'}
+                    </a>
+                  </div>
+                  {client.whatsappNumber && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">WhatsApp:</span>
+                      <span className="text-emerald-300 font-mono text-[11px]">{client.whatsappNumber}</span>
+                    </div>
+                  )}
+                  {client.ntn && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">NTN / STRN:</span>
+                      <span className="text-gray-300 font-mono text-[11px]">{client.ntn}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px]">
+                    <span className="text-gray-400">Default Tariff Items:</span>
+                    <span className="text-amber-400 font-mono font-bold">
+                      {(client.defaultCharges || []).length} items
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+                  <button
+                    onClick={() => setLedgerClient(client)}
+                    className="flex-1 text-emerald-300 hover:text-emerald-200 px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 transition-all text-xs flex items-center justify-center gap-1.5 font-semibold"
+                    title="Check Financial Ledger Statement"
+                  >
+                    <FileText size={14} /> Check Ledger
+                  </button>
+                  <button
+                    onClick={() => {
+                      setClientToEdit(client);
+                      setShowClientModal(true);
+                    }}
+                    className="text-brand-300 hover:text-white px-2.5 py-1.5 rounded-xl bg-brand-500/15 hover:bg-brand-500/25 border border-brand-500/30 transition-all text-xs flex items-center gap-1 font-medium"
+                    title="Edit Profile & Default Tariff Setup"
+                  >
+                    <Edit size={14} /> Tariff
                   </button>
                   <button 
-                    onClick={() => setDeleteId(user.id)}
-                    className="text-gray-400 hover:text-red-400 p-2 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
-                    title="Delete User"
+                    onClick={() => setDeleteTarget({ type: 'CLIENT', id: client.id || client.name, name: client.name })}
+                    className="text-gray-400 hover:text-red-400 p-2 rounded-xl bg-white/5 hover:bg-red-500/10 transition-colors"
+                    title="Delete Client"
                   >
                     <Trash2 size={14} />
                   </button>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        /* Users Table View (with full horizontal scroll support) */
-        <div className="glass-card rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
-          {/* Mobile Swipe Cue */}
-          <div className="sm:hidden px-3.5 py-2 bg-brand-500/10 border-b border-brand-500/20 text-brand-300 text-xs flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-medium">
-              <ChevronLeft size={14} className="animate-pulse" />
-              <span>Swipe horizontally for full table</span>
-              <ChevronRight size={14} className="animate-pulse" />
-            </div>
-            <span className="text-[10px] text-gray-400 font-mono">
-              6 Columns
-            </span>
+            ))}
           </div>
-
-          <div 
-            className="overflow-x-auto custom-scrollbar custom-scrollbar-x"
-            style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}
-          >
-            <table className="w-full text-left text-sm text-gray-300 min-w-[750px]">
-              <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/10">
-                <tr>
-                  <th className="p-4">User Details</th>
-                  <th className="p-4">Role & Duties</th>
-                  <th className="p-4">Contact Info</th>
-                  {activeTab === 'office' && <th className="p-4">Monthly Salary</th>}
-                  <th className="p-4">Status</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {filteredUsers.map(user => (
-                  <tr key={user.id} className="hover:bg-white/5 transition-colors">
-                    <td className="p-4 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-sm font-bold text-white shadow-lg overflow-hidden shrink-0">
-                        {user.profilePicture ? (
-                          <img src={user.profilePicture} alt={user.name} className="w-full h-full object-cover" />
-                        ) : (
-                          user.name.charAt(0)
-                        )}
-                      </div>
-                      <div>
-                        <span className="font-bold text-white block">{user.name}</span>
-                        <span className="text-xs font-mono text-brand-400">{user.userId || 'N/A'}</span>
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <span className="bg-white/10 border border-white/10 rounded-md px-2.5 py-1 text-xs text-gray-200 font-medium inline-block">
-                        {user.role.replace(/_/g, ' ')}
-                      </span>
-                      {user.fatherName && (
-                        <p className="text-[11px] text-gray-400 mt-1">S/O: {user.fatherName}</p>
-                      )}
-                    </td>
-                    <td className="p-4">
-                      <p className="text-white font-mono text-xs">{user.contact}</p>
-                      <p className="text-[11px] text-gray-400 truncate max-w-[180px]">{user.email}</p>
-                    </td>
-                    {activeTab === 'office' && (
-                      <td className="p-4">
-                        <span className="font-mono text-emerald-400 font-semibold text-xs">
-                          PKR {(user.baseSalary || 45000).toLocaleString()}
-                        </span>
-                        {user.loansAdvances ? (
-                          <p className="text-[10px] text-amber-400">Advance: PKR {user.loansAdvances.toLocaleString()}</p>
-                        ) : null}
-                      </td>
-                    )}
-                    <td className="p-4">
-                      <span className="text-green-400 text-xs font-bold flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_currentColor]"></span> {user.status}
-                      </span>
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {activeTab === 'office' && (
-                          <button
-                            onClick={() => setSelectedStaffUser(user)}
-                            className="text-emerald-400 hover:text-emerald-300 p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors text-xs flex items-center gap-1 font-medium"
-                            title="View HR Profile & Cashbook Ledger"
-                          >
-                            <CreditCard size={14} /> HR / Cash
-                          </button>
-                        )}
-                        {activeTab === 'clients' && (
-                          <button 
-                            onClick={() => { setSelectedClient(user); setDetailsTab('cases'); }}
-                            className="text-brand-400 hover:text-white p-1.5 rounded-lg bg-brand-500/10 hover:bg-brand-500/20 transition-colors text-xs flex items-center gap-1 font-medium"
-                            title="View Client Details & Billing Setup"
-                          >
-                            <Eye size={14} /> Profile
-                          </button>
-                        )}
-                        <button 
-                          onClick={() => handleEditUser(user)}
-                          className="text-gray-300 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-                          title="Edit User"
-                        >
-                          <Edit size={15} />
-                        </button>
-                        <button 
-                          onClick={() => setDeleteId(user.id)}
-                          className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
-                          title="Delete User"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </td>
+        ) : (
+          <div className="glass-card rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+            <div className="overflow-x-auto custom-scrollbar custom-scrollbar-x" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}>
+              <table className="w-full text-left text-sm text-gray-300 min-w-[750px]">
+                <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/10">
+                  <tr>
+                    <th className="p-4">Client Company</th>
+                    <th className="p-4">Owner & Contact</th>
+                    <th className="p-4">Default Category</th>
+                    <th className="p-4">NTN / Tax ID</th>
+                    <th className="p-4">Default Tariff Heads</th>
+                    <th className="p-4 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredClients.map(client => (
+                    <tr key={client.id || client.name} className="hover:bg-white/5 transition-colors">
+                      <td className="p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold shrink-0">
+                            <Building size={18} />
+                          </div>
+                          <div>
+                            <span className="font-bold text-white block">{client.name}</span>
+                            <span className="text-[11px] text-gray-400">{client.officeAddress || 'Address N/A'}</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <p className="text-white font-medium text-xs">{client.ownerName || client.contact || 'N/A'}</p>
+                        <p className="text-[11px] text-gray-400 font-mono">{client.mobileNumber || client.phone || 'N/A'}</p>
+                      </td>
+                      <td className="p-4">
+                        <span className="bg-brand-500/10 border border-brand-500/20 text-brand-300 px-2.5 py-1 rounded-md text-xs font-medium">
+                          {client.defaultCaseCategory || 'Bonded Carrier'}
+                        </span>
+                      </td>
+                      <td className="p-4 font-mono text-xs text-gray-300">
+                        {client.ntn || 'N/A'}
+                      </td>
+                      <td className="p-4 font-mono text-xs text-amber-400 font-semibold">
+                        {(client.defaultCharges || []).length} billing heads
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => setLedgerClient(client)}
+                            className="text-emerald-400 hover:text-emerald-300 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors text-xs flex items-center gap-1 font-semibold"
+                            title="Check Financial Ledger Statement"
+                          >
+                            <FileText size={14} /> Ledger
+                          </button>
+                          <button
+                            onClick={() => {
+                              setClientToEdit(client);
+                              setShowClientModal(true);
+                            }}
+                            className="text-brand-300 hover:text-white px-2 py-1 rounded-lg bg-brand-500/10 hover:bg-brand-500/20 transition-colors text-xs flex items-center gap-1 font-medium"
+                            title="Edit Profile & Tariff"
+                          >
+                            <Edit size={14} /> Edit
+                          </button>
+                          <button 
+                            onClick={() => setDeleteTarget({ type: 'CLIENT', id: client.id || client.name, name: client.name })}
+                            className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
+                            title="Delete Client"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )
       )}
 
-      {/* ========================================================= */}
-      {/* 1. PRIMARY ROLE SELECTION PROMPT MODAL (SRS Section 1) */}
-      {/* ========================================================= */}
-      {showRoleSelectorModal && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="glass-card p-6 sm:p-8 rounded-3xl w-full max-w-2xl border border-white/15 shadow-2xl space-y-6">
-            <div className="flex justify-between items-center border-b border-white/10 pb-4">
-              <div>
-                <span className="text-[11px] font-mono uppercase tracking-widest text-brand-400 font-bold">Onboarding Flow</span>
-                <h3 className="text-xl sm:text-2xl font-bold text-white mt-0.5">Select User / Entity Type</h3>
+      {/* ========================================================================= */}
+      {/* 3. TRANSPORTERS / BROKERS TAB (Renamed as requested) */}
+      {/* ========================================================================= */}
+      {activeTab === 'transporters' && (
+        filteredTransporters.length === 0 ? (
+          <div className="glass-card rounded-2xl p-8 text-center border border-white/10 text-gray-400 space-y-2">
+            <Truck size={32} className="mx-auto text-gray-500 mb-2" />
+            <p className="text-sm font-semibold text-white">No transporters / brokers found</p>
+            <p className="text-xs text-gray-500">Click &quot;Add Transporter / Broker&quot; to onboard transport fleet partners.</p>
+          </div>
+        ) : viewMode === 'cards' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {filteredTransporters.map(trans => (
+              <div 
+                key={trans.id} 
+                className="glass-card rounded-2xl p-4 border border-white/10 hover:border-amber-500/30 transition-all shadow-lg space-y-3 relative overflow-hidden group"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-sm font-bold text-amber-400 shadow-lg shrink-0">
+                      <Truck size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-white text-sm truncate">{trans.name}</h4>
+                      <p className="text-xs text-gray-400 font-mono">{trans.userId || 'N/A'} • Transporter/Broker</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-amber-500/10 border border-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-medium">
+                    Fleet Partner
+                  </span>
+                </div>
+
+                <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Contact:</span>
+                    <a href={`tel:${trans.contact}`} className="text-white font-mono font-medium hover:text-amber-300">
+                      {trans.contact || 'N/A'}
+                    </a>
+                  </div>
+                  {(trans as any).preferredRoutes && (
+                    <div className="flex items-start justify-between gap-2 pt-1 border-t border-white/5">
+                      <span className="text-gray-400 shrink-0">Routes:</span>
+                      <span className="text-gray-300 text-right text-[11px] truncate max-w-[200px]">
+                        {(trans as any).preferredRoutes}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+                  <span className="text-[11px] text-gray-400">
+                    Portal ID: <strong className="text-amber-300 font-mono">{trans.userId || 'TRP-N/A'}</strong>
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button 
+                      onClick={() => handleEditUser(trans)}
+                      className="text-gray-300 hover:text-white p-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
+                      title="Edit Transporter / Broker"
+                    >
+                      <Edit size={14} />
+                    </button>
+                    <button 
+                      onClick={() => setDeleteTarget({ type: 'USER', id: trans.id, name: trans.name })}
+                      className="text-gray-400 hover:text-red-400 p-1.5 rounded-xl bg-white/5 hover:bg-red-500/10 transition-colors"
+                      title="Delete Transporter / Broker"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
               </div>
-              <button onClick={() => setShowRoleSelectorModal(false)} className="text-gray-400 hover:text-white p-1.5 rounded-full bg-white/5">
-                <X size={20} />
+            ))}
+          </div>
+        ) : (
+          <div className="glass-card rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+            <div className="overflow-x-auto custom-scrollbar custom-scrollbar-x" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}>
+              <table className="w-full text-left text-sm text-gray-300 min-w-[750px]">
+                <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/10">
+                  <tr>
+                    <th className="p-4">Transporter / Broker Name</th>
+                    <th className="p-4">Contact Phone</th>
+                    <th className="p-4">Portal ID</th>
+                    <th className="p-4">Preferred Transit Routes</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredTransporters.map(trans => (
+                    <tr key={trans.id} className="hover:bg-white/5 transition-colors">
+                      <td className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold shrink-0">
+                          <Truck size={18} />
+                        </div>
+                        <div>
+                          <span className="font-bold text-white block">{trans.name}</span>
+                          <span className="text-[11px] text-gray-400">Transporter / Broker Entity</span>
+                        </div>
+                      </td>
+                      <td className="p-4 font-mono text-xs text-white">
+                        {trans.contact}
+                      </td>
+                      <td className="p-4 font-mono text-xs text-amber-400 font-semibold">
+                        {trans.userId || 'TRP-N/A'}
+                      </td>
+                      <td className="p-4 text-xs text-gray-300">
+                        {(trans as any).preferredRoutes || 'Standard Transit Routes'}
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button 
+                            onClick={() => handleEditUser(trans)}
+                            className="text-gray-300 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                            title="Edit Transporter / Broker"
+                          >
+                            <Edit size={15} />
+                          </button>
+                          <button 
+                            onClick={() => setDeleteTarget({ type: 'USER', id: trans.id, name: trans.name })}
+                            className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
+                            title="Delete Transporter / Broker"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. DESTINATIONS STAFF TAB (New Tab as requested) */}
+      {/* ========================================================================= */}
+      {activeTab === 'destinations' && (
+        filteredDestinationStaff.length === 0 ? (
+          <div className="glass-card rounded-2xl p-8 text-center border border-white/10 text-gray-400 space-y-2">
+            <MapPin size={32} className="mx-auto text-amber-500 mb-2" />
+            <p className="text-sm font-semibold text-white">No destination staff representatives registered</p>
+            <p className="text-xs text-gray-500">
+              Stationed representatives handle loading, unloading, seals inspection and customs clearance at ports (Karachi, Port Qasim) and borders (Torkham, Chaman).
+            </p>
+            <button
+              onClick={() => {
+                setDestinationStaffToEdit(null);
+                setShowDestinationModal(true);
+              }}
+              className="mt-3 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition"
+            >
+              <Plus size={14} /> Add First Destination Representative
+            </button>
+          </div>
+        ) : viewMode === 'cards' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {filteredDestinationStaff.map(staff => (
+              <div 
+                key={staff.id} 
+                className="glass-card rounded-2xl p-4 border border-white/10 hover:border-amber-500/30 transition-all shadow-lg space-y-3 relative overflow-hidden group"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-sm font-bold text-amber-400 shadow-lg shrink-0">
+                      <MapPin size={20} />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-white text-sm truncate">{staff.name}</h4>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-medium">
+                          {staff.role}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                    staff.status === 'ACTIVE' 
+                      ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
+                      : 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
+                  }`}>
+                    {staff.status === 'ACTIVE' ? 'Active Duty' : 'On Leave'}
+                  </span>
+                </div>
+
+                <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Station:</span>
+                    <span className="text-white font-semibold flex items-center gap-1">
+                      <MapPinned size={12} className="text-amber-400" /> {staff.station}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Phone:</span>
+                    <a href={`tel:${staff.phone}`} className="text-white font-mono font-medium hover:text-amber-300">
+                      {staff.phone}
+                    </a>
+                  </div>
+                  {staff.cnic && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">CNIC:</span>
+                      <span className="text-gray-300 font-mono text-[11px]">{staff.cnic}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px]">
+                    <span className="text-gray-400">Compensation:</span>
+                    <span className="text-emerald-400 font-mono font-bold">
+                      PKR {(staff.baseRate || 0).toLocaleString()} / {staff.paymentType === 'PER_CASE_COMMISSION' ? 'case' : staff.paymentType === 'DAILY_RATE' ? 'day' : 'month'}
+                    </span>
+                  </div>
+                </div>
+
+                {staff.notes && (
+                  <p className="text-[11px] text-gray-400 line-clamp-1 italic px-1">
+                    &quot;{staff.notes}&quot;
+                  </p>
+                )}
+
+                <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-white/5">
+                  <button 
+                    onClick={() => {
+                      setDestinationStaffToEdit(staff);
+                      setShowDestinationModal(true);
+                    }}
+                    className="text-gray-300 hover:text-white p-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
+                    title="Edit Destination Representative"
+                  >
+                    <Edit size={14} />
+                  </button>
+                  <button 
+                    onClick={() => setDeleteTarget({ type: 'DESTINATION', id: staff.id, name: staff.name })}
+                    className="text-gray-400 hover:text-red-400 p-1.5 rounded-xl bg-white/5 hover:bg-red-500/10 transition-colors"
+                    title="Delete Staff"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="glass-card rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
+            <div className="overflow-x-auto custom-scrollbar custom-scrollbar-x" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}>
+              <table className="w-full text-left text-sm text-gray-300 min-w-[750px]">
+                <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/10">
+                  <tr>
+                    <th className="p-4">Representative Name</th>
+                    <th className="p-4">Station Location</th>
+                    <th className="p-4">Operational Role</th>
+                    <th className="p-4">Primary Contact</th>
+                    <th className="p-4">Compensation Terms</th>
+                    <th className="p-4">Duty Status</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredDestinationStaff.map(staff => (
+                    <tr key={staff.id} className="hover:bg-white/5 transition-colors">
+                      <td className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold shrink-0">
+                          <MapPin size={18} />
+                        </div>
+                        <div>
+                          <span className="font-bold text-white block">{staff.name}</span>
+                          <span className="text-[11px] text-gray-400">{staff.cnic || 'CNIC not recorded'}</span>
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <span className="bg-white/5 border border-white/10 rounded-md px-2.5 py-1 text-xs text-white font-medium inline-flex items-center gap-1.5">
+                          <MapPinned size={12} className="text-amber-400" /> {staff.station}
+                        </span>
+                      </td>
+                      <td className="p-4 text-xs font-medium text-gray-200">
+                        {staff.role}
+                      </td>
+                      <td className="p-4 font-mono text-xs text-white">
+                        {staff.phone}
+                      </td>
+                      <td className="p-4 font-mono text-xs text-emerald-400 font-semibold">
+                        PKR {(staff.baseRate || 0).toLocaleString()} ({staff.paymentType === 'PER_CASE_COMMISSION' ? 'per case' : staff.paymentType === 'DAILY_RATE' ? 'daily' : 'monthly'})
+                      </td>
+                      <td className="p-4">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                          staff.status === 'ACTIVE' 
+                            ? 'text-green-400 bg-green-500/10 border border-green-500/20' 
+                            : 'text-gray-400 bg-gray-500/10 border border-gray-500/20'
+                        }`}>
+                          {staff.status === 'ACTIVE' ? 'Active Duty' : 'On Leave'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button 
+                            onClick={() => {
+                              setDestinationStaffToEdit(staff);
+                              setShowDestinationModal(true);
+                            }}
+                            className="text-gray-300 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                            title="Edit Profile"
+                          >
+                            <Edit size={15} />
+                          </button>
+                          <button 
+                            onClick={() => setDeleteTarget({ type: 'DESTINATION', id: staff.id, name: staff.name })}
+                            className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
+                            title="Delete Staff"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* ========================================================================= */}
+      {/* ONBOARDING ROLE SELECTOR MODAL */}
+      {/* ========================================================================= */}
+      {showRoleSelectorModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="glass-card p-6 sm:p-8 rounded-3xl w-full max-w-xl border border-white/15 shadow-2xl space-y-5 bg-slate-900">
+            <div className="flex justify-between items-center border-b border-white/10 pb-3">
+              <div>
+                <span className="text-[10px] font-mono uppercase tracking-widest text-brand-400 font-bold">Directory Setup</span>
+                <h3 className="text-lg sm:text-xl font-bold text-white mt-0.5">Select User Category to Add</h3>
+              </div>
+              <button onClick={() => setShowRoleSelectorModal(false)} className="text-gray-400 hover:text-white p-1 rounded-full bg-white/5">
+                <X size={18} />
               </button>
             </div>
 
-            <p className="text-xs sm:text-sm text-gray-300">
-              Please specify the category of user you are creating. The system will immediately direct you to the dedicated configuration form:
-            </p>
-
-            {/* 3 Large Action Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-              {/* Card 1: Staff Member */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
               <button
                 type="button"
                 onClick={() => handleSelectRoleType('STAFF')}
-                className="group p-5 rounded-2xl bg-white/5 border border-white/10 hover:border-brand-500/50 hover:bg-brand-500/10 transition-all text-left flex flex-col justify-between hover:scale-102 shadow-lg"
+                className="group p-4 rounded-2xl bg-white/5 border border-white/10 hover:border-brand-500/50 hover:bg-brand-500/10 transition-all text-left flex flex-col justify-between hover:scale-102 shadow-lg"
               >
-                <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-xl bg-brand-500/20 text-brand-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Briefcase size={24} />
+                <div className="space-y-2">
+                  <div className="w-10 h-10 rounded-xl bg-brand-500/20 text-brand-400 flex items-center justify-center">
+                    <Briefcase size={20} />
                   </div>
-                  <h4 className="text-base font-bold text-white">Staff Member</h4>
-                  <p className="text-xs text-gray-400 leading-relaxed">
-                    Finance, Case, Vehicle, Port, Documentation, Riders, Sweepers & Peons.
+                  <h4 className="text-sm font-bold text-white">Office Staff Member</h4>
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Executives, Managers, Accountants, Clerks, Drivers & Office Boys (with Dual Ledgers).
                   </p>
                 </div>
-                <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-xs text-brand-300 font-semibold">
-                  <span>HR & Salary Setup</span>
-                  <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between text-xs text-brand-300 font-semibold">
+                  <span>Create Staff Profile</span>
+                  <ChevronRight size={14} />
                 </div>
               </button>
 
-              {/* Card 2: Client */}
-              <button
-                type="button"
-                onClick={() => handleSelectRoleType('CLIENT')}
-                className="group p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/50 hover:bg-emerald-500/15 transition-all text-left flex flex-col justify-between hover:scale-102 shadow-lg"
-              >
-                <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Building size={24} />
-                  </div>
-                  <h4 className="text-base font-bold text-white">Client</h4>
-                  <p className="text-xs text-gray-400 leading-relaxed">
-                    Direct Client Profile & Universal Case Billing Setup (DO, TP, Loading, etc.).
-                  </p>
-                </div>
-                <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-xs text-emerald-300 font-semibold">
-                  <span>Billing & Tariffs</span>
-                  <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
-                </div>
-              </button>
-
-              {/* Card 3: Transporter */}
               <button
                 type="button"
                 onClick={() => handleSelectRoleType('TRANSPORTER')}
-                className="group p-5 rounded-2xl bg-amber-500/5 border border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-500/15 transition-all text-left flex flex-col justify-between hover:scale-102 shadow-lg"
+                className="group p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20 hover:border-amber-500/50 hover:bg-amber-500/15 transition-all text-left flex flex-col justify-between hover:scale-102 shadow-lg"
               >
-                <div className="space-y-3">
-                  <div className="w-12 h-12 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Truck size={24} />
+                <div className="space-y-2">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                    <Truck size={20} />
                   </div>
-                  <h4 className="text-base font-bold text-white">Transporter</h4>
-                  <p className="text-xs text-gray-400 leading-relaxed">
-                    Fleet Management, NTN, Owner CNIC & Vehicle registration.
+                  <h4 className="text-sm font-bold text-white">Transporter / Broker</h4>
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Fleet Partners, Goods Transport Agencies, Truck Owners & Transit Brokers.
                   </p>
                 </div>
-                <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-xs text-amber-300 font-semibold">
-                  <span>Fleet & NOC</span>
-                  <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                <div className="mt-3 pt-2 border-t border-white/10 flex items-center justify-between text-xs text-amber-300 font-semibold">
+                  <span>Add Transporter / Broker</span>
+                  <ChevronRight size={14} />
                 </div>
               </button>
             </div>
@@ -836,21 +1307,19 @@ const UserManagement: React.FC = () => {
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* 2. DEDICATED ONBOARDING MODAL FOR SELECTED ENTITY */}
-      {/* ========================================================= */}
+      {/* ========================================================================= */}
+      {/* STAFF & TRANSPORTER FORM MODAL */}
+      {/* ========================================================================= */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="glass-card p-6 rounded-3xl w-full max-w-2xl border border-white/15 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
-            
-            {/* Modal Header */}
-            <div className="flex justify-between items-center mb-6 pb-3 border-b border-white/10 sticky top-0 bg-slate-900/90 backdrop-blur-md z-10">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="glass-card p-6 rounded-3xl w-full max-w-2xl border border-white/15 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar bg-slate-900">
+            <div className="flex justify-between items-center mb-5 pb-3 border-b border-white/10 sticky top-0 bg-slate-900/90 backdrop-blur-md z-10">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-widest text-brand-400 font-bold">
-                  {selectedOnboardingRole === 'CLIENT' ? 'Client Onboarding & Billing Form' : selectedOnboardingRole === 'TRANSPORTER' ? 'Transporter Fleet Profile' : 'Staff Member HR Profile'}
+                  {selectedOnboardingRole === 'TRANSPORTER' ? 'Transporter / Broker Setup' : 'Staff Employee Profile'}
                 </span>
-                <h3 className="text-xl font-bold text-white">
-                  {isEditing ? 'Edit Profile' : 'Register New'} {selectedOnboardingRole === 'CLIENT' ? 'Client Company' : selectedOnboardingRole === 'TRANSPORTER' ? 'Transporter Entity' : 'Staff Employee'}
+                <h3 className="text-lg font-bold text-white">
+                  {isEditing ? 'Edit Profile' : 'Register New'} {selectedOnboardingRole === 'TRANSPORTER' ? 'Transporter / Broker' : 'Office Staff'}
                 </h3>
               </div>
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white p-1 rounded-full bg-white/5">
@@ -858,238 +1327,36 @@ const UserManagement: React.FC = () => {
               </button>
             </div>
 
-            {/* ------------------------------------------------------------- */}
-            {/* A: CLIENT ONBOARDING & BILLING SETUP (SRS Section 1) */}
-            {/* ------------------------------------------------------------- */}
-            {selectedOnboardingRole === 'CLIENT' && (
-              <div className="space-y-6">
-                <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 rounded-xl text-xs text-emerald-300 flex items-start gap-2">
-                  <CheckCircle size={16} className="shrink-0 mt-0.5" />
-                  <span>
-                    Client onboarding pre-configures universal charges and tariffs. These default charges will automatically populate whenever a new case is registered for this client, with full override flexibility per case.
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Form Body */}
+            {selectedOnboardingRole === 'STAFF' ? (
+              <div className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">Company Name *</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Al-Madina Cargo LLC"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">Company Owner Name</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Haji Muhammad Tariq"
-                      value={formData.ownerName}
-                      onChange={(e) => setFormData({ ...formData, ownerName: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-xs text-gray-400 block mb-1">Office Address</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Suite 402, Trade Center, I.I. Chundrigar Road, Karachi"
-                      value={formData.officeAddress}
-                      onChange={(e) => setFormData({ ...formData, officeAddress: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">Office Phone / Landline</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. 021-32456789"
-                      value={formData.officePhone}
-                      onChange={(e) => setFormData({ ...formData, officePhone: e.target.value, contact: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">Mobile Number</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. 0300-1234567"
-                      value={formData.mobileNumber}
-                      onChange={(e) => setFormData({ ...formData, mobileNumber: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">WhatsApp Number</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. 0300-1234567"
-                      value={formData.whatsappNumber}
-                      onChange={(e) => setFormData({ ...formData, whatsappNumber: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">NTN / STRN</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. 1234567-8"
-                      value={formData.ntn}
-                      onChange={(e) => setFormData({ ...formData, ntn: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-xs text-gray-400 block mb-1">Default Case Category</label>
-                    <select 
-                      value={formData.defaultCaseCategory}
-                      onChange={(e) => setFormData({ ...formData, defaultCaseCategory: e.target.value })}
-                      className="w-full bg-slate-900 border border-white/15 rounded-xl px-3 py-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    >
-                      {CASE_CATEGORIES.map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Universal Charges & Billing Structure Configuration */}
-                <div className="space-y-3 pt-4 border-t border-white/10">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
-                        <DollarSign size={16} className="text-emerald-400" />
-                        Universal Case Charges & Tariffs
-                      </h4>
-                      <p className="text-[11px] text-gray-400">
-                        Default amounts for this client. You can adjust values or disable items.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowAddCustomChargeInput(!showAddCustomChargeInput)}
-                      className="text-xs bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1 self-start sm:self-auto font-medium"
-                    >
-                      <Plus size={13} /> Add Custom Charge Head
-                    </button>
-                  </div>
-
-                  {/* Add Custom Charge Inline Form */}
-                  {showAddCustomChargeInput && (
-                    <div className="p-3 bg-white/5 border border-brand-500/30 rounded-xl flex flex-col sm:flex-row gap-2 items-center">
-                      <input 
-                        type="text"
-                        placeholder="Charge Name (e.g. Weighbridge Fee)"
-                        value={newCustomChargeName}
-                        onChange={(e) => setNewCustomChargeName(e.target.value)}
-                        className="flex-1 bg-black/40 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
-                      />
-                      <input 
-                        type="number"
-                        placeholder="Amount PKR"
-                        value={newCustomChargeAmount}
-                        onChange={(e) => setNewCustomChargeAmount(Number(e.target.value))}
-                        className="w-28 bg-black/40 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddCustomCharge}
-                        className="bg-brand-600 hover:bg-brand-500 text-white px-3 py-1.5 rounded-lg text-xs font-semibold"
-                      >
-                        Add
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Charges List Grid */}
-                  <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                    {formData.clientCharges.map((ch, idx) => (
-                      <div key={ch.id} className="p-2.5 bg-white/5 border border-white/5 rounded-xl flex items-center justify-between gap-3 text-xs">
-                        <label className="flex items-center gap-2 cursor-pointer flex-1">
-                          <input 
-                            type="checkbox"
-                            checked={ch.enabled}
-                            onChange={(e) => {
-                              const updated = [...formData.clientCharges];
-                              updated[idx].enabled = e.target.checked;
-                              setFormData({ ...formData, clientCharges: updated });
-                            }}
-                            className="rounded border-white/20 text-brand-600"
-                          />
-                          <span className={ch.enabled ? "text-white font-medium" : "text-gray-500 line-through"}>
-                            {ch.description}
-                          </span>
-                        </label>
-                        <div className="flex items-center gap-1 font-mono">
-                          <span className="text-[10px] text-gray-400">PKR</span>
-                          <input 
-                            type="number"
-                            disabled={!ch.enabled}
-                            value={ch.defaultAmount}
-                            onChange={(e) => {
-                              const updated = [...formData.clientCharges];
-                              updated[idx].defaultAmount = Number(e.target.value) || 0;
-                              setFormData({ ...formData, clientCharges: updated });
-                            }}
-                            className="w-24 bg-black/40 border border-white/10 rounded px-2 py-1 text-right text-emerald-400 text-xs font-semibold outline-none disabled:opacity-30"
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Generated Credentials */}
-                <div className="bg-white/5 p-4 rounded-xl border border-white/10 space-y-2">
-                  <h4 className="text-xs font-bold text-gray-300 flex items-center gap-1.5"><Key size={14} /> Client Portal Login Credentials</h4>
-                  <div className="grid grid-cols-2 gap-3 font-mono text-xs">
-                    <div>
-                      <span className="text-gray-500 block text-[10px]">Client ID:</span>
-                      <span className="text-brand-400 font-bold">{formData.generatedId}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 block text-[10px]">Generated Password:</span>
-                      <span className="text-white font-bold">{formData.generatedPass}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ------------------------------------------------------------- */}
-            {/* B: STAFF MEMBER HR PROFILE (SRS Section 3) */}
-            {/* ------------------------------------------------------------- */}
-            {selectedOnboardingRole === 'STAFF' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">Full Name *</label>
+                    <label className="text-gray-300 font-medium block mb-1">Full Name *</label>
                     <input 
                       type="text" 
                       placeholder="e.g. Kamran Akmal"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">Father&apos;s Name</label>
+                    <label className="text-gray-300 font-medium block mb-1">Father&apos;s Name</label>
                     <input 
                       type="text" 
                       placeholder="e.g. Muhammad Akmal"
                       value={formData.fatherName}
                       onChange={(e) => setFormData({ ...formData, fatherName: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">Role / Designation *</label>
+                    <label className="text-gray-300 font-medium block mb-1">Role / Designation *</label>
                     <select 
                       value={formData.role}
                       onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
-                      className="w-full bg-slate-900 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-slate-900 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     >
                       <option value="">Select Staff Role...</option>
                       {Object.keys(UserRole).filter(r => r !== 'CLIENT' && r !== 'TRANSPORTER').map(r => (
@@ -1098,54 +1365,34 @@ const UserManagement: React.FC = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">Primary Phone *</label>
+                    <label className="text-gray-300 font-medium block mb-1">Primary Phone *</label>
                     <input 
                       type="text" 
                       placeholder="e.g. 0300-1234567"
                       value={formData.contact}
                       onChange={(e) => setFormData({ ...formData, contact: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="text-xs text-gray-400 block mb-1">Residential Address</label>
+                    <label className="text-gray-300 font-medium block mb-1">Residential Address</label>
                     <input 
                       type="text" 
                       placeholder="e.g. House #12, Street 4, Sector 11-B, North Karachi"
                       value={formData.residentialAddress}
                       onChange={(e) => setFormData({ ...formData, residentialAddress: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">Secondary Phone (Emergency)</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. 0321-9876543"
-                      value={formData.secondaryPhone}
-                      onChange={(e) => setFormData({ ...formData, secondaryPhone: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">Secondary Contact Relation / Name</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Brother (Tariq)"
-                      value={formData.secondaryPhoneRelation}
-                      onChange={(e) => setFormData({ ...formData, secondaryPhoneRelation: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                 </div>
 
-                {/* Salary & Payroll Settings */}
-                <div className="bg-white/5 p-4 rounded-xl border border-white/10 space-y-3">
+                {/* Salary & Allowances */}
+                <div className="bg-white/5 p-3.5 rounded-xl border border-white/10 space-y-2.5">
                   <h4 className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
                     <DollarSign size={14} className="text-emerald-400" />
-                    Automated Payroll & Allowances Setup
+                    Salary, Allowances & Advance Terms
                   </h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                     <div>
                       <label className="text-gray-400 block mb-1">Base Salary (PKR)</label>
                       <input 
@@ -1185,323 +1432,236 @@ const UserManagement: React.FC = () => {
                   </div>
                 </div>
 
-                {/* CNIC Upload Front & Back */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                  <div className="border border-dashed border-white/20 p-3 rounded-xl text-center relative group hover:bg-white/5">
-                    <input 
-                      type="file" 
-                      accept="image/*"
-                      onChange={(e) => handleFileUpload(e, 'cnicFront')}
-                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                    />
-                    <Upload size={18} className="mx-auto text-brand-400 mb-1" />
-                    <p className="text-xs font-semibold text-white">CNIC Front Upload</p>
-                    <p className="text-[10px] text-gray-400">
-                      {formData.cnicFront ? '✓ Front Image Captured' : 'Click to upload picture'}
-                    </p>
+                {/* User ID & Password Assignment */}
+                <div className="bg-white/5 p-3.5 rounded-xl border border-white/10 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                      <Key size={14} className="text-brand-400" />
+                      Login Credentials (Optional / Assign as needed)
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newPass = Math.random().toString(36).slice(-8).toUpperCase();
+                        setFormData(prev => ({ ...prev, generatedPass: newPass }));
+                      }}
+                      className="text-[11px] text-brand-400 hover:text-brand-300 font-mono underline"
+                    >
+                      Generate New Password
+                    </button>
                   </div>
-                  <div className="border border-dashed border-white/20 p-3 rounded-xl text-center relative group hover:bg-white/5">
-                    <input 
-                      type="file" 
-                      accept="image/*"
-                      onChange={(e) => handleFileUpload(e, 'cnicBack')}
-                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                    />
-                    <Upload size={18} className="mx-auto text-brand-400 mb-1" />
-                    <p className="text-xs font-semibold text-white">CNIC Back Upload</p>
-                    <p className="text-[10px] text-gray-400">
-                      {formData.cnicBack ? '✓ Back Image Captured' : 'Click to upload picture'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Staff Credentials */}
-                <div className="bg-white/5 p-3 rounded-xl border border-white/10 flex justify-between items-center text-xs font-mono">
-                  <div>
-                    <span className="text-gray-500 block text-[10px]">User ID:</span>
-                    <span className="text-brand-400 font-bold">{formData.generatedId}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 block text-[10px]">System Password:</span>
-                    <span className="text-white font-bold">{formData.generatedPass}</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono">
+                    <div>
+                      <label className="text-gray-400 text-[10px] block mb-0.5">User ID:</label>
+                      <input 
+                        type="text"
+                        value={formData.generatedId}
+                        onChange={(e) => setFormData({ ...formData, generatedId: e.target.value })}
+                        className="w-full bg-black/40 border border-white/15 rounded-lg p-1.5 text-brand-400 text-xs font-bold outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-400 text-[10px] block mb-0.5">Password:</label>
+                      <input 
+                        type="text"
+                        value={formData.generatedPass}
+                        onChange={(e) => setFormData({ ...formData, generatedPass: e.target.value })}
+                        className="w-full bg-black/40 border border-white/15 rounded-lg p-1.5 text-white text-xs font-bold outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-            )}
-
-            {/* ------------------------------------------------------------- */}
-            {/* C: TRANSPORTER ONBOARDING (SRS Section 4) */}
-            {/* ------------------------------------------------------------- */}
-            {selectedOnboardingRole === 'TRANSPORTER' && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            ) : (
+              /* Transporter / Broker Form */
+              <div className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">Company / Fleet Name *</label>
+                    <label className="text-gray-300 font-medium block mb-1">Transporter / Broker Entity Name *</label>
                     <input 
                       type="text" 
-                      placeholder="e.g. Swift Goods Transport"
+                      placeholder="e.g. Swift Goods Transport & Brokerage"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">NTN Number</label>
+                    <label className="text-gray-300 font-medium block mb-1">Representative Name</label>
                     <input 
                       type="text" 
-                      placeholder="e.g. 7654321-0"
-                      value={formData.ntn}
-                      onChange={(e) => setFormData({ ...formData, ntn: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      placeholder="e.g. Haji Nisar Ahmed"
+                      value={formData.representativeName}
+                      onChange={(e) => setFormData({ ...formData, representativeName: e.target.value })}
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">Mobile Contact *</label>
+                    <label className="text-gray-300 font-medium block mb-1">Primary Mobile Phone *</label>
                     <input 
                       type="text" 
                       placeholder="e.g. 0300-9988776"
                       value={formData.contact}
                       onChange={(e) => setFormData({ ...formData, contact: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">WhatsApp Number</label>
+                    <label className="text-gray-300 font-medium block mb-1">WhatsApp Contact</label>
                     <input 
                       type="text" 
                       placeholder="e.g. 0300-9988776"
                       value={formData.whatsappNumber}
                       onChange={(e) => setFormData({ ...formData, whatsappNumber: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="text-xs text-gray-400 block mb-1">Fleet Depot / Office Address</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Maripur Road, Truck Stand, Karachi"
-                      value={formData.officeAddress}
-                      onChange={(e) => setFormData({ ...formData, officeAddress: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-xs text-gray-400 block mb-1">Preferred Routes & Stations</label>
+                    <label className="text-gray-300 font-medium block mb-1">Transit Routes & Operations</label>
                     <input 
                       type="text" 
                       placeholder="e.g. Karachi Port to Lahore NLC, Karachi to Peshawar / Torkham"
                       value={formData.preferredRoutes}
                       onChange={(e) => setFormData({ ...formData, preferredRoutes: e.target.value })}
-                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
                   </div>
                 </div>
 
-                {/* Transporter Credentials */}
-                <div className="bg-white/5 p-3 rounded-xl border border-white/10 flex justify-between items-center text-xs font-mono">
-                  <div>
-                    <span className="text-gray-500 block text-[10px]">Transporter ID:</span>
-                    <span className="text-amber-400 font-bold">{formData.generatedId}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 block text-[10px]">Portal Password:</span>
-                    <span className="text-white font-bold">{formData.generatedPass}</span>
+                {/* Transporter User ID & Password */}
+                <div className="bg-white/5 p-3.5 rounded-xl border border-white/10 space-y-2">
+                  <h4 className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                    <Key size={14} className="text-amber-400" />
+                    Transporter / Broker Portal Login
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 font-mono">
+                    <div>
+                      <span className="text-gray-400 text-[10px] block mb-0.5">User ID:</span>
+                      <input 
+                        type="text"
+                        value={formData.generatedId}
+                        onChange={(e) => setFormData({ ...formData, generatedId: e.target.value })}
+                        className="w-full bg-black/40 border border-white/15 rounded-lg p-1.5 text-amber-400 text-xs font-bold outline-none"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-gray-400 text-[10px] block mb-0.5">Password:</span>
+                      <input 
+                        type="text"
+                        value={formData.generatedPass}
+                        onChange={(e) => setFormData({ ...formData, generatedPass: e.target.value })}
+                        className="w-full bg-black/40 border border-white/15 rounded-lg p-1.5 text-white text-xs font-bold outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Modal Actions */}
-            <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-white/10">
+            {/* Actions */}
+            <div className="flex justify-end gap-3 mt-6 pt-3 border-t border-white/10">
               <button 
                 onClick={() => setShowModal(false)}
-                className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+                className="px-4 py-2 text-xs text-gray-400 hover:text-white transition-colors"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleSaveUser}
-                className="px-6 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl shadow-lg shadow-brand-600/30 flex items-center gap-2 text-sm font-semibold transition-all hover:scale-102"
+                className="px-5 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl shadow-lg shadow-brand-600/30 flex items-center gap-2 text-xs font-semibold transition-all hover:scale-102"
               >
-                <Save size={16} /> {isEditing ? 'Update Profile' : 'Save & Onboard'}
+                <Save size={15} /> {isEditing ? 'Update Profile' : 'Save & Onboard'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* 3. STAFF HR PROFILE & CASHBOOK LEDGER MODAL (SRS Section 3) */}
-      {/* ========================================================= */}
+      {/* ========================================================================= */}
+      {/* 5. DUAL LEDGER MODAL FOR STAFF (Salary & Daily Routine Petty Cash) */}
+      {/* ========================================================================= */}
       {selectedStaffUser && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="glass-card p-6 sm:p-8 rounded-3xl w-full max-w-2xl border border-white/15 shadow-2xl space-y-6 max-h-[85vh] overflow-y-auto custom-scrollbar">
-            <div className="flex justify-between items-start border-b border-white/10 pb-4">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-xl font-bold text-white shadow-lg">
-                  {selectedStaffUser.name.charAt(0)}
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-white">{selectedStaffUser.name}</h3>
-                  <p className="text-xs text-brand-400 font-mono">{selectedStaffUser.userId} • {selectedStaffUser.role.replace(/_/g, ' ')}</p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedStaffUser(null)} className="text-gray-400 hover:text-white p-1 rounded-full bg-white/5">
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* HR Details Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-              <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <span className="text-gray-400 block">Father&apos;s Name:</span>
-                <span className="text-white font-semibold text-sm">{selectedStaffUser.fatherName || 'Not recorded'}</span>
-              </div>
-              <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <span className="text-gray-400 block">Phone & Emergency:</span>
-                <span className="text-white font-mono font-semibold">{selectedStaffUser.contact}</span>
-                {selectedStaffUser.secondaryPhone && (
-                  <p className="text-gray-400 text-[11px] mt-0.5">Alt: {selectedStaffUser.secondaryPhone} ({selectedStaffUser.secondaryPhoneRelation || 'Relation'})</p>
-                )}
-              </div>
-              <div className="sm:col-span-2 p-3 bg-white/5 rounded-xl border border-white/5">
-                <span className="text-gray-400 block">Residential Address:</span>
-                <span className="text-white">{selectedStaffUser.residentialAddress || 'Office Quarters / Karachi'}</span>
-              </div>
-            </div>
-
-            {/* Salary, Advance & Cashbook Breakdown */}
-            <div className="bg-slate-900/80 p-4 rounded-2xl border border-white/10 space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                <DollarSign size={15} /> Monthly Payroll & Cashbook Ledger
-              </h4>
-              <div className="grid grid-cols-3 gap-3 text-xs">
-                <div className="p-2.5 bg-black/40 rounded-xl">
-                  <span className="text-gray-400 text-[10px] block">Base Monthly Salary:</span>
-                  <span className="text-emerald-400 font-mono font-bold text-sm">
-                    PKR {(selectedStaffUser.baseSalary || 50000).toLocaleString()}
-                  </span>
-                </div>
-                <div className="p-2.5 bg-black/40 rounded-xl">
-                  <span className="text-gray-400 text-[10px] block">Active Advances:</span>
-                  <span className="text-amber-400 font-mono font-bold text-sm">
-                    PKR {(selectedStaffUser.loansAdvances || 0).toLocaleString()}
-                  </span>
-                </div>
-                <div className="p-2.5 bg-black/40 rounded-xl">
-                  <span className="text-gray-400 text-[10px] block">Net Payable:</span>
-                  <span className="text-white font-mono font-bold text-sm">
-                    PKR {((selectedStaffUser.baseSalary || 50000) - (selectedStaffUser.loansAdvances || 0)).toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button 
-                onClick={() => setSelectedStaffUser(null)}
-                className="px-5 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-semibold"
-              >
-                Close View
-              </button>
-            </div>
-          </div>
-        </div>
+        <StaffLedgerModal
+          isOpen={Boolean(selectedStaffUser)}
+          onClose={() => setSelectedStaffUser(null)}
+          staffUser={selectedStaffUser}
+          ledgerEntries={staffLedgerEntries}
+        />
       )}
 
-      {/* ========================================================= */}
-      {/* 4. CLIENT DETAILS MODAL */}
-      {/* ========================================================= */}
-      {selectedClient && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="glass-card w-full max-w-4xl h-[85vh] flex flex-col rounded-3xl shadow-2xl border border-white/15 overflow-hidden">
-            <div className="bg-slate-900/90 p-6 border-b border-white/10 flex justify-between items-start">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-brand-600 flex items-center justify-center text-2xl font-bold text-white shadow-lg">
-                  {selectedClient.name.charAt(0)}
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold text-white">{selectedClient.name}</h2>
-                  <p className="text-xs text-gray-400 mt-1 font-mono">
-                    ID: {selectedClient.userId} • Phone: {selectedClient.contact} • {selectedClient.email}
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => setSelectedClient(null)} className="text-gray-400 hover:text-white bg-white/5 p-2 rounded-full">
-                <X size={22} />
-              </button>
-            </div>
+      {/* ========================================================================= */}
+      {/* 6. CLIENT REGISTRATION & DEFAULT TARIFF SETUP MODAL */}
+      {/* ========================================================================= */}
+      <ClientRegistrationModal
+        isOpen={showClientModal}
+        onClose={() => {
+          setShowClientModal(false);
+          setClientToEdit(null);
+        }}
+        initialClient={clientToEdit || undefined}
+        onSave={(savedClient) => {
+          setClientsList(prev => [
+            savedClient,
+            ...prev.filter(c => (c.id || c.name) !== (savedClient.id || savedClient.name))
+          ]);
+          setShowClientModal(false);
+          setClientToEdit(null);
+        }}
+      />
 
-            <div className="flex border-b border-white/10 bg-white/5">
-              <button 
-                onClick={() => setDetailsTab('cases')}
-                className={`flex-1 py-3 text-sm font-semibold flex items-center justify-center gap-2 border-b-2 transition-colors ${detailsTab === 'cases' ? 'border-brand-500 text-white bg-white/5' : 'border-transparent text-gray-400 hover:text-white'}`}
-              >
-                <Briefcase size={16} /> Case History
-              </button>
-              <button 
-                onClick={() => setDetailsTab('payments')}
-                className={`flex-1 py-3 text-sm font-semibold flex items-center justify-center gap-2 border-b-2 transition-colors ${detailsTab === 'payments' ? 'border-brand-500 text-white bg-white/5' : 'border-transparent text-gray-400 hover:text-white'}`}
-              >
-                <CreditCard size={16} /> Payment History
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-slate-950/50">
-              {detailsTab === 'cases' && (
-                <div className="space-y-3">
-                  {MOCK_CLIENT_CASES.filter(c => c.clientName === selectedClient.name || c.clientName.includes(selectedClient.name.split(' ')[0])).map(c => (
-                    <div key={c.id} className="p-4 bg-white/5 border border-white/10 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono font-bold text-brand-400 text-sm">{c.caseNo}</span>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full border border-green-500/30 text-green-400 bg-green-500/10">
-                            {c.status}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-300">{c.category} • {c.pol} → {c.pod}</p>
-                      </div>
-                      <span className="text-xs text-gray-500 font-mono">{c.createdAt}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {detailsTab === 'payments' && (
-                <div className="space-y-3">
-                  {MOCK_CLIENT_PAYMENTS.map(p => (
-                    <div key={p.id} className="p-4 bg-white/5 border border-white/10 rounded-2xl flex justify-between items-center">
-                      <div>
-                        <h4 className="text-white text-sm font-semibold">{p.description}</h4>
-                        <p className="text-xs text-gray-400">{p.reference} • {p.date}</p>
-                      </div>
-                      <div className="text-right font-mono">
-                        <span className="text-emerald-400 font-bold text-sm">+ PKR {p.amount.toLocaleString()}</span>
-                        <span className="block text-[10px] text-gray-500 uppercase">{p.status}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* ========================================================================= */}
+      {/* 7. CLIENT FINANCIAL STATEMENT LEDGER MODAL */}
+      {/* ========================================================================= */}
+      {ledgerClient && (
+        <ClientLedgerModal
+          isOpen={Boolean(ledgerClient)}
+          onClose={() => setLedgerClient(null)}
+          client={ledgerClient}
+          cases={casesList}
+          finances={financesList}
+        />
       )}
 
-      {/* Delete Confirmation Modal */}
-      {deleteId && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-sm border border-white/10 text-center space-y-4">
-            <div className="bg-red-500/20 w-14 h-14 rounded-full flex items-center justify-center mx-auto border border-red-500/30">
-              <AlertTriangle size={28} className="text-red-500" />
+      {/* ========================================================================= */}
+      {/* 8. DESTINATION STAFF MODAL */}
+      {/* ========================================================================= */}
+      <DestinationStaffModal
+        isOpen={showDestinationModal}
+        onClose={() => {
+          setShowDestinationModal(false);
+          setDestinationStaffToEdit(null);
+        }}
+        staffToEdit={destinationStaffToEdit}
+        onSaved={() => {
+          setShowDestinationModal(false);
+          setDestinationStaffToEdit(null);
+        }}
+      />
+
+      {/* ========================================================================= */}
+      {/* 9. DELETE CONFIRMATION MODAL */}
+      {/* ========================================================================= */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-150">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-sm border border-white/10 text-center space-y-4 bg-slate-900 shadow-2xl">
+            <div className="bg-red-500/20 w-12 h-12 rounded-full flex items-center justify-center mx-auto border border-red-500/30">
+              <AlertTriangle size={24} className="text-red-500" />
             </div>
-            <h3 className="text-lg font-bold text-white">Confirm Removal</h3>
-            <p className="text-xs text-gray-400">Are you sure you want to remove this user? This action cannot be undone.</p>
-            <div className="flex gap-3 justify-center pt-2">
-              <button onClick={() => setDeleteId(null)} className="px-4 py-2 bg-white/10 text-white rounded-xl text-xs">
+            <h3 className="text-base font-bold text-white">Confirm Removal</h3>
+            <p className="text-xs text-gray-400">
+              Are you sure you want to remove <strong className="text-white">&quot;{deleteTarget.name}&quot;</strong>? This action cannot be undone.
+            </p>
+            <div className="flex gap-2.5 justify-center pt-2">
+              <button 
+                onClick={() => setDeleteTarget(null)} 
+                className="px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-xl text-xs font-semibold"
+              >
                 Cancel
               </button>
-              <button onClick={confirmDeleteUser} className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-semibold">
+              <button 
+                onClick={confirmDeleteTarget} 
+                className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-red-600/30"
+              >
                 Yes, Delete
               </button>
             </div>

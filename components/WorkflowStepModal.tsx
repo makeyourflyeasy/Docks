@@ -132,11 +132,11 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     doReceiptName: existingDetail.doReceiptName || '',
     doReferenceNo: existingDetail.doReferenceNo || existingDetail.referenceNo || '',
     doIssueDate: existingDetail.doIssueDate || existingDetail.date || '',
-    doDueChargesArrangedBy: existingDetail.doDueChargesArrangedBy || 'Client',
-    doDueChargesAmount: existingDetail.doDueChargesAmount || 0,
+    doDueChargesArrangedBy: existingDetail.doDueChargesArrangedBy || (targetCase.serviceArrangements?.['delivery_order']?.arrangedBy || 'Client'),
+    doDueChargesAmount: existingDetail.doDueChargesAmount || (targetCase.serviceArrangements?.['delivery_order']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['delivery_order'].amount || 0) : 0),
     doDueChargesCommission: existingDetail.doDueChargesCommission || 0,
-    doDepositArrangedBy: existingDetail.doDepositArrangedBy || 'Client',
-    doDepositAmount: existingDetail.doDepositAmount || 0,
+    doDepositArrangedBy: existingDetail.doDepositArrangedBy || (targetCase.serviceArrangements?.['security_deposit']?.arrangedBy || 'Client'),
+    doDepositAmount: existingDetail.doDepositAmount || (targetCase.serviceArrangements?.['security_deposit']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['security_deposit'].amount || 0) : 0),
     doDepositCommission: existingDetail.doDepositCommission || 0,
 
     // Step 2
@@ -145,23 +145,23 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     tpGdNumber: existingDetail.tpGdNumber || existingDetail.referenceNo || targetCase.extractedData?.tpNumber || targetCase.extractedData?.gdNumber || '',
     tpFilingDate: existingDetail.tpFilingDate || existingDetail.date || '',
     tpItemDescription: existingDetail.tpItemDescription || targetCase.extractedData?.itemDescription || '',
-    tpFilingEntity: existingDetail.tpFilingEntity || 'Client',
+    tpFilingEntity: existingDetail.tpFilingEntity || (targetCase.serviceArrangements?.['customs_clearance']?.arrangedBy || 'Client'),
 
     // Step 3
     exciseReceiptUrl: existingDetail.exciseReceiptUrl || '',
     exciseReceiptName: existingDetail.exciseReceiptName || '',
-    exciseAmount: existingDetail.exciseAmount || 0,
+    exciseAmount: existingDetail.exciseAmount || (targetCase.serviceArrangements?.['customs_clearance']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['customs_clearance'].amount || 0) : 0),
     exciseReferenceNo: existingDetail.exciseReferenceNo || existingDetail.referenceNo || '',
     exciseRegion: existingDetail.exciseRegion || 'Sindh',
     excisePaymentDate: existingDetail.excisePaymentDate || existingDetail.date || '',
-    exciseHandledBy: existingDetail.exciseHandledBy || 'Client',
+    exciseHandledBy: existingDetail.exciseHandledBy || (targetCase.serviceArrangements?.['customs_clearance']?.arrangedBy || 'Client'),
 
     // Step 4
     wharfageReceiptUrl: existingDetail.wharfageReceiptUrl || '',
     wharfageReceiptName: existingDetail.wharfageReceiptName || '',
     wharfageReceiptDate: existingDetail.wharfageReceiptDate || existingDetail.date || '',
-    wharfageAmount: existingDetail.wharfageAmount || 0,
-    wharfagePaymentEntity: existingDetail.wharfagePaymentEntity || 'Client',
+    wharfageAmount: existingDetail.wharfageAmount || (targetCase.serviceArrangements?.['terminal_handling']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['terminal_handling'].amount || 0) : 0),
+    wharfagePaymentEntity: existingDetail.wharfagePaymentEntity || (targetCase.serviceArrangements?.['terminal_handling']?.arrangedBy || 'Client'),
     wharfageCommission: existingDetail.wharfageCommission || 0,
 
     // Step 5
@@ -181,8 +181,8 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     driverCnicBackName: existingDetail.driverCnicBackName || '',
     driverLicenseUrl: existingDetail.driverLicenseUrl || '',
     driverLicenseName: existingDetail.driverLicenseName || '',
-    vehicleRentAmount: existingDetail.vehicleRentAmount || 0,
-    vehicleRentArrangedBy: existingDetail.vehicleRentArrangedBy || 'Client',
+    vehicleRentAmount: existingDetail.vehicleRentAmount || (targetCase.serviceArrangements?.['transportation']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['transportation'].amount || 0) : 0),
+    vehicleRentArrangedBy: existingDetail.vehicleRentArrangedBy || (targetCase.serviceArrangements?.['transportation']?.arrangedBy || 'Client'),
     vehicleRentCommission: existingDetail.vehicleRentCommission || 0,
 
     // Step 6
@@ -191,11 +191,11 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     portGatePassUrl: existingDetail.portGatePassUrl || '',
     portGatePassName: existingDetail.portGatePassName || '',
     trackerStatus: existingDetail.trackerStatus || 'Not Installed',
-    trackerArrangedBy: existingDetail.trackerArrangedBy || 'Client',
-    trackerAmount: existingDetail.trackerAmount || 0,
+    trackerArrangedBy: existingDetail.trackerArrangedBy || (targetCase.serviceArrangements?.['tracker_security']?.arrangedBy || 'Client'),
+    trackerAmount: existingDetail.trackerAmount || (targetCase.serviceArrangements?.['tracker_security']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['tracker_security'].amount || 0) : 0),
     trackerCommission: existingDetail.trackerCommission || 0,
-    loadingChargesArrangedBy: existingDetail.loadingChargesArrangedBy || 'Client',
-    loadingChargesAmount: existingDetail.loadingChargesAmount || 0,
+    loadingChargesArrangedBy: existingDetail.loadingChargesArrangedBy || (targetCase.serviceArrangements?.['loading_unloading']?.arrangedBy || 'Client'),
+    loadingChargesAmount: existingDetail.loadingChargesAmount || (targetCase.serviceArrangements?.['loading_unloading']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['loading_unloading'].amount || 0) : 0),
     loadingChargesCommission: existingDetail.loadingChargesCommission || 0,
     weightSlipUrl: existingDetail.weightSlipUrl || '',
     weightSlipName: existingDetail.weightSlipName || '',
@@ -523,6 +523,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
         receiptUrl: item.receiptUrl,
         receiptName: item.receiptName,
         taxable: false,
+        arrangedBy: 'DPL',
         ...({ syncKey: item.key } as any)
       });
 
@@ -534,6 +535,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
           category: 'Service Commission',
           amount: item.commission,
           taxable: true,
+          arrangedBy: 'DPL',
           ...({ syncKey: `${item.key}_comm` } as any)
         });
       }

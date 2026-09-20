@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   ChevronRight, ChevronDown, CheckCircle2, Upload, FileText, CheckCircle, Loader2, Save, 
   MapPin, Anchor, Box, User, AlertCircle, Calendar, Camera, X, Truck, Briefcase, 
   Search, Eye, Share2, AlertTriangle, ArrowLeft, Download, Trash2, Edit, Plus, ListFilter, Filter,
-  Sparkles, Scan, FileCheck, Globe, Receipt, Scale, Ship, UploadCloud, Play, Clock, ArrowRight, RefreshCw, Layers
+  Sparkles, Scan, FileCheck, Globe, Receipt, Scale, Ship, UploadCloud, Play, Clock, ArrowRight, RefreshCw, Layers,
+  Building, Phone, Mail, DollarSign, Tag, Package
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
@@ -11,7 +12,7 @@ import { autoFillCaseData, downloadFile, docDataCache, detectShippingDocumentTyp
 import { downloadCasePdf, sharePdfFile, downloadCustomsDeliveryOrderPdf } from '../services/pdfExportService';
 import { PdfViewerModal } from './PdfViewerModal';
 import { detectMimeType, compressAndPrepareFile } from '../services/fileUtils';
-import { Container, ExtractedData, CaseStatus, Case, MockDocument, UserRole, CaseCharge, Client, CaseStepDetail, WORKFLOW_8_STEPS, Vehicle } from '../types';
+import { Container, ExtractedData, CaseStatus, Case, MockDocument, UserRole, CaseCharge, Client, ClientDefaultCharge, CaseStepDetail, WORKFLOW_8_STEPS, Vehicle } from '../types';
 import { WorkflowStepModal } from './WorkflowStepModal';
 import { CompletedCaseDossier } from './CompletedCaseDossier';
 import { 
@@ -29,6 +30,16 @@ import {
   getCategoryWorkflow, 
   getWorkflowStepIndex 
 } from '../services/workflowConfig';
+import {
+  getCategoryArrangements,
+  getArrangementCharges,
+  resolveCaseCharges,
+  saveChargeAsClientDefault,
+  CATEGORY_SERVICE_ARRANGEMENTS,
+  ServiceArrangementItem,
+  normalizeCategoryKey
+} from '../services/categoryTariffService';
+import { ClientRegistrationModal } from './ClientRegistrationModal';
 
 export interface UploadedDocRecord {
   id: string;
@@ -61,51 +72,243 @@ import {
   DEFAULT_CLIENTS
 } from '../services/dbService';
 
-const INITIAL_PORTS = [
+export interface PortItem {
+  name: string;
+  code: string;
+  type?: 'Sea Port' | 'Dry Port' | 'Border Terminal' | string;
+}
+
+const INITIAL_PORTS: PortItem[] = [
   // Sea Ports / Terminal
-  { name: "Karachi Port Trust", code: "KPT" },
-  { name: "Port Qasim", code: "QICT" },
-  { name: "South Asia Pakistan Terminals", code: "SAPT" },
-  { name: "Karachi International Container Terminal", code: "KICT" },
-  { name: "Karachi Gateway Terminal", code: "KGTL" },
-  { name: "Karachi Gateway Terminal Multipurpose", code: "KGTML" },
-  { name: "Al-Hamd International Container Terminal", code: "AICT" },
-  { name: "Gwadar Port", code: "Gwadar Port" },
-  { name: "NLC Sultanabad", code: "NLC Sultanabad" },
+  { name: "Karachi Port Trust", code: "KPT", type: "Sea Port" },
+  { name: "Port Qasim", code: "QICT", type: "Sea Port" },
+  { name: "South Asia Pakistan Terminals", code: "SAPT", type: "Sea Port" },
+  { name: "Karachi International Container Terminal", code: "KICT", type: "Sea Port" },
+  { name: "Karachi Gateway Terminal", code: "KGTL", type: "Sea Port" },
+  { name: "Karachi Gateway Terminal Multipurpose", code: "KGTML", type: "Sea Port" },
+  { name: "Al-Hamd International Container Terminal", code: "AICT", type: "Sea Port" },
+  { name: "Gwadar Port", code: "GWADAR", type: "Sea Port" },
+  { name: "NLC Sultanabad", code: "NLC Sultanabad", type: "Sea Port" },
 
   // Dry Ports
-  { name: "Faisalabad Dry Port", code: "Faisalabad Dry Port" },
-  { name: "Lahore Dry Port", code: "Lahore Dry Port" },
-  { name: "Lahore NLC Dry Port", code: "Lahore NLC Dry Port" },
-  { name: "Lahore MICT Dry Port", code: "Lahore MICT Dry Port" },
-  { name: "Lahore DPW Dry Port", code: "Lahore DPW Dry Port" },
-  { name: "Rawalpindi Dry Port", code: "Rawalpindi Dry Port" },
-  { name: "Multan Dry Port", code: "Multan Dry Port" },
-  { name: "Sialkot Dry Port", code: "SICT" },
-  { name: "Islamabad Dry Port", code: "Islamabad Dry Port" },
-  { name: "Azakhel Dry Port", code: "Azakhel Dry Port" },
-  { name: "Havelian Dry Port", code: "Havelian Dry Port" },
-  { name: "Peshawar Dry Port", code: "Peshawar Dry Port" },
-  { name: "Jamrud Dry Port", code: "Jamrud Dry Port" },
-  { name: "Quetta Railway Dry Port", code: "Quetta Railway Dry Port" },
-  { name: "Quetta NLC Dry Port", code: "Quetta NLC Dry Port" },
-  { name: "Gilgit Dry Port", code: "Gilgit Dry Port" },
-  { name: "Sost Dry Port", code: "Sost Dry Port" },
-  { name: "Muzaffarabad Dry Port", code: "Muzaffarabad Dry Port" },
-  { name: "Karachi Dry Port", code: "Karachi Dry Port" },
-  { name: "Karachi NLC Dry Port", code: "Karachi NLC Dry Port" },
+  { name: "Faisalabad Dry Port", code: "Faisalabad Dry Port", type: "Dry Port" },
+  { name: "Lahore Dry Port", code: "Lahore Dry Port", type: "Dry Port" },
+  { name: "Lahore NLC Dry Port", code: "Lahore NLC", type: "Dry Port" },
+  { name: "Lahore MICT Dry Port", code: "Lahore MICT", type: "Dry Port" },
+  { name: "Lahore DPW Dry Port", code: "Lahore DPW", type: "Dry Port" },
+  { name: "Rawalpindi Dry Port", code: "Rawalpindi Dry Port", type: "Dry Port" },
+  { name: "Multan Dry Port", code: "Multan Dry Port", type: "Dry Port" },
+  { name: "Sialkot Dry Port", code: "SICT", type: "Dry Port" },
+  { name: "Islamabad Dry Port", code: "Islamabad Dry Port", type: "Dry Port" },
+  { name: "Azakhel Dry Port", code: "Azakhel Dry Port", type: "Dry Port" },
+  { name: "Havelian Dry Port", code: "Havelian Dry Port", type: "Dry Port" },
+  { name: "Peshawar Dry Port", code: "Peshawar Dry Port", type: "Dry Port" },
+  { name: "Jamrud Dry Port", code: "Jamrud Dry Port", type: "Dry Port" },
+  { name: "Quetta Railway Dry Port", code: "Quetta Railway", type: "Dry Port" },
+  { name: "Quetta NLC Dry Port", code: "Quetta NLC", type: "Dry Port" },
+  { name: "Gilgit Dry Port", code: "Gilgit Dry Port", type: "Dry Port" },
+  { name: "Sost Dry Port", code: "Sost Dry Port", type: "Dry Port" },
+  { name: "Muzaffarabad Dry Port", code: "Muzaffarabad", type: "Dry Port" },
+  { name: "Karachi Dry Port", code: "Karachi Dry Port", type: "Dry Port" },
+  { name: "Karachi NLC Dry Port", code: "Karachi NLC", type: "Dry Port" },
 
   // Border Terminals & Crossings
-  { name: "Wagha Border Terminal", code: "Wagha Border Terminal" },
-  { name: "Torkham Border Terminal", code: "Torkham Border Terminal" },
-  { name: "Chaman Border Terminal", code: "Chaman Border Terminal" },
-  { name: "Taftan Border Terminal", code: "Taftan Border Terminal" },
-  { name: "Angur Ada", code: "Angur Ada" },
-  { name: "Badini", code: "Badini" },
-  { name: "Ghulam Khan", code: "Ghulam Khan" },
-  { name: "Kharlachi", code: "Kharlachi" },
-  { name: "Mand", code: "Mand" }
+  { name: "Wagha Border Terminal", code: "Wagha Border", type: "Border Terminal" },
+  { name: "Torkham Border Terminal", code: "Torkham Border", type: "Border Terminal" },
+  { name: "Chaman Border Terminal", code: "Chaman Border", type: "Border Terminal" },
+  { name: "Taftan Border Terminal", code: "Taftan Border", type: "Border Terminal" },
+  { name: "Angur Ada", code: "Angur Ada", type: "Border Terminal" },
+  { name: "Badini", code: "Badini", type: "Border Terminal" },
+  { name: "Ghulam Khan", code: "Ghulam Khan", type: "Border Terminal" },
+  { name: "Kharlachi", code: "Kharlachi", type: "Border Terminal" },
+  { name: "Mand", code: "Mand", type: "Border Terminal" }
 ];
+
+/**
+ * Autocomplete Searchable Port Input Component
+ * Allows user to type letters to filter ports, see suggestions below,
+ * clear, toggle list, and click "+ Add Port" without leaving the page.
+ */
+interface PortSearchableInputProps {
+  label: string;
+  icon: React.ReactNode;
+  value: string;
+  onChange: (val: string) => void;
+  ports: PortItem[];
+  targetField: 'pol' | 'pod';
+  placeholder?: string;
+  onOpenAddPort: (targetField: 'pol' | 'pod', initialName?: string) => void;
+}
+
+const PortSearchableInput: React.FC<PortSearchableInputProps> = ({
+  label,
+  icon,
+  value,
+  onChange,
+  ports,
+  targetField,
+  placeholder = 'Type port name or code...',
+  onOpenAddPort
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState(value || '');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Sync internal search term when parent value changes
+  useEffect(() => {
+    setSearchTerm(value || '');
+  }, [value]);
+
+  // Handle click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter ports based on search term
+  const filteredPorts = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return ports;
+    return ports.filter(p => 
+      p.name.toLowerCase().includes(term) || 
+      (p.code && p.code.toLowerCase().includes(term))
+    );
+  }, [ports, searchTerm]);
+
+  const handleSelectPort = (portName: string) => {
+    onChange(portName);
+    setSearchTerm(portName);
+    setIsOpen(false);
+  };
+
+  const handleClear = () => {
+    onChange('');
+    setSearchTerm('');
+    setIsOpen(true);
+  };
+
+  const isExactMatch = ports.some(p => p.name.toLowerCase() === searchTerm.trim().toLowerCase());
+
+  return (
+    <div ref={containerRef} className={`space-y-1.5 relative ${isOpen ? 'z-50' : 'z-20'}`}>
+      <div className="flex items-center justify-between">
+        <label className="flex items-center gap-1.5 text-xs text-brand-300 font-medium">
+          {icon} {label}
+        </label>
+        <button
+          type="button"
+          onClick={() => onOpenAddPort(targetField, searchTerm.trim())}
+          className="text-[11px] text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium bg-brand-500/10 hover:bg-brand-500/20 px-2 py-0.5 rounded-md transition-colors"
+          title={`Add new port for ${label}`}
+        >
+          <Plus size={12} /> Add Port
+        </button>
+      </div>
+
+      <div className="relative">
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(e) => {
+            setSearchTerm(e.target.value);
+            onChange(e.target.value);
+            if (!isOpen) setIsOpen(true);
+          }}
+          onFocus={() => setIsOpen(true)}
+          placeholder={placeholder}
+          className="w-full glass-input rounded-xl p-3 sm:p-3.5 outline-none text-sm text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-16"
+        />
+
+        <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="text-gray-400 hover:text-white p-1 rounded-md"
+              title="Clear port"
+            >
+              <X size={14} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setIsOpen(prev => !prev)}
+            className="text-gray-400 hover:text-white p-1 rounded-md"
+            title="Toggle port list"
+          >
+            <ChevronDown size={16} className={`transition-transform duration-200 ${isOpen ? 'rotate-180 text-brand-400' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+      {/* Autocomplete Suggestion Dropdown */}
+      {isOpen && (
+        <div className="absolute left-0 right-0 top-full mt-1.5 z-[9999] bg-slate-900/98 backdrop-blur-2xl border border-brand-500/30 rounded-xl shadow-2xl overflow-hidden max-h-64 overflow-y-auto">
+          {filteredPorts.length > 0 ? (
+            <div className="py-1 divide-y divide-white/5">
+              {filteredPorts.map((p, idx) => {
+                const isSelected = p.name.toLowerCase() === value.toLowerCase();
+                return (
+                  <button
+                    key={`${targetField}-${p.code || p.name}-${idx}`}
+                    type="button"
+                    onClick={() => handleSelectPort(p.name)}
+                    className={`w-full text-left px-3.5 py-2.5 flex items-center justify-between text-xs sm:text-sm hover:bg-brand-500/20 transition-colors ${
+                      isSelected ? 'bg-brand-500/30 text-white font-semibold' : 'text-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate pr-2">
+                      <Anchor size={13} className="text-brand-400 shrink-0" />
+                      <span className="truncate">{p.name}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {p.code && p.code !== p.name && (
+                        <span className="font-mono text-[10px] bg-white/10 px-1.5 py-0.5 rounded text-gray-300">
+                          {p.code}
+                        </span>
+                      )}
+                      {p.type && (
+                        <span className="text-[9px] bg-brand-500/20 text-brand-300 border border-brand-500/30 px-1.5 py-0.5 rounded uppercase font-medium">
+                          {p.type}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="p-3 text-center text-xs text-gray-400">
+              No matching port found for "{searchTerm}"
+            </div>
+          )}
+
+          {/* Quick Add Option inside Dropdown */}
+          {searchTerm.trim() && !isExactMatch && (
+            <div className="p-1.5 bg-black/40 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenAddPort(targetField, searchTerm.trim());
+                }}
+                className="w-full text-left p-2 rounded-lg bg-brand-600/30 hover:bg-brand-600/50 text-brand-300 text-xs flex items-center gap-2 transition-colors font-medium"
+              >
+                <Plus size={14} className="text-brand-400 shrink-0" />
+                <span>Add "<strong>{searchTerm.trim()}</strong>" as New Port</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const CATEGORIES = PRIMARY_SERVICE_CATEGORIES;
 
@@ -115,6 +318,13 @@ const MOCK_CLIENTS = [
 
 // Clean Initial Cases for Live Operation
 const INITIAL_CASES: Case[] = [];
+
+// Operational Services Arrangement Definitions (Arranged by DPL vs Client)
+export const INITIAL_REGISTRATION_ARRANGEMENTS: Record<string, { label: string; arrangedBy: 'DPL' | 'Client'; amount: number }> = getCategoryArrangements('Bonded Carrier');
+
+export const getArrangementInitialCharges = (arrangements: Record<string, { label: string; arrangedBy: 'DPL' | 'Client'; amount: number }>): CaseCharge[] => {
+  return getArrangementCharges(arrangements as any);
+};
 
 // Configuration for Report Columns
 const REPORT_COLUMNS = [
@@ -252,25 +462,38 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
   // Retrieve client's default category from profile or previous cases
   const getClientDefaultCategory = (clientName: string): string => {
-    if (!clientName) return '';
+    if (!clientName) return 'Bonded Carrier';
     const foundClient = clientsData.find(c => c.name?.toLowerCase() === clientName.toLowerCase());
     if (foundClient?.defaultCaseCategory) return foundClient.defaultCaseCategory;
     const prevCase = cases.find(c => c.clientName?.toLowerCase() === clientName.toLowerCase() && c.category);
-    return prevCase?.category || '';
+    return prevCase?.category || 'Bonded Carrier';
   };
 
   const handleClientSelect = (clientName: string) => {
-    if (clientName === '__OTHERS__') {
-      setIsOtherClient(true);
-      setFormData(prev => ({ ...prev, client: otherClientName.trim() }));
+    if (clientName === '__ADD_NEW_CLIENT__' || clientName === '__OTHERS__') {
+      setIsOtherClient(false);
+      setShowAddClientModal(true);
     } else {
       setIsOtherClient(false);
-      const defaultCat = getClientDefaultCategory(clientName);
+      const foundClient = clientsData.find(c => c.name?.toLowerCase() === clientName.toLowerCase());
+      const defaultCat = foundClient?.defaultCaseCategory || getClientDefaultCategory(clientName) || formData.category || 'Bonded Carrier';
+      
+      // Resolve charges & arrangements based on category & client default rules
+      const resolved = resolveCaseCharges(foundClient, defaultCat);
+
       setFormData(prev => ({
         ...prev,
         client: clientName,
-        category: defaultCat || prev.category || 'Afghan Transit'
+        category: defaultCat,
+        serviceArrangements: resolved.arrangements as any,
+        charges: resolved.charges
       }));
+
+      if (resolved.isClientCustomDefault) {
+        setDraftToast(`✓ Loaded ${resolved.charges.length} default charges configured for ${clientName}`);
+      } else {
+        setDraftToast(`✓ Applied ${defaultCat} operational service arrangements`);
+      }
     }
   };
 
@@ -279,10 +502,147 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     setFormData(prev => ({ ...prev, client: val.trim() }));
   };
 
-  // Dynamic Ports State
-  const [ports, setPorts] = useState(INITIAL_PORTS);
+  // Dynamic Ports State with persistence
+  const [ports, setPorts] = useState<PortItem[]>(() => {
+    return safeAppStorage.getJSON('dpl_ports', INITIAL_PORTS);
+  });
   const [showPortModal, setShowPortModal] = useState(false);
+  const [portTargetField, setPortTargetField] = useState<'pol' | 'pod' | null>(null);
   const [newPortName, setNewPortName] = useState('');
+  const [newPortCode, setNewPortCode] = useState('');
+  const [newPortType, setNewPortType] = useState('Dry Port');
+
+  // Client Modal State & Default Charges State
+  const [showAddClientModal, setShowAddClientModal] = useState(false);
+  const [newClientForm, setNewClientForm] = useState({
+    name: '',
+    ownerName: '',
+    contact: '',
+    mobileNumber: '',
+    whatsappNumber: '',
+    email: '',
+    ntn: '',
+    strn: '',
+    officeAddress: '',
+    defaultCaseCategory: 'Bonded Carrier'
+  });
+
+  const [clientChargesList, setClientChargesList] = useState<ClientDefaultCharge[]>([
+    {
+      id: 'chg_1',
+      category: 'Freight / Haulage',
+      description: 'Bonded Carrier Transportation Charge',
+      defaultAmount: 75000,
+      taxable: false
+    },
+    {
+      id: 'chg_2',
+      category: 'Documentation',
+      description: 'Customs Clearance & Documentation',
+      defaultAmount: 15000,
+      taxable: true
+    },
+    {
+      id: 'chg_3',
+      category: 'Port & Terminal',
+      description: 'Port Terminal Handling & E-Seal Tracking',
+      defaultAmount: 8500,
+      taxable: false
+    },
+    {
+      id: 'chg_4',
+      category: 'Agency',
+      description: 'Agency & Port Service Charges',
+      defaultAmount: 5000,
+      taxable: true
+    }
+  ]);
+
+  const handleSaveNewClientWithCharges = async () => {
+    if (!newClientForm.name.trim()) {
+      alert('Please enter Client / Company Name');
+      return;
+    }
+    const clientNameTrimmed = newClientForm.name.trim();
+    const clientId = `client_${Date.now()}`;
+
+    const clientToSave: Client = {
+      id: clientId,
+      name: clientNameTrimmed,
+      ownerName: newClientForm.ownerName.trim(),
+      contact: newClientForm.contact.trim(),
+      mobileNumber: newClientForm.mobileNumber.trim(),
+      whatsappNumber: newClientForm.whatsappNumber.trim() || newClientForm.mobileNumber.trim(),
+      email: newClientForm.email.trim(),
+      ntn: newClientForm.ntn.trim(),
+      strn: newClientForm.strn.trim(),
+      officeAddress: newClientForm.officeAddress.trim(),
+      defaultCaseCategory: newClientForm.defaultCaseCategory || 'Bonded Carrier',
+      defaultCharges: clientChargesList,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      await saveClientToFirestore(clientToSave);
+    } catch (err) {
+      console.warn("Could not save client to Firestore:", err);
+    }
+
+    setClientsData(prev => [clientToSave, ...prev.filter(c => c.name.toLowerCase() !== clientNameTrimmed.toLowerCase())]);
+    setRegisteredClients(prev => Array.from(new Set([clientNameTrimmed, ...prev])));
+
+    const appliedCharges: CaseCharge[] = clientChargesList.map((ch, idx) => ({
+      id: `chg_${Date.now()}_${idx}`,
+      category: ch.category || clientToSave.defaultCaseCategory || 'Bonded Carrier',
+      description: ch.description,
+      amount: Number(ch.defaultAmount) || 0,
+      taxable: ch.taxable ?? false
+    }));
+
+    setFormData(prev => ({
+      ...prev,
+      client: clientNameTrimmed,
+      category: clientToSave.defaultCaseCategory || 'Bonded Carrier',
+      charges: appliedCharges
+    }));
+
+    setIsOtherClient(false);
+    setOtherClientName('');
+    setShowAddClientModal(false);
+    setDraftToast(`✓ Client "${clientNameTrimmed}" registered with ${appliedCharges.length} default charges applied!`);
+  };
+
+  const handleAddPort = (targetField?: 'pol' | 'pod') => {
+    if (!newPortName.trim()) return;
+    const trimmed = newPortName.trim();
+    const code = newPortCode.trim() || (trimmed.length <= 4 ? trimmed.toUpperCase() : trimmed.substring(0, 4).toUpperCase());
+    const newPortObj: PortItem = { name: trimmed, code, type: newPortType };
+    const updatedPorts = [...ports.filter(p => p.name.toLowerCase() !== trimmed.toLowerCase()), newPortObj];
+    setPorts(updatedPorts);
+    safeAppStorage.setJSON('dpl_ports', updatedPorts);
+
+    const fieldToUpdate = targetField || portTargetField;
+    if (fieldToUpdate === 'pol') {
+      setFormData(prev => ({ ...prev, pol: trimmed }));
+    } else if (fieldToUpdate === 'pod') {
+      setFormData(prev => ({ ...prev, pod: trimmed }));
+    }
+
+    setNewPortName('');
+    setNewPortCode('');
+    setNewPortType('Dry Port');
+    setShowPortModal(false);
+    setPortTargetField(null);
+    setDraftToast(`✓ Port "${trimmed}" added and selected`);
+  };
+
+  const handleOpenAddPort = (targetField: 'pol' | 'pod', initialName?: string) => {
+    setPortTargetField(targetField);
+    setNewPortName(initialName || '');
+    setNewPortCode(initialName ? (initialName.length <= 4 ? initialName.toUpperCase() : initialName.substring(0, 4).toUpperCase()) : '');
+    setNewPortType('Dry Port');
+    setShowPortModal(true);
+  };
 
   // Filtering State
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -448,18 +808,174 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     containers: Container[];
     extractedData: ExtractedData;
     charges?: CaseCharge[];
+    serviceArrangements?: Record<string, { label: string; arrangedBy: 'DPL' | 'Client'; amount: number }>;
   }>(() => {
-    return safeAppStorage.getJSON('dpl_reg_formdata', {
+    const saved = safeAppStorage.getJSON<any>('dpl_reg_formdata', null);
+    if (saved) {
+      return {
+        ...saved,
+        serviceArrangements: saved.serviceArrangements || { ...INITIAL_REGISTRATION_ARRANGEMENTS },
+        charges: (saved.charges && saved.charges.length > 0) ? saved.charges : getArrangementInitialCharges(saved.serviceArrangements || INITIAL_REGISTRATION_ARRANGEMENTS)
+      };
+    }
+    return {
       client: '',
-      category: '',
+      category: 'Bonded Carrier',
       subCategory: 'Standard Container / General Cargo',
       pol: '',
       pod: '',
       containers: [],
       extractedData: {},
-      charges: []
-    });
+      serviceArrangements: { ...INITIAL_REGISTRATION_ARRANGEMENTS },
+      charges: getArrangementInitialCharges(INITIAL_REGISTRATION_ARRANGEMENTS)
+    };
   });
+
+  // Toggle Service Arrangement: Arranged by DPL (Auto-added to Invoice) vs Arranged by Client (Excluded from Invoice)
+  const handleToggleServiceArrangement = (key: string, targetArrangedBy: 'DPL' | 'Client') => {
+    setFormData(prev => {
+      const catArr = getCategoryArrangements(prev.category || 'Bonded Carrier');
+      const currentArrangements = { ...catArr, ...(prev.serviceArrangements || {}) };
+      const currentItem = currentArrangements[key] || catArr[key];
+      if (!currentItem) return prev;
+
+      const updatedArrangements = {
+        ...currentArrangements,
+        [key]: {
+          ...currentItem,
+          arrangedBy: targetArrangedBy
+        }
+      };
+
+      let updatedCharges = [...(prev.charges || [])];
+      if (targetArrangedBy === 'DPL') {
+        // User marked as Arranged by DPL -> AUTOMATICALLY ADD TO INVOICE CHARGES
+        updatedCharges = updatedCharges.filter(c => c.syncKey !== key);
+        if (Number(currentItem.amount) > 0) {
+          updatedCharges.push({
+            id: `ch_arr_${key}_${Date.now()}`,
+            syncKey: key,
+            description: currentItem.label,
+            amount: Number(currentItem.amount),
+            arrangedBy: 'DPL',
+            taxable: true
+          });
+        }
+      } else {
+        // User marked as Arranged by Client -> AUTOMATICALLY REMOVE FROM INVOICE CHARGES
+        updatedCharges = updatedCharges.filter(c => c.syncKey !== key);
+      }
+
+      const updatedFormData = {
+        ...prev,
+        serviceArrangements: updatedArrangements,
+        charges: updatedCharges
+      };
+      safeAppStorage.setJSON('dpl_reg_formdata', updatedFormData);
+      return updatedFormData;
+    });
+  };
+
+  // Update Estimated Amount for Service Arrangement
+  const handleUpdateArrangementAmount = (key: string, newAmount: number) => {
+    setFormData(prev => {
+      const catArr = getCategoryArrangements(prev.category || 'Bonded Carrier');
+      const currentArrangements = { ...catArr, ...(prev.serviceArrangements || {}) };
+      const currentItem = currentArrangements[key] || catArr[key];
+      if (!currentItem) return prev;
+
+      const updatedArrangements = {
+        ...currentArrangements,
+        [key]: {
+          ...currentItem,
+          amount: newAmount
+        }
+      };
+
+      let updatedCharges = [...(prev.charges || [])];
+      if (currentItem.arrangedBy === 'DPL') {
+        const exists = updatedCharges.some(c => c.syncKey === key);
+        if (exists) {
+          updatedCharges = updatedCharges.map(c => c.syncKey === key ? { ...c, amount: newAmount } : c);
+        } else if (newAmount > 0) {
+          updatedCharges.push({
+            id: `ch_arr_${key}_${Date.now()}`,
+            syncKey: key,
+            description: currentItem.label,
+            amount: newAmount,
+            arrangedBy: 'DPL',
+            taxable: true
+          });
+        }
+      }
+
+      const updatedFormData = {
+        ...prev,
+        serviceArrangements: updatedArrangements,
+        charges: updatedCharges
+      };
+      safeAppStorage.setJSON('dpl_reg_formdata', updatedFormData);
+      return updatedFormData;
+    });
+  };
+
+  // Step 4 Review & Submission States
+  const [isCaseSubmitted, setIsCaseSubmitted] = useState<boolean>(false);
+  const [submittedCaseData, setSubmittedCaseData] = useState<Case | null>(null);
+  const [showRegistrationChargeModal, setShowRegistrationChargeModal] = useState<boolean>(false);
+  const [newRegChargeDesc, setNewRegChargeDesc] = useState<string>('');
+  const [newRegChargeAmount, setNewRegChargeAmount] = useState<string>('');
+  const [isSaveAsClientDefault, setIsSaveAsClientDefault] = useState<boolean>(false);
+  const [saveAsClientDefaultInModal, setSaveAsClientDefaultInModal] = useState<boolean>(false);
+
+  const handleAddRegistrationChargeItem = async (desc: string, amount: number) => {
+    if (!desc.trim() || amount <= 0) return;
+    const newCharge: CaseCharge = {
+      id: `ch_${Date.now()}`,
+      category: formData.category,
+      description: desc.trim(),
+      amount: amount,
+      taxable: true
+    };
+
+    if (isCaseSubmitted && submittedCaseData) {
+      const updatedCharges = [...(submittedCaseData.charges || []), newCharge];
+      const updatedCase: Case = { ...submittedCaseData, charges: updatedCharges };
+      setSubmittedCaseData(updatedCase);
+      setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
+      updateCaseInFirestore(updatedCase).catch(e => console.warn("Firestore charge update error:", e));
+    } else {
+      const existing = formData.charges || [];
+      setFormData(prev => ({
+        ...prev,
+        charges: [...existing, newCharge]
+      }));
+    }
+
+    // If marked as Client Default Charge
+    if (isSaveAsClientDefault && formData.client) {
+      const clientObj = clientsData.find(c => c.name?.toLowerCase() === formData.client?.toLowerCase());
+      if (clientObj) {
+        try {
+          const updatedClient = await saveChargeAsClientDefault(clientObj, {
+            description: desc.trim(),
+            amount: amount,
+            category: formData.category,
+            taxable: true
+          });
+          setClientsData(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
+          setDraftToast(`✓ Saved "${desc.trim()}" as permanent default charge for ${formData.client}!`);
+        } catch (err) {
+          console.warn("Could not save default charge to client:", err);
+        }
+      }
+    }
+
+    setNewRegChargeDesc('');
+    setNewRegChargeAmount('');
+    setIsSaveAsClientDefault(false);
+    setShowRegistrationChargeModal(false);
+  };
 
   // Draft Persistence and Detection
   const checkHasDraft = () => {
@@ -509,7 +1025,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
       stepName,
       caseNo: savedCaseNo,
       client: savedFormData?.client || '',
-      category: savedFormData?.category || 'Afghan Transit',
+      category: savedFormData?.category || 'Bonded Carrier',
       docsCount: (savedDocs && savedDocs.length) || 0,
       containersCount: (savedFormData?.containers && savedFormData.containers.length) || 0,
       updatedAt: savedTime
@@ -626,16 +1142,27 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     setHasDraft(false);
     setGeneratedCaseNo('');
     setStep(1);
+    setIsCaseSubmitted(false);
+    setSubmittedCaseData(null);
+    setShowRegistrationChargeModal(false);
+    setNewRegChargeDesc('');
+    setNewRegChargeAmount('');
     setFiles([]);
     setUploadedDocs([]);
+    const clientNameInit = isClientUser ? (effectiveClientName || 'Global Traders Ltd') : '';
+    const categoryInit = isClientUser ? getClientDefaultCategory(effectiveClientName || '') : 'Bonded Carrier';
+    const clientObj = clientsData.find(c => c.name?.toLowerCase() === clientNameInit.toLowerCase());
+    const resolvedInit = resolveCaseCharges(clientObj, categoryInit);
+
     setFormData({
-      client: isClientUser ? (effectiveClientName || 'Global Traders Ltd') : '',
-      category: isClientUser ? getClientDefaultCategory(effectiveClientName || '') : 'Afghan Transit',
-      pol: 'Karachi Port (KPT)',
+      client: clientNameInit,
+      category: categoryInit,
+      pol: 'Karachi Port Trust',
       pod: '',
       containers: [],
       extractedData: {},
-      charges: []
+      serviceArrangements: resolvedInit.arrangements as any,
+      charges: resolvedInit.charges
     });
     setShowDiscardModal(false);
     setDraftToast('🗑️ Incomplete case draft discarded');
@@ -658,6 +1185,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     safeAppStorage.removeItem('dpl_reg_docs');
     safeAppStorage.removeItem('dpl_reg_updated_at');
     setHasDraft(false);
+    setIsCaseSubmitted(false);
+    setSubmittedCaseData(null);
+    setShowRegistrationChargeModal(false);
+    setNewRegChargeDesc('');
+    setNewRegChargeAmount('');
 
     // CRITICAL USER DIRECTIVE:
     // Do NOT reserve or assign a serial case number in Step 1!
@@ -666,16 +1198,19 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     setStep(1);
 
     const initialClient = isClientUser ? (effectiveClientName || 'Global Traders Ltd') : '';
-    const initialCategory = initialClient ? getClientDefaultCategory(initialClient) : '';
+    const initialCategory = initialClient ? getClientDefaultCategory(initialClient) : 'Bonded Carrier';
+    const foundClient = clientsData.find(c => c.name?.toLowerCase() === initialClient.toLowerCase());
+    const resolved = resolveCaseCharges(foundClient, initialCategory);
 
     const initialFormData = {
       client: initialClient,
-      category: initialCategory || 'Afghan Transit',
-      pol: 'Karachi Port (KPT)',
+      category: initialCategory || 'Bonded Carrier',
+      pol: 'Karachi Port Trust',
       pod: '',
       containers: [],
       extractedData: {},
-      charges: []
+      serviceArrangements: resolved.arrangements as any,
+      charges: resolved.charges
     };
 
     setFormData(initialFormData);
@@ -696,7 +1231,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
         setFormData(prev => ({
           ...prev,
           client: effectiveClientName,
-          category: prev.category || cat || 'Afghan Transit'
+          category: prev.category || cat || 'Bonded Carrier'
         }));
       }
     }
@@ -883,18 +1418,22 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             });
           }
 
-          // Auto-fill category if empty
+          // Auto-fill category if empty or detected
           let candidateCategory = prev.category;
           if (!candidateCategory) {
-            candidateCategory = data.suggestedCategory || (
-              (data.consigneeAddress && (data.consigneeAddress.toUpperCase().includes('BARA') || data.consigneeAddress.toUpperCase().includes('AFGHAN') || data.consigneeAddress.toUpperCase().includes('KHYBER')))
-                ? 'Bonded Carrier'
-                : 'Ocean Freight Import'
-            );
+            if (data.builtyNumber || data.pickupDestination || data.dropoffDestination) {
+              candidateCategory = 'Transportation of Private Cargo';
+            } else {
+              candidateCategory = data.suggestedCategory || (
+                (data.consigneeAddress && (data.consigneeAddress.toUpperCase().includes('BARA') || data.consigneeAddress.toUpperCase().includes('AFGHAN') || data.consigneeAddress.toUpperCase().includes('KHYBER')))
+                  ? 'Bonded Carrier'
+                  : 'Ocean Freight Import'
+              );
+            }
           }
 
           // Auto-fill POL & POD if found
-          let candidatePol = prev.pol;
+          let candidatePol = prev.pol || data.pickupDestination || '';
           if (!candidatePol && data.pol) {
             const matchedPort = ports.find(p => 
               p.name.toLowerCase().includes(data.pol.toLowerCase()) || 
@@ -904,7 +1443,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             candidatePol = matchedPort ? matchedPort.name : data.pol;
           }
 
-          let candidatePod = prev.pod;
+          let candidatePod = prev.pod || data.dropoffDestination || '';
           if (!candidatePod && data.pod) {
             const matchedPort = ports.find(p => 
               p.name.toLowerCase().includes(data.pod.toLowerCase()) || 
@@ -914,6 +1453,9 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             candidatePod = matchedPort ? matchedPort.name : data.pod;
           }
 
+          const foundClient = clientsData.find(c => c.name?.toLowerCase() === candidateClient.toLowerCase());
+          const resolved = resolveCaseCharges(foundClient, candidateCategory);
+
           return {
             ...prev,
             client: candidateClient,
@@ -921,7 +1463,9 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             pol: candidatePol,
             pod: candidatePod,
             containers: updatedContainers,
-            extractedData: merged
+            extractedData: merged,
+            serviceArrangements: resolved.arrangements as any,
+            charges: prev.charges && prev.charges.length > 0 ? prev.charges : resolved.charges
           };
         });
       }
@@ -1066,7 +1610,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
       const finalCharges = (formData.charges && formData.charges.length > 0)
         ? formData.charges
-        : getStandardChargesForCategory(formData.category, formData.containers?.length || 1);
+        : [];
 
       // Final sequential verification: ensure case number is strictly unique & sequential
       let finalCaseNo = generatedCaseNo;
@@ -1092,9 +1636,14 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           containers: formData.containers,
           extractedData: formData.extractedData,
           documents: serializableDocs,
-          charges: finalCharges
+          charges: finalCharges,
+          serviceArrangements: formData.serviceArrangements
       };
-      setCases([newCase, ...cases]);
+      const updatedCases = [newCase, ...cases.filter(c => c.caseNo !== newCase.caseNo)];
+      setCases(updatedCases);
+      setSubmittedCaseData(newCase);
+      safeAppStorage.setJSON('dpl_live_cases', updatedCases);
+      window.dispatchEvent(new CustomEvent('dpl_cases_updated', { detail: updatedCases }));
       saveCaseToFirestore(newCase).catch((e) => console.warn("Firestore saveCase error:", e));
       if (formData.client) {
         saveClientToFirestore({ name: formData.client }).catch(() => {});
@@ -1110,16 +1659,8 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
       safeAppStorage.removeItem('dpl_reg_view');
       setHasDraft(false);
 
+      setIsCaseSubmitted(true);
       setStep(4); 
-  };
-
-  // --- Dynamic Port Logic ---
-  const handleAddPort = () => {
-    if (!newPortName.trim()) return;
-    const code = newPortName.substring(0, 3).toUpperCase() + '-' + Math.floor(Math.random() * 100);
-    setPorts([...ports, { name: newPortName, code }]);
-    setNewPortName('');
-    setShowPortModal(false);
   };
 
   // --- Filter Logic ---
@@ -1736,37 +2277,6 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
          </div>
        </div>
 
-       {/* Add Port Modal */}
-       {showPortModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="glass-card p-6 rounded-2xl w-full max-w-sm border border-white/10">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold text-white flex items-center gap-2"><Anchor size={20} className="text-brand-400"/> Add New Port</h3>
-                    <button onClick={() => setShowPortModal(false)} className="text-gray-400 hover:text-white"><X size={20}/></button>
-                </div>
-                <div className="space-y-4">
-                    <div>
-                        <label className="text-xs text-gray-400 block mb-1">Port Name</label>
-                        <input 
-                            type="text" 
-                            placeholder="e.g. Gwadar Deep Sea Port" 
-                            value={newPortName}
-                            onChange={(e) => setNewPortName(e.target.value)}
-                            className="w-full glass-input rounded-lg p-3 outline-none text-white"
-                            autoFocus
-                        />
-                    </div>
-                    <button 
-                        onClick={handleAddPort}
-                        className="w-full bg-brand-600 hover:bg-brand-500 text-white py-2 rounded-lg font-medium shadow-lg shadow-brand-600/20"
-                    >
-                        Add Port
-                    </button>
-                </div>
-            </div>
-        </div>
-       )}
-
        {/* View List / Filter Modal */}
        {showFilterModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -2366,10 +2876,14 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {((targetCase.charges && targetCase.charges.length > 0)
-                      ? targetCase.charges
-                      : getStandardChargesForCategory(targetCase.category, targetCase.containers?.length || 1)
-                    ).map((charge: any, idx: number) => (
+                    {(!targetCase.charges || targetCase.charges.length === 0) ? (
+                      <tr>
+                        <td colSpan={5} className="p-6 text-center text-gray-400 text-xs italic">
+                          No charges added yet. Click "+ Add Charge" above to add TP charges, transport, or customs fees.
+                        </td>
+                      </tr>
+                    ) : (
+                      targetCase.charges.map((charge: any, idx: number) => (
                       <tr key={idx} className="hover:bg-white/5 transition-colors group">
                         <td className="p-3 text-gray-400 text-xs text-center">{idx + 1}</td>
                         <td className="p-3 text-white font-medium text-xs sm:text-sm">
@@ -2415,9 +2929,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                                   try {
                                     const proc = await compressAndPrepareFile(file);
                                     const dataUrl = proc?.dataUrl || proc?.base64 || '';
-                                    const currentCharges = (targetCase.charges && targetCase.charges.length > 0)
-                                      ? [...targetCase.charges]
-                                      : [...getStandardChargesForCategory(targetCase.category, targetCase.containers?.length || 1)];
+                                    const currentCharges = targetCase.charges ? [...targetCase.charges] : [];
                                     currentCharges[idx] = {
                                       ...currentCharges[idx],
                                       receiptUrl: dataUrl,
@@ -2440,9 +2952,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              const currentCharges = (targetCase.charges && targetCase.charges.length > 0)
-                                ? [...targetCase.charges]
-                                : [...getStandardChargesForCategory(targetCase.category, targetCase.containers?.length || 1)];
+                              const currentCharges = targetCase.charges ? [...targetCase.charges] : [];
                               const updatedCharges = currentCharges.filter((_, i) => i !== idx);
                               const updatedCase = { ...targetCase, charges: updatedCharges };
                               setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
@@ -2457,14 +2967,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                     <tr className="bg-white/5 font-bold border-t-2 border-white/10">
                       <td colSpan={2} className="p-3 text-gray-300 uppercase text-xs">Total Amount Due:</td>
                       <td className="p-3 text-right text-amber-400 font-mono text-base">
-                        PKR {((targetCase.charges && targetCase.charges.length > 0)
-                          ? targetCase.charges
-                          : getStandardChargesForCategory(targetCase.category, targetCase.containers?.length || 1)
-                        ).reduce((sum: number, c: any) => sum + (Number(c.amount) || 0), 0).toLocaleString()}
+                        PKR {(targetCase.charges || []).reduce((sum: number, c: any) => sum + (Number(c.amount) || 0), 0).toLocaleString()}
                       </td>
                       <td colSpan={2}></td>
                     </tr>
@@ -2805,18 +3312,23 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           <div className="flex items-center justify-between">
             <label className="flex items-center gap-2 text-sm font-semibold text-white">
               <User size={16} className="text-brand-400" />
-              <span>Client Account</span>
+              <span>Client / Importer / Shipper</span>
               <span className="text-red-400">*</span>
             </label>
             {isClientUser ? (
               <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full flex items-center gap-1">
                 <CheckCircle2 size={12} /> Auto-Selected
               </span>
-            ) : isOtherClient ? (
-              <span className="text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full">
-                New Client Mode
-              </span>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowAddClientModal(true)}
+                className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/25 px-2.5 py-1 rounded-lg transition-colors"
+                title="Add New Client & Set Default Tariff"
+              >
+                <Plus size={13} /> Add Client & Tariff
+              </button>
+            )}
           </div>
 
           {isClientUser ? (
@@ -2842,32 +3354,53 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           ) : (
             /* Case Manager / Admin is registering: Select from dropdown or add new */
             <div className="space-y-2.5">
-              <div className="relative">
-                <select 
-                  className="w-full glass-input rounded-xl p-3.5 sm:p-4 outline-none appearance-none cursor-pointer text-sm sm:text-base text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-10"
-                  value={isOtherClient ? '__OTHERS__' : formData.client}
-                  onChange={(e) => handleClientSelect(e.target.value)}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <select 
+                    className="w-full glass-input rounded-xl p-3.5 sm:p-4 outline-none appearance-none cursor-pointer text-sm sm:text-base text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-10"
+                    value={formData.client}
+                    onChange={(e) => {
+                      if (e.target.value === '__ADD_NEW_CLIENT__') {
+                        setShowAddClientModal(true);
+                      } else {
+                        handleClientSelect(e.target.value);
+                      }
+                    }}
+                  >
+                    <option value="" className="bg-slate-900 text-gray-400">-- Select Client Company --</option>
+                    {registeredClients.map(c => (
+                      <option key={c} value={c} className="bg-slate-900 text-white">{c}</option>
+                    ))}
+                    <option value="__ADD_NEW_CLIENT__" className="bg-slate-900 text-amber-300 font-semibold">
+                      ➕ Add New Client & Set Default Charges
+                    </option>
+                  </select>
+                  <ChevronDown className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={20} />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAddClientModal(true)}
+                  className="bg-brand-600 hover:bg-brand-500 text-white px-3.5 sm:px-4 py-3.5 sm:py-4 rounded-xl flex items-center gap-1.5 text-xs sm:text-sm font-semibold transition-all shadow-md shadow-brand-600/20 shrink-0"
+                  title="Add New Client & Set Default Charges"
                 >
-                  <option value="" className="bg-slate-900 text-gray-400">-- Select Client --</option>
-                  {registeredClients.map(c => (
-                    <option key={c} value={c} className="bg-slate-900 text-white">{c}</option>
-                  ))}
-                  <option value="__OTHERS__" className="bg-slate-900 text-amber-300 font-semibold">➕ Others (Add New Client)</option>
-                </select>
-                <ChevronDown className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={20} />
+                  <Plus size={16} />
+                  <span className="hidden sm:inline">Add Client</span>
+                </button>
               </div>
 
-              {isOtherClient && (
-                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 pt-1">
-                  <label className="block text-xs text-amber-300 font-semibold">Enter New Client Name</label>
-                  <input 
-                    type="text" 
-                    placeholder="Enter new client name..."
-                    className="w-full glass-input rounded-xl p-3 sm:p-3.5 outline-none text-white border border-amber-500/50 bg-amber-500/10 focus:border-amber-400 placeholder-gray-400 text-sm"
-                    value={otherClientName}
-                    onChange={(e) => handleOtherClientChange(e.target.value)}
-                    autoFocus
-                  />
+              {/* Status Badge when client default charges are loaded */}
+              {formData.client && formData.charges && formData.charges.length > 0 && (
+                <div className="flex items-center justify-between p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-300">
+                  <div className="flex items-center gap-2 truncate pr-2">
+                    <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+                    <span className="truncate">
+                      <strong>{formData.charges.length}</strong> default charges applied for <strong>{formData.client}</strong> (Total: PKR {formData.charges.reduce((s, c) => s + (Number(c.amount) || 0), 0).toLocaleString()})
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-emerald-400/80 font-mono shrink-0 hidden sm:inline">
+                    Editable in Step 3 / Invoice
+                  </span>
                 </div>
               )}
             </div>
@@ -2895,11 +3428,20 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
               value={formData.category}
               onChange={(e) => {
                 const newCat = e.target.value;
+                const foundClient = clientsData.find(c => c.name?.toLowerCase() === formData.client?.toLowerCase());
+                const resolved = resolveCaseCharges(foundClient, newCat);
                 setFormData({ 
                   ...formData, 
                   category: newCat,
-                  subCategory: supportsSubCategories(newCat) ? (formData.subCategory || 'Standard Container / General Cargo') : undefined
+                  subCategory: supportsSubCategories(newCat) ? (formData.subCategory || 'Standard Container / General Cargo') : undefined,
+                  serviceArrangements: resolved.arrangements as any,
+                  charges: resolved.charges
                 });
+                if (resolved.isClientCustomDefault) {
+                  setDraftToast(`✓ Applied ${resolved.charges.length} client default charges for ${formData.client}`);
+                } else {
+                  setDraftToast(`✓ Switched to ${newCat} default operational services`);
+                }
               }}
             >
               <option value="" className="bg-slate-900 text-gray-400">-- Select Primary Category --</option>
@@ -2939,71 +3481,77 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           )}
         </div>
 
-        {/* 3. Port of Loading & Port of Destination (Route Selection) */}
-        <div className="glass-panel p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-sm font-semibold text-white">
-              <Ship size={16} className="text-brand-400" />
-              <span>Route Selection (Ports)</span>
-            </label>
-            <button
-              type="button"
-              onClick={() => setShowPortModal(true)}
-              className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1"
-            >
-              <Plus size={13} /> Add Port
-            </button>
-          </div>
+        {/* 3. Port of Loading & Port of Destination (Searchable Suggestions & Instant Add Port) */}
+        {(() => {
+          const isPrivateCargo = formData.category === 'Transportation of Private Cargo' || formData.category?.toLowerCase().includes('private');
+          return (
+            <div className="glass-panel p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3 relative z-30">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-sm font-semibold text-white">
+                  {isPrivateCargo ? (
+                    <>
+                      <Truck size={16} className="text-amber-400" />
+                      <span>Transport Route & Locations (Pick up / Drop off)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Ship size={16} className="text-brand-400" />
+                      <span>Route Selection (Ports & Terminals)</span>
+                    </>
+                  )}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAddPort('pol')}
+                  className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/25 px-2.5 py-1 rounded-lg transition-colors"
+                >
+                  <Plus size={13} /> {isPrivateCargo ? 'Add Location' : 'Add Port'}
+                </button>
+              </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* POL */}
-            <div className="space-y-1.5">
-              <label className="flex items-center gap-1.5 text-xs text-brand-300 font-medium">
-                <Anchor size={14} /> Port of Loading (POL)
-              </label>
-              <div className="relative">
-                <select 
-                  className="w-full glass-input rounded-xl p-3 sm:p-3.5 outline-none appearance-none text-sm text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-9"
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* POL with Autocomplete Search & Add Port */}
+                <PortSearchableInput
+                  label={isPrivateCargo ? "Pick up Destination (Loading Point / Origin)" : "Port of Loading (POL)"}
+                  icon={isPrivateCargo ? <MapPin size={14} className="text-amber-400" /> : <Anchor size={14} className="text-brand-400" />}
                   value={formData.pol}
-                  onChange={(e) => setFormData({...formData, pol: e.target.value})}
-                >
-                  <option value="" className="bg-slate-900 text-gray-400">Select POL</option>
-                  {ports.map(p => (
-                    <option key={`pol-${p.code}`} value={p.name} className="bg-slate-900 text-white">
-                      {p.name} {p.code !== p.name ? `(${p.code})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
-              </div>
-            </div>
+                  onChange={(val) => {
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      pol: val,
+                      extractedData: { ...prev.extractedData, pickupDestination: val }
+                    }));
+                  }}
+                  ports={ports}
+                  targetField="pol"
+                  placeholder={isPrivateCargo ? "Type pick up location (e.g. Karachi Factory, Hub, Multan)..." : "Type port name or code (e.g. KPT, Port Qasim)..."}
+                  onOpenAddPort={handleOpenAddPort}
+                />
 
-            {/* POD */}
-            <div className="space-y-1.5">
-              <label className="flex items-center gap-1.5 text-xs text-brand-300 font-medium">
-                <MapPin size={14} /> Port of Destination (POD)
-              </label>
-              <div className="relative">
-                <select 
-                  className="w-full glass-input rounded-xl p-3 sm:p-3.5 outline-none appearance-none text-sm text-white bg-black/60 border border-white/15 focus:border-brand-400 pr-9"
+                {/* POD with Autocomplete Search & Add Port */}
+                <PortSearchableInput
+                  label={isPrivateCargo ? "Drop off Destination (Unloading Point / Delivery)" : "Port of Destination (POD)"}
+                  icon={<MapPin size={14} className={isPrivateCargo ? "text-emerald-400" : "text-brand-400"} />}
                   value={formData.pod}
-                  onChange={(e) => setFormData({...formData, pod: e.target.value})}
-                >
-                  <option value="" className="bg-slate-900 text-gray-400">Select POD</option>
-                  {ports.map(p => (
-                    <option key={`pod-${p.code}`} value={p.name} className="bg-slate-900 text-white">
-                      {p.name} {p.code !== p.name ? `(${p.code})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" size={16} />
+                  onChange={(val) => {
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      pod: val,
+                      extractedData: { ...prev.extractedData, dropoffDestination: val }
+                    }));
+                  }}
+                  ports={ports}
+                  targetField="pod"
+                  placeholder={isPrivateCargo ? "Type drop off location (e.g. Faisalabad, Lahore, Rawalpindi)..." : "Type port name or code (e.g. Lahore, Sialkot, Torkham)..."}
+                  onOpenAddPort={handleOpenAddPort}
+                />
               </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* 4. Document Upload & Camera (Single unified upload button + Camera button) */}
-        <div ref={documentsSectionRef} className="glass-panel p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
+        <div ref={documentsSectionRef} className="glass-panel p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3 relative z-10">
           <div className="flex items-center justify-between">
             <label className="flex items-center gap-2 text-sm font-semibold text-white">
               <FileText size={16} className="text-brand-400" />
@@ -3332,9 +3880,611 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     </div>
   );
 
+  const renderServiceArrangementsSection = (isStep4Review: boolean = false) => {
+    const arrangements = formData.serviceArrangements || INITIAL_REGISTRATION_ARRANGEMENTS;
+    const dplArrangedCount = Object.values(arrangements).filter(a => a.arrangedBy === 'DPL').length;
+    const clientArrangedCount = Object.values(arrangements).filter(a => a.arrangedBy === 'Client').length;
+
+    return (
+      <div className="glass-panel p-5 rounded-xl border border-white/10 bg-slate-900/60 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
+          <div>
+            <h4 className="text-sm font-bold text-white uppercase flex items-center gap-2">
+              <Layers size={16} className="text-amber-400" />
+              <span>Operational Logistics Services & Charges (Arranged by DPL vs Client)</span>
+            </h4>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Items marked <span className="text-emerald-400 font-semibold">Arranged by DPL</span> are automatically added to the invoice charges. Items marked <span className="text-sky-400 font-semibold">Arranged by Client</span> are excluded from invoice.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 self-start sm:self-auto text-xs">
+            <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-full font-semibold flex items-center gap-1">
+              <CheckCircle size={12} /> {dplArrangedCount} Invoiced by DPL
+            </span>
+            <span className="bg-sky-500/10 text-sky-400 border border-sky-500/20 px-2.5 py-1 rounded-full font-semibold flex items-center gap-1">
+              <User size={12} /> {clientArrangedCount} Client Direct
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {Object.entries(arrangements).map(([key, item]) => {
+            const isDpl = item.arrangedBy === 'DPL';
+            return (
+              <div 
+                key={key} 
+                className={`p-3 rounded-xl border transition-all ${
+                  isDpl 
+                    ? 'bg-emerald-950/20 border-emerald-500/30' 
+                    : 'bg-white/5 border-white/10'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 mb-2.5">
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-white block truncate">{item.label}</span>
+                    <span className="text-[10px] font-mono text-gray-400 block">
+                      {isDpl ? 'Added to Client Invoice' : 'Client Settles Directly (Excluded)'}
+                    </span>
+                  </div>
+
+                  {/* Toggle Selector Buttons */}
+                  <div className="flex items-center bg-black/40 p-1 rounded-xl border border-white/10 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleServiceArrangement(key, 'DPL')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                        isDpl 
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40' 
+                          : 'text-gray-400 hover:text-gray-200'
+                      }`}
+                      title="Arranged by DPL: adds to client invoice"
+                    >
+                      <CheckCircle size={11} />
+                      <span>DPL</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleServiceArrangement(key, 'Client')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                        !isDpl 
+                          ? 'bg-sky-600 text-white shadow-md shadow-sky-900/40' 
+                          : 'text-gray-400 hover:text-gray-200'
+                      }`}
+                      title="Arranged by Client: excluded from client invoice"
+                    >
+                      <User size={11} />
+                      <span>Client</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Amount Field and Invoiced Badge */}
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-gray-400 font-medium">Est. Amount:</span>
+                    <div className="relative w-32">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-mono text-gray-400">PKR</span>
+                      <input
+                        type="number"
+                        value={item.amount || ''}
+                        onChange={(e) => handleUpdateArrangementAmount(key, Number(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-full pl-9 pr-2 py-1 bg-black/40 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:border-amber-400 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {isDpl ? (
+                    <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">
+                      ✓ Invoiced (PKR {Number(item.amount).toLocaleString()})
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded border border-white/5 whitespace-nowrap">
+                      ⊘ Excluded from Invoice
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderPrivateCargoRegistrationReview = (extracted: any, autoFilledCount: number) => {
+    return (
+      <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+        {/* Category Header Banner */}
+        <div className="p-4 rounded-2xl bg-amber-950/30 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 shrink-0">
+              <Truck size={22} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white">Private Cargo Transport Registration</h3>
+                <span className="text-[10px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full uppercase">
+                  Domestic Freight
+                </span>
+              </div>
+              <p className="text-xs text-amber-200/80">
+                Default Charges: <strong className="text-emerald-400">Loading Charges & Unloading Charges (Arranged by DPL)</strong>. Vehicle Rent, Builty, Labor & Detention as required.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+              <CheckCircle size={14} /> {autoFilledCount} fields extracted
+            </span>
+          </div>
+        </div>
+
+        {/* Bento Grid of Private Cargo Registration Fields */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {/* Card 1: Route & Locations */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <MapPin size={15} /> Pick up & Drop off Route
+              </h4>
+              <span className="text-[10px] text-gray-400">Domestic Route</span>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">
+                  Pick up Destination (Loading Point / Origin) <span className="text-red-400">*</span>
+                </label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.pickupDestination || formData.pol || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateExtractedData('pickupDestination', val);
+                    setFormData(prev => ({ ...prev, pol: val }));
+                  }}
+                  placeholder="e.g. Karachi Port Terminal / Hub Industrial Area / Factory"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">
+                  Drop off Destination (Unloading Point / Delivery) <span className="text-red-400">*</span>
+                </label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.dropoffDestination || formData.pod || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateExtractedData('dropoffDestination', val);
+                    setFormData(prev => ({ ...prev, pod: val }));
+                  }}
+                  placeholder="e.g. Faisalabad Textile Mills / Lahore Dryport / Warehouse"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Cargo Owner Details */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <User size={15} /> Cargo Owner (Malik-e-Maal)
+              </h4>
+              <span className="text-[10px] text-gray-400">Shipper / Owner</span>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">
+                  Cargo Owner Name <span className="text-red-400">*</span>
+                </label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.cargoOwner || extracted.shipperName || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateExtractedData('cargoOwner', val);
+                    updateExtractedData('shipperName', val);
+                  }}
+                  placeholder="e.g. Haji Muhammad Textile Trading"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">Contact No</label>
+                  <input 
+                    type="text"
+                    className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.cargoOwnerContact || extracted.shipperContact || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      updateExtractedData('cargoOwnerContact', val);
+                      updateExtractedData('shipperContact', val);
+                    }}
+                    placeholder="0300-1234567"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">CNIC / NTN</label>
+                  <input 
+                    type="text"
+                    className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.cargoOwnerCnic || ''}
+                    onChange={(e) => updateExtractedData('cargoOwnerCnic', e.target.value)}
+                    placeholder="42101-xxxxxxx-x"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 3: Bilty (Builty) & Consignment Details */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <FileText size={15} /> Builty (Bilty) Information
+              </h4>
+              <span className="text-[10px] text-gray-400">Waybill & Terms</span>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">
+                  Builty (Bilty) Number <span className="text-red-400">*</span>
+                </label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm font-mono font-semibold text-amber-300 border border-amber-500/30 bg-amber-500/5 focus:border-amber-400 outline-none"
+                  value={extracted.builtyNumber || extracted.blNumber || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateExtractedData('builtyNumber', val);
+                    updateExtractedData('blNumber', val);
+                  }}
+                  placeholder="e.g. BLT-2025-9821 / KHI-892"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">Builty Date</label>
+                  <input 
+                    type="date"
+                    className="w-full rounded-lg p-2 text-xs text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.builtyDate || extracted.blDate || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      updateExtractedData('builtyDate', val);
+                      updateExtractedData('blDate', val);
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">Payment Terms</label>
+                  <select 
+                    className="w-full rounded-lg p-2 text-xs text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.paymentTerms || 'To-Pay'}
+                    onChange={(e) => updateExtractedData('paymentTerms', e.target.value)}
+                  >
+                    <option value="To-Pay">To-Pay (Unloading par)</option>
+                    <option value="Paid">Paid (Prepaid)</option>
+                    <option value="Advance">Advance Paid</option>
+                    <option value="COD">Cash on Delivery</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 4: Container & Security Seal (If containerized) */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <Box size={15} /> Container & Seal Number
+              </h4>
+              <span className="text-[10px] text-gray-400">Optional / Containerized</span>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Container Number</label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm font-mono text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none uppercase"
+                  value={extracted.containerNo || formData.containers?.[0]?.number || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.toUpperCase();
+                    updateExtractedData('containerNo', val);
+                    if (formData.containers.length > 0) {
+                      setFormData(prev => ({
+                        ...prev,
+                        containers: prev.containers.map((c, idx) => idx === 0 ? { ...c, number: val } : c)
+                      }));
+                    } else if (val) {
+                      setFormData(prev => ({
+                        ...prev,
+                        containers: [{ id: Date.now(), number: val, size: '40ft', weight: extracted.grossWeight || 0, sealNo: extracted.sealNo || '', status: 'Pending' }]
+                      }));
+                    }
+                  }}
+                  placeholder="e.g. MSKU1234567 or Open Truck"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Seal Number</label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm font-mono text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.sealNo || formData.containers?.[0]?.sealNo || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateExtractedData('sealNo', val);
+                    if (formData.containers.length > 0) {
+                      setFormData(prev => ({
+                        ...prev,
+                        containers: prev.containers.map((c, idx) => idx === 0 ? { ...c, sealNo: val } : c)
+                      }));
+                    }
+                  }}
+                  placeholder="e.g. SL-984120 / Bottle Seal"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Card 5: Vehicle & Driver Information */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <Truck size={15} /> Transport Vehicle & Driver
+              </h4>
+              <span className="text-[10px] text-gray-400">Driver Verification</span>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Vehicle / Truck Registration No</label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm font-mono text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none uppercase"
+                  value={extracted.vehicleNumber || ''}
+                  onChange={(e) => updateExtractedData('vehicleNumber', e.target.value.toUpperCase())}
+                  placeholder="e.g. TLA-492 / KHI-8120"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">Driver Name</label>
+                  <input 
+                    type="text"
+                    className="w-full rounded-lg p-2 text-xs text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.driverName || ''}
+                    onChange={(e) => updateExtractedData('driverName', e.target.value)}
+                    placeholder="Name"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">Driver Mobile</label>
+                  <input 
+                    type="text"
+                    className="w-full rounded-lg p-2 text-xs text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.driverContact || ''}
+                    onChange={(e) => updateExtractedData('driverContact', e.target.value)}
+                    placeholder="03xx-xxxxxxx"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">Driver CNIC</label>
+                  <input 
+                    type="text"
+                    className="w-full rounded-lg p-2 text-xs text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.driverCnic || ''}
+                    onChange={(e) => updateExtractedData('driverCnic', e.target.value)}
+                    placeholder="CNIC No"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 6: Consignee / Receiver Information */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <Building size={15} /> Consignee / Receiver Party
+              </h4>
+              <span className="text-[10px] text-gray-400">Delivery Recipient</span>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Consignee Name</label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.consigneeName || ''}
+                  onChange={(e) => updateExtractedData('consigneeName', e.target.value)}
+                  placeholder="e.g. Al-Madina Weaving Mills Ltd"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">Receiver Contact</label>
+                  <input 
+                    type="text"
+                    className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.consigneeContact || ''}
+                    onChange={(e) => updateExtractedData('consigneeContact', e.target.value)}
+                    placeholder="03xx-xxxxxxx"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-300 font-medium block mb-1">Destination Address</label>
+                  <input 
+                    type="text"
+                    className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                    value={extracted.consigneeAddress || ''}
+                    onChange={(e) => updateExtractedData('consigneeAddress', e.target.value)}
+                    placeholder="Sector / Industrial Zone"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 7: Cargo Specifications & Commodities */}
+          <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4 lg:col-span-3">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
+                <Package size={15} /> Cargo Specifications & Packaging
+              </h4>
+              <span className="text-[10px] text-gray-400">Weight & Packaging</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="lg:col-span-2">
+                <label className="text-xs text-gray-300 font-medium block mb-1">Cargo / Commodity Description</label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.itemName || ''}
+                  onChange={(e) => updateExtractedData('itemName', e.target.value)}
+                  placeholder="e.g. Cotton Yarn Cones / Steel Coils / Rice Bags"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Packaging Type</label>
+                <input 
+                  type="text"
+                  className="w-full rounded-lg p-2.5 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.packagingType || 'Bags / Bundles'}
+                  onChange={(e) => updateExtractedData('packagingType', e.target.value)}
+                  placeholder="Bags, Cartons, Crates"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Total Packages</label>
+                <input 
+                  type="number"
+                  className="w-full rounded-lg p-2.5 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.packageCount || ''}
+                  onChange={(e) => updateExtractedData('packageCount', parseFloat(e.target.value))}
+                  placeholder="e.g. 400"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Gross Weight (KG)</label>
+                <input 
+                  type="number"
+                  className="w-full rounded-lg p-2.5 text-sm font-mono text-emerald-400 font-bold border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
+                  value={extracted.grossWeight || extracted.totalWeight || ''}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    updateExtractedData('grossWeight', val);
+                    updateExtractedData('totalWeight', val);
+                  }}
+                  placeholder="e.g. 24000"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Cargo Document Upload Section (Builty copy, Weight Slip, Challan) */}
+        <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-2">
+              <UploadCloud size={16} /> Cargo Document Upload (Builty, Weight Slip, Challan)
+            </h4>
+            <span className="text-xs text-gray-400">
+              {uploadedDocs.length} {uploadedDocs.length === 1 ? 'file attached' : 'files attached'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {uploadedDocs.map(doc => (
+              <div key={doc.id} className="p-3 bg-white/5 border border-white/10 rounded-xl flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0 border border-amber-500/20">
+                    <FileText size={16} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-white truncate">{doc.name}</p>
+                    <p className="text-[10px] text-gray-400">{(doc.size / 1024).toFixed(1)} KB</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setLightboxImage(doc.url)}
+                    className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+                    title="View Document"
+                  >
+                    <Eye size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUploadedDocs(prev => {
+                        const updated = prev.filter(d => d.id !== doc.id);
+                        safeAppStorage.setJSON('dpl_reg_docs', updated);
+                        return updated;
+                      });
+                      setFiles(prev => prev.filter(f => f.name !== doc.name));
+                    }}
+                    className="p-1.5 text-red-400 hover:text-red-300 rounded-lg hover:bg-red-500/10 transition-colors"
+                    title="Remove File"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {/* Quick Upload Button */}
+            <label className="p-3 border border-dashed border-amber-500/40 hover:border-amber-400 bg-amber-500/5 hover:bg-amber-500/10 rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-colors text-amber-300 text-xs font-medium">
+              <Plus size={16} />
+              <span>Attach Additional Document</span>
+              <input 
+                type="file" 
+                multiple 
+                className="hidden" 
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    processFiles(Array.from(e.target.files));
+                  }
+                }}
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Operational Logistics Services & Charges (Arranged by DPL vs Client) */}
+        {renderServiceArrangementsSection(false)}
+      </div>
+    );
+  };
+
   const renderStep5_DataReview = () => {
     const extracted = formData.extractedData || {};
     const autoFilledCount = Object.values(extracted).filter(v => v !== undefined && v !== null && String(v).trim() !== '').length;
+
+    const isPrivateCargo = formData.category === 'Transportation of Private Cargo' || formData.category?.toLowerCase().includes('private');
+    if (isPrivateCargo) {
+      return renderPrivateCargoRegistrationReview(extracted, autoFilledCount);
+    }
 
     return (
       <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
@@ -3635,11 +4785,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
               </div>
             </div>
 
-            {/* Goods Declaration (GD) & IGM */}
+            {/* Goods Declaration (GD/TP) & IGM */}
             <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs text-gray-300 font-medium">GD Number</label>
+                  <label className="text-xs text-gray-300 font-medium">( GD/TP Number )</label>
                   {extracted.gdNo && <span className="text-[10px] text-emerald-400"><CheckCircle size={9} /></span>}
                 </div>
                 <input 
@@ -3648,11 +4798,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   }`}
                   value={extracted.gdNo || ''} 
                   onChange={(e) => updateExtractedData('gdNo', e.target.value)} 
-                  placeholder="e.g. KAPE-HC-12345"
+                  placeholder="e.g. KAPE-HC-12345 / TP-98765"
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-300 block mb-1">GD Date</label>
+                <label className="text-xs text-gray-300 block mb-1">( GD/TP Date )</label>
                 <input 
                   type="date" 
                   className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-brand-400 outline-none" 
@@ -3871,114 +5021,10 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
               </div>
             </div>
           </div>
-
-          {/* Group 4: Pakistan Customs & Regulatory Declarations */}
-          <div className="glass-panel p-5 rounded-xl border border-amber-500/30 space-y-4 bg-slate-900/60">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
-                <FileCheck size={16} /> Pakistan Customs & Regulatory Declarations
-              </h4>
-              <span className="text-[10px] text-amber-300/80 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                WeBOC / PSW / FBR
-              </span>
-            </div>
-
-            {/* GD Type & NTN */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-gray-300 block mb-1 font-medium">Goods Declaration (GD) Type</label>
-                <select
-                  className="w-full rounded-lg p-2 text-xs sm:text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none"
-                  value={extracted.gdType || (formData.category === 'Bonded Carrier' ? 'TP' : formData.category === 'Afghan Transit' ? 'AT-GD' : 'GD-HC')}
-                  onChange={(e) => updateExtractedData('gdType', e.target.value)}
-                >
-                  <option value="TP">TP — Transhipment Permit (Sec 121)</option>
-                  <option value="AT-GD">AT-GD — Afghan Transit Trade (APTTA)</option>
-                  <option value="GD-HC">GD-HC — Home Consumption Import (Sec 79)</option>
-                  <option value="GD-IB">GD-IB — Into-Bond Warehousing (Sec 84)</option>
-                  <option value="GD-EB">GD-EB — Ex-Bond Clearance (Sec 104)</option>
-                  <option value="GD-EXP">GD-EXP — Commercial Export (Sec 131)</option>
-                  <option value="TIR">TIR Carnet — International Transit</option>
-                  <option value="COASTAL">Coastal Cargo / Domestic Transit</option>
-                </select>
-              </div>
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs text-gray-300 font-medium">Importer / Consignee NTN</label>
-                  {extracted.ntnNumber && <span className="text-[10px] text-emerald-400 flex items-center gap-0.5"><CheckCircle size={9} /> Read</span>}
-                </div>
-                <input
-                  type="text"
-                  className={`w-full rounded-lg p-2 text-sm text-white font-mono outline-none border ${
-                    extracted.ntnNumber ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/15 bg-black/40 focus:border-amber-400'
-                  }`}
-                  value={extracted.ntnNumber || ''}
-                  onChange={(e) => updateExtractedData('ntnNumber', e.target.value)}
-                  placeholder="e.g. 1234567-8"
-                />
-              </div>
-            </div>
-
-            {/* STRN & PSW / WeBOC User ID */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-gray-300 block mb-1 font-medium">Sales Tax Reg. No (STRN)</label>
-                <input
-                  type="text"
-                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none font-mono"
-                  value={extracted.strnNumber || ''}
-                  onChange={(e) => updateExtractedData('strnNumber', e.target.value)}
-                  placeholder="e.g. 3277876123456"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-300 block mb-1 font-medium">PSW / WeBOC Trader ID</label>
-                <input
-                  type="text"
-                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none font-mono"
-                  value={extracted.pswUserId || ''}
-                  onChange={(e) => updateExtractedData('pswUserId', e.target.value)}
-                  placeholder="e.g. PSW-TRD-99881"
-                />
-              </div>
-            </div>
-
-            {/* FBR Satellite Tracker ID & Regulatory Guarantee Ref */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-gray-300 block mb-1 font-medium">FBR Satellite Tracker / E-Seal ID</label>
-                <input
-                  type="text"
-                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none font-mono"
-                  value={extracted.trackerId || ''}
-                  onChange={(e) => updateExtractedData('trackerId', e.target.value)}
-                  placeholder="e.g. FBR-TRK-77441"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-300 block mb-1 font-medium">
-                  {formData.category === 'Afghan Transit' 
-                    ? 'Jawaznama / Transit Pass No.' 
-                    : formData.category === 'TIR' 
-                    ? 'TIR Carnet Reference No.' 
-                    : 'Carrier Bond / Revolving Guarantee No.'}
-                </label>
-                <input
-                  type="text"
-                  className="w-full rounded-lg p-2 text-sm text-white border border-white/15 bg-black/40 focus:border-amber-400 outline-none font-mono"
-                  value={extracted.jawaznamaNo || extracted.carrierBondNo || extracted.tirCarnetNo || ''}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (formData.category === 'Afghan Transit') updateExtractedData('jawaznamaNo', val);
-                    else if (formData.category === 'TIR') updateExtractedData('tirCarnetNo', val);
-                    else updateExtractedData('carrierBondNo', val);
-                  }}
-                  placeholder="Reference number..."
-                />
-              </div>
-            </div>
-          </div>
         </div>
+
+        {/* Operational Logistics Services & Charges (Arranged by DPL vs Client) */}
+        {renderServiceArrangementsSection(false)}
       </div>
     );
   };
@@ -3987,16 +5033,21 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     <div className="space-y-4 animate-in fade-in slide-in-from-right-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
         <div>
-          <h3 className="text-lg sm:text-xl font-semibold text-white">Step 6: Container List</h3>
-          <p className="text-xs text-gray-400">Specify container numbers, sizes, and cargo weights</p>
+          <h3 className="text-lg sm:text-xl font-semibold text-white">Step 3: Containers Manifest</h3>
+          <p className="text-xs text-gray-400">Containers identified from shipping documents or added manually</p>
         </div>
-        <button 
-          type="button"
-          onClick={addContainer}
-          className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all self-start sm:self-auto"
-        >
-          <Box size={16} /> Add Container
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <span className="text-xs font-mono text-brand-300 bg-brand-500/10 border border-brand-500/20 px-3 py-1.5 rounded-lg">
+            Total: {formData.containers.length} {formData.containers.length === 1 ? 'Container' : 'Containers'}
+          </span>
+          <button 
+            type="button"
+            onClick={addContainer}
+            className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all"
+          >
+            <Box size={16} /> Add Container
+          </button>
+        </div>
       </div>
       
       {/* Mobile View (Cards) - Optimized for vertical thumb scrolling */}
@@ -4138,159 +5189,429 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
         </table>
       </div>
 
-      {/* Customs Tariff & Service Bill Breakdown */}
-      <div className="glass-panel border border-amber-500/30 rounded-xl p-4 sm:p-5 space-y-4 bg-slate-900/80">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
-          <div>
-            <h4 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-              <FileText size={17} className="text-amber-400" />
-              <span>Customs Tariff & Service Bill Breakdown</span>
-            </h4>
-            <p className="text-xs text-gray-400 mt-0.5">
-              Statutory billing heads & tariffs for {formData.category || 'Transit'} ({formData.containers.length || 1} container/unit)
-            </p>
+      <div className="p-3.5 rounded-xl bg-slate-900/60 border border-white/10 text-xs text-gray-400 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="p-1 rounded bg-brand-500/20 text-brand-300">
+            <Box size={14} />
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const std = getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length));
-                setFormData(prev => ({ ...prev, charges: std }));
-              }}
-              className="text-xs text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1 font-medium"
-              title="Reload statutory Pakistan Customs tariff for this category"
-            >
-              <FileCheck size={13} />
-              <span>Reload Statutory Tariff</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const newCharge: CaseCharge = {
-                  id: `ch_${Date.now()}`,
-                  category: formData.category,
-                  description: 'Port / Terminal Examination Surcharge',
-                  amount: 5000,
-                  taxable: true
-                };
-                setFormData(prev => ({ ...prev, charges: [...(prev.charges || []), newCharge] }));
-              }}
-              className="text-xs text-white bg-brand-600 hover:bg-brand-500 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 font-medium shadow-sm"
-            >
-              <Plus size={13} />
-              <span>Add Charge Item</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Charges Table */}
-        <div className="space-y-2">
-          {((formData.charges && formData.charges.length > 0)
-            ? formData.charges
-            : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length))
-          ).map((ch, cIdx) => (
-            <div key={cIdx} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-2.5 bg-white/5 border border-white/5 rounded-lg hover:border-white/10 transition-colors">
-              <div className="flex-1">
-                <input
-                  type="text"
-                  value={ch.description}
-                  onChange={(e) => {
-                    const currentList = (formData.charges && formData.charges.length > 0)
-                      ? [...formData.charges]
-                      : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length));
-                    currentList[cIdx] = { ...currentList[cIdx], description: e.target.value };
-                    setFormData(prev => ({ ...prev, charges: currentList }));
-                  }}
-                  placeholder="Charge description"
-                  className="w-full bg-transparent border-b border-white/15 focus:border-amber-400 text-xs sm:text-sm text-white px-2 py-1 outline-none"
-                />
-              </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <span className="text-xs text-gray-400 font-mono">PKR</span>
-                <input
-                  type="number"
-                  value={ch.amount}
-                  onChange={(e) => {
-                    const currentList = (formData.charges && formData.charges.length > 0)
-                      ? [...formData.charges]
-                      : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length));
-                    currentList[cIdx] = { ...currentList[cIdx], amount: parseFloat(e.target.value) || 0 };
-                    setFormData(prev => ({ ...prev, charges: currentList }));
-                  }}
-                  className="w-28 sm:w-32 bg-black/40 border border-white/15 rounded px-2 py-1 text-xs sm:text-sm text-right text-emerald-400 font-mono font-semibold outline-none focus:border-amber-400"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const currentList = (formData.charges && formData.charges.length > 0)
-                      ? [...formData.charges]
-                      : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length));
-                    const updated = currentList.filter((_, idx) => idx !== cIdx);
-                    setFormData(prev => ({ ...prev, charges: updated }));
-                  }}
-                  className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/15 rounded transition-colors"
-                  title="Remove charge item"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Total Summary Footer */}
-        <div className="pt-3 border-t border-white/10 flex items-center justify-between">
-          <span className="text-xs sm:text-sm font-semibold uppercase text-gray-300">
-            Total Freight & Customs Billing:
-          </span>
-          <span className="text-base sm:text-lg font-bold text-amber-400 font-mono">
-            PKR {((formData.charges && formData.charges.length > 0)
-              ? formData.charges
-              : getStandardChargesForCategory(formData.category, Math.max(1, formData.containers.length))
-            ).reduce((sum, item) => sum + (Number(item.amount) || 0), 0).toLocaleString()}
+          <span>
+            {formData.containers.length} container{formData.containers.length === 1 ? '' : 's'} recorded. Additional containers can be added anytime.
           </span>
         </div>
-      </div>
-
-      <div className="p-3.5 rounded-xl bg-slate-900/60 border border-white/10 text-xs text-gray-400 flex items-center gap-2.5">
-        <div className="p-1 rounded bg-brand-500/20 text-brand-300">
-          <Truck size={14} />
-        </div>
-        <span>
-          Vehicle allocation, driver credentials, and gate inspection photos are captured in Terminal and Dispatch Operations.
+        <span className="font-mono text-xs text-emerald-400 font-semibold">
+          Total Cargo Weight: {formData.containers.reduce((sum: number, c: any) => sum + (Number(c.weight) || 0), 0).toLocaleString()} KG
         </span>
       </div>
     </div>
   );
 
-  const renderStep7_Submit = () => (
-    <div className="text-center py-12 animate-in zoom-in duration-300">
-      <div className="bg-white/5 rounded-full w-24 h-24 flex items-center justify-center mx-auto mb-6 border-4 border-green-500/20 shadow-[0_0_30px_rgba(34,197,94,0.1)]">
-        <CheckCircle className="text-green-500" size={48} />
-      </div>
-      <h2 className="text-3xl font-bold text-white mb-2">Case Submitted Successfully</h2>
-      <p className="text-gray-400 mb-8 max-w-lg mx-auto">
-        Your case has been registered. Automated notifications have been sent to 
-        <strong className="text-brand-400"> Admin</strong>, 
-        <strong className="text-brand-400"> CRO</strong>, and 
-        <strong className="text-brand-400"> Operations Manager</strong>.
-      </p>
-      
-      <div className="glass-panel inline-block rounded-xl p-6 border border-white/10 mb-8 bg-white/5">
-        <p className="text-sm text-gray-400 uppercase mb-1 tracking-widest">Generated Case Number</p>
-        <p className="text-3xl font-mono text-brand-400 font-bold tracking-wider">{generatedCaseNo}</p>
-      </div>
+  const renderStep7_Submit = () => {
+    if (isCaseSubmitted) {
+      return (
+        <div className="text-center py-10 px-4 animate-in zoom-in duration-300 max-w-2xl mx-auto">
+          <div className="bg-emerald-500/10 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-5 border-4 border-emerald-500/30 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
+            <CheckCircle className="text-emerald-400" size={44} />
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Case Registered Successfully!</h2>
+          <p className="text-gray-300 text-sm mb-6 max-w-lg mx-auto">
+            Your case has been registered and synced with Firebase Firestore. All cargo manifests, routes, and billing details are securely recorded.
+          </p>
+          
+          <div className="glass-panel inline-block rounded-2xl p-6 border border-brand-500/30 mb-8 bg-slate-900/80 shadow-xl">
+            <p className="text-xs text-gray-400 uppercase mb-1 tracking-widest font-semibold">Registered Case Number</p>
+            <p className="text-2xl sm:text-3xl font-mono text-brand-400 font-bold tracking-wider">{submittedCaseData?.caseNo || generatedCaseNo}</p>
+            <p className="text-xs text-emerald-400 mt-2 flex items-center justify-center gap-1.5 font-medium">
+              <CheckCircle size={14} /> Status: {submittedCaseData?.status || 'Active'}
+            </p>
+          </div>
 
-      <div className="flex justify-center gap-4">
-        <button onClick={() => { setView('list'); setStep(1); }} className="bg-white/10 hover:bg-white/20 text-white px-8 py-3 rounded-lg font-medium transition-colors border border-white/10">
-          View All Cases
-        </button>
-        <button onClick={handleStartRegistration} className="bg-brand-600 hover:bg-brand-500 text-white px-8 py-3 rounded-lg font-medium transition-all shadow-lg shadow-brand-600/30">
-          Create Another Case
-        </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl mx-auto">
+            <button 
+              onClick={() => {
+                if (submittedCaseData) {
+                  setSelectedCase(submittedCaseData);
+                  setView('details');
+                } else {
+                  setView('list');
+                }
+                setIsCaseSubmitted(false);
+              }} 
+              className="bg-brand-600 hover:bg-brand-500 text-white px-5 py-3 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-brand-600/30 flex items-center justify-center gap-2"
+            >
+              <Eye size={16} />
+              <span>Finish & View Case</span>
+            </button>
+
+            <button 
+              onClick={handleStartRegistration} 
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-3 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2"
+            >
+              <Plus size={16} />
+              <span>Create Another Case</span>
+            </button>
+
+            <button 
+              onClick={() => setShowRegistrationChargeModal(true)} 
+              className="bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 px-5 py-3 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2"
+            >
+              <DollarSign size={16} />
+              <span>Add More Charges</span>
+            </button>
+
+            <button 
+              onClick={() => { setView('list'); setStep(1); setIsCaseSubmitted(false); }} 
+              className="bg-white/10 hover:bg-white/20 text-white px-5 py-3 rounded-xl text-sm font-semibold transition-colors border border-white/10 flex items-center justify-center gap-2"
+            >
+              <span>View All Cases</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Step 4: Pre-submission Full Case Review
+    const currentCharges = formData.charges || [];
+    const totalChargesAmount = currentCharges.reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0);
+
+    return (
+      <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+        {/* Step 4 Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-mono uppercase bg-brand-500/20 text-brand-300 px-2.5 py-0.5 rounded-full border border-brand-500/30 font-semibold">
+                Step 4 of 4: Final Review
+              </span>
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                Ready for Registration
+              </span>
+            </div>
+            <h3 className="text-xl sm:text-2xl font-bold text-white">Review Case Details & Confirm</h3>
+            <p className="text-xs sm:text-sm text-gray-400">
+              Review all shipment, cargo, containers, and charges before finishing. Click Edit on any section to modify.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setShowRegistrationChargeModal(true)}
+              className="text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-3.5 py-2 rounded-xl transition-colors flex items-center gap-1.5 font-medium"
+            >
+              <Plus size={14} />
+              <span>Add More Charges</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleFinalSubmit}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 shadow-lg shadow-emerald-600/30 transition-all hover:scale-105"
+            >
+              <CheckCircle size={16} />
+              <span>Finish & Register</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Section 1: Route & Client Overview */}
+        <div className="glass-panel p-5 rounded-xl border border-white/10 bg-slate-900/60 space-y-3">
+          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+            <h4 className="text-sm font-bold text-white uppercase flex items-center gap-2">
+              <Briefcase size={16} className="text-brand-400" />
+              <span>1. Client & Service Route</span>
+            </h4>
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              className="text-xs text-brand-300 hover:text-white bg-brand-500/10 hover:bg-brand-500/20 px-2.5 py-1 rounded-lg border border-brand-500/30 flex items-center gap-1 transition-colors"
+            >
+              <Edit size={12} />
+              <span>Edit Route</span>
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+            <div>
+              <span className="text-gray-400 block mb-0.5">Client / Shipper</span>
+              <span className="text-white font-semibold text-sm">{formData.client || 'General Cargo'}</span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Category</span>
+              <span className="text-amber-400 font-semibold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 inline-block">
+                {formData.category}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Port of Loading (POL)</span>
+              <span className="text-white font-medium flex items-center gap-1">
+                <MapPin size={12} className="text-red-400" /> {formData.pol || 'Karachi Port Trust'}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Port of Destination (POD)</span>
+              <span className="text-white font-medium flex items-center gap-1">
+                <Anchor size={12} className="text-emerald-400" /> {formData.pod || 'Not Specified'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 2: Cargo & Shipping Details */}
+        <div className="glass-panel p-5 rounded-xl border border-white/10 bg-slate-900/60 space-y-3">
+          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+            <h4 className="text-sm font-bold text-white uppercase flex items-center gap-2">
+              <FileText size={16} className="text-brand-400" />
+              <span>2. Cargo & B/L Details</span>
+            </h4>
+            <button
+              type="button"
+              onClick={() => setStep(2)}
+              className="text-xs text-brand-300 hover:text-white bg-brand-500/10 hover:bg-brand-500/20 px-2.5 py-1 rounded-lg border border-brand-500/30 flex items-center gap-1 transition-colors"
+            >
+              <Edit size={12} />
+              <span>Edit Cargo</span>
+            </button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 text-xs">
+            <div>
+              <span className="text-gray-400 block mb-0.5">B/L or CRO Number</span>
+              <span className="text-white font-mono font-semibold">{formData.extractedData.blNumber || 'Pending'}</span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Consignee</span>
+              <span className="text-white font-medium">{formData.extractedData.consigneeName || 'Same as Client'}</span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Commodity / Cargo</span>
+              <span className="text-white font-medium">{formData.extractedData.itemDescription || formData.extractedData.itemName || 'Commercial Freight'}</span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Total Gross Weight</span>
+              <span className="text-emerald-400 font-mono font-semibold">
+                {formData.extractedData.totalWeight ? `${formData.extractedData.totalWeight.toLocaleString()} KG` : 'N/A'}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Volume (CBM)</span>
+              <span className="text-white font-mono">{formData.extractedData.volumeCBM ? `${formData.extractedData.volumeCBM} CBM` : 'N/A'}</span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Packages</span>
+              <span className="text-white font-mono">
+                {formData.extractedData.packageCount ? `${formData.extractedData.packageCount} ${formData.extractedData.packagingType || 'Packages'}` : 'N/A'}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Vessel / Voyage</span>
+              <span className="text-white font-medium">{formData.extractedData.vesselName || 'N/A'}</span>
+            </div>
+            <div>
+              <span className="text-gray-400 block mb-0.5">Index Number</span>
+              <span className="text-white font-mono">{formData.extractedData.indexNo || 'N/A'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 3: Containers Manifest */}
+        <div className="glass-panel p-5 rounded-xl border border-white/10 bg-slate-900/60 space-y-3">
+          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-bold text-white uppercase flex items-center gap-2">
+                <Box size={16} className="text-brand-400" />
+                <span>3. Containers Manifest</span>
+              </h4>
+              <span className="text-[10px] font-mono text-brand-300 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded">
+                {formData.containers.length} {formData.containers.length === 1 ? 'Container' : 'Containers'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStep(3)}
+              className="text-xs text-brand-300 hover:text-white bg-brand-500/10 hover:bg-brand-500/20 px-2.5 py-1 rounded-lg border border-brand-500/30 flex items-center gap-1 transition-colors"
+            >
+              <Edit size={12} />
+              <span>Edit Containers</span>
+            </button>
+          </div>
+
+          {formData.containers.length === 0 ? (
+            <p className="text-xs text-gray-400 italic py-2">No containers added yet. You can edit to add containers.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 text-gray-400 uppercase font-semibold">
+                    <th className="py-2 px-3">#</th>
+                    <th className="py-2 px-3">Container Number</th>
+                    <th className="py-2 px-3">Size</th>
+                    <th className="py-2 px-3">Cargo Weight (KG)</th>
+                    <th className="py-2 px-3">Seal Number</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5 font-mono">
+                  {formData.containers.map((c: any, idx: number) => (
+                    <tr key={c.id || idx} className="hover:bg-white/5">
+                      <td className="py-2 px-3 text-gray-500">{idx + 1}</td>
+                      <td className="py-2 px-3 text-white font-bold">{c.number || 'Pending'}</td>
+                      <td className="py-2 px-3 text-brand-300">{c.size || '40ft'}</td>
+                      <td className="py-2 px-3 text-emerald-400 font-semibold">{c.weight ? Number(c.weight).toLocaleString() : '0'}</td>
+                      <td className="py-2 px-3 text-gray-300">{c.seal || c.sealNo || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Section 4: Operational Services Arrangement (Arranged by DPL vs Client) */}
+        {renderServiceArrangementsSection(true)}
+
+        {/* Section 4.1: Charges & Invoicing Breakdown */}
+        <div className="glass-panel p-5 rounded-xl border border-amber-500/30 bg-slate-900/80 space-y-4">
+          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+            <div>
+              <h4 className="text-sm font-bold text-white uppercase flex items-center gap-2">
+                <Receipt size={16} className="text-amber-400" />
+                <span>Invoice Charges & Estimated Billing Summary</span>
+              </h4>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Charges automatically synced from DPL-arranged services above. Client-arranged services are excluded from the invoice.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowRegistrationChargeModal(true)}
+              className="text-xs text-white bg-amber-600 hover:bg-amber-500 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 font-medium shadow-sm"
+            >
+              <Plus size={13} />
+              <span>Add Custom Charge</span>
+            </button>
+          </div>
+
+          {currentCharges.length === 0 ? (
+            <div className="p-5 text-center rounded-xl bg-white/5 border border-dashed border-white/15 text-gray-400 text-xs space-y-2">
+              <p className="text-gray-300">No automatic charges applied. Switch any service above to "DPL" or add custom charges.</p>
+              <button
+                type="button"
+                onClick={() => setShowRegistrationChargeModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40 text-xs font-semibold transition-colors"
+              >
+                <Plus size={13} />
+                <span>+ Add TP Charges / Custom Charges</span>
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {currentCharges.map((ch, cIdx) => (
+                <div key={cIdx} className="flex items-center justify-between p-2.5 bg-white/5 border border-white/5 rounded-lg text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 flex items-center justify-center font-mono text-[10px]">
+                      {cIdx + 1}
+                    </span>
+                    <span className="text-white font-medium">{ch.description}</span>
+                    {ch.syncKey && (
+                      <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 font-mono">
+                        DPL Arranged
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-emerald-400 font-bold">
+                      PKR {Number(ch.amount).toLocaleString()}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (ch.syncKey) {
+                          handleToggleServiceArrangement(ch.syncKey, 'Client');
+                        } else {
+                          const updated = currentCharges.filter((_, idx) => idx !== cIdx);
+                          setFormData(prev => ({ ...prev, charges: updated }));
+                        }
+                      }}
+                      className="p-1 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded transition-colors"
+                      title={ch.syncKey ? "Exclude from invoice (set to Client arranged)" : "Remove charge"}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-white/10 flex items-center justify-between">
+            <span className="text-xs sm:text-sm font-semibold uppercase text-gray-300">
+              Total Estimated Billing:
+            </span>
+            <span className="text-lg font-bold text-amber-400 font-mono">
+              PKR {totalChargesAmount.toLocaleString()}
+            </span>
+          </div>
+        </div>
+
+        {/* Section 5: Attached Documents */}
+        {uploadedDocs.length > 0 && (
+          <div className="glass-panel p-4 rounded-xl border border-white/10 bg-slate-900/60 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileCheck size={16} className="text-emerald-400" />
+              <span className="text-xs text-gray-300 font-medium">
+                {uploadedDocs.length} Attached Shipping Document{uploadedDocs.length === 1 ? '' : 's'} verified and linked to this case.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              className="text-xs text-brand-300 hover:text-white flex items-center gap-1"
+            >
+              <Edit size={12} />
+              <span>Manage Docs</span>
+            </button>
+          </div>
+        )}
+
+        {/* Step 4 Action Buttons */}
+        <div className="pt-4 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setStep(3)}
+              className="bg-white/10 hover:bg-white/15 text-white px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-colors border border-white/10 flex items-center gap-2"
+            >
+              <ArrowLeft size={16} />
+              <span>Back to Containers</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStep(2)}
+              className="bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-colors border border-white/5 flex items-center gap-1.5"
+            >
+              <Edit size={14} />
+              <span>Edit Case Details</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setShowRegistrationChargeModal(true)}
+              className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-1.5"
+            >
+              <Plus size={15} />
+              <span>Add More Charges</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleFinalSubmit}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 sm:px-8 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg shadow-emerald-600/30 transition-all hover:scale-105"
+            >
+              <CheckCircle size={17} />
+              <span>Finish & Register Case</span>
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <>
@@ -4403,7 +5724,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   return;
                 }
                 if (step === 3) {
-                  handleFinalSubmit();
+                  setStep(4);
                   return;
                 }
                 setStep(s => s + 1);
@@ -4415,7 +5736,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             >
               <span>
                 {step === 3
-                  ? 'Submit Case' 
+                  ? 'Review & Confirm Case' 
                   : step === 1 && (files.length > 0 || uploadedDocs.length > 0)
                     ? 'Scan Documents & Continue'
                     : step === 2
@@ -4429,6 +5750,121 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
       </div>
     </div>
     )}
+
+      {/* Add More Charges Modal */}
+      {showRegistrationChargeModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[95] flex items-center justify-center p-4">
+          <div className="glass-card max-w-md w-full p-6 rounded-2xl border border-white/15 bg-slate-900/95 shadow-2xl space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Receipt size={18} className="text-amber-400" />
+                <span>Add Charge Item</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowRegistrationChargeModal(false)}
+                className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1.5">Quick Presets</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { desc: 'TP Charges', amount: 18000 },
+                    { desc: 'Loading / Unloading Charges', amount: 6000 },
+                    { desc: 'Delivery Order (DO) Charges', amount: 8500 },
+                    { desc: 'Vehicle Rent / Freight', amount: 125000 },
+                    { desc: 'Customs Duty / Taxes', amount: 0 }
+                  ].map((preset, pIdx) => (
+                    <button
+                      key={pIdx}
+                      type="button"
+                      onClick={() => {
+                        setNewRegChargeDesc(preset.desc);
+                        if (preset.amount > 0) setNewRegChargeAmount(String(preset.amount));
+                      }}
+                      className="text-[11px] px-2.5 py-1 rounded-lg bg-white/5 hover:bg-amber-500/20 text-gray-300 hover:text-amber-300 border border-white/10 hover:border-amber-500/30 transition-colors flex items-center gap-1"
+                    >
+                      <Plus size={11} /> {preset.desc}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Charge Description</label>
+                <input
+                  type="text"
+                  placeholder="e.g. TP Charges, Demurrage Surcharge, Port Lift Off"
+                  value={newRegChargeDesc}
+                  onChange={(e) => setNewRegChargeDesc(e.target.value)}
+                  className="glass-input w-full p-2.5 rounded-xl text-sm text-white outline-none border border-white/15 focus:border-amber-400"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-300 font-medium block mb-1">Amount (PKR)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono text-gray-400">PKR</span>
+                  <input
+                    type="number"
+                    placeholder="e.g. 15000"
+                    value={newRegChargeAmount}
+                    onChange={(e) => setNewRegChargeAmount(e.target.value)}
+                    className="glass-input w-full pl-12 pr-3 py-2.5 rounded-xl text-sm text-emerald-400 font-mono font-bold outline-none border border-white/15 focus:border-amber-400"
+                  />
+                </div>
+              </div>
+
+              {/* Set as Default for Client Checkbox */}
+              {formData.client && (
+                <div className="p-3 bg-brand-500/10 border border-brand-500/20 rounded-xl">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isSaveAsClientDefault}
+                      onChange={(e) => setIsSaveAsClientDefault(e.target.checked)}
+                      className="mt-0.5 rounded border-white/20 text-brand-500 focus:ring-brand-400 cursor-pointer"
+                    />
+                    <div className="text-xs">
+                      <span className="font-semibold text-brand-300 block">
+                        Set as Default Charge for {formData.client}
+                      </span>
+                      <span className="text-[11px] text-gray-300 leading-tight">
+                        Ye charge {formData.client} ke aainda har case aur invoice par by default automatically lagega.
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowRegistrationChargeModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-medium text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!newRegChargeDesc.trim() || !newRegChargeAmount || Number(newRegChargeAmount) <= 0}
+                onClick={() => handleAddRegistrationChargeItem(newRegChargeDesc, Number(newRegChargeAmount) || 0)}
+                className="bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-5 py-2 rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-600/30 flex items-center gap-1.5"
+              >
+                <Plus size={14} />
+                <span>Save Charge</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Global Camera Modal */}
       {showCamera && (
@@ -4725,6 +6161,28 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   </label>
                 )}
               </div>
+
+              {/* Set as Default for Client Checkbox */}
+              {selectedCase?.clientName && (
+                <div className="p-3 bg-brand-500/10 border border-brand-500/20 rounded-xl">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={saveAsClientDefaultInModal}
+                      onChange={(e) => setSaveAsClientDefaultInModal(e.target.checked)}
+                      className="mt-0.5 rounded border-white/20 text-brand-500 focus:ring-brand-400 cursor-pointer"
+                    />
+                    <div className="text-xs">
+                      <span className="font-semibold text-brand-300 block">
+                        Set as Default Charge for {selectedCase.clientName}
+                      </span>
+                      <span className="text-[11px] text-gray-300 leading-tight">
+                        Ye charge is client ke aainda har case aur invoice par by default automatically apply hoga.
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="p-5 border-t border-white/10 bg-slate-950/50 flex justify-end gap-2.5">
@@ -4734,6 +6192,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   setShowAddChargeModal(false);
                   setIsAddingNewCategory(false);
                   setNewChargeReceipt(null);
+                  setSaveAsClientDefaultInModal(false);
                 }}
                 className="px-4 py-2 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
               >
@@ -4747,7 +6206,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   if (!active) return;
                   const currentCharges = (active.charges && active.charges.length > 0)
                     ? [...active.charges]
-                    : [...getStandardChargesForCategory(active.category, active.containers?.length || 1)];
+                    : [];
                   
                   const updatedCharges = [
                     ...currentCharges,
@@ -4766,12 +6225,30 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   setSelectedCase(updatedCase);
                   if (isEditingCase) setEditedCase(updatedCase);
                   updateCaseInFirestore(updatedCase).catch(e => console.warn("Firestore charge error:", e));
+
+                  // If checked, persist as client default
+                  if (saveAsClientDefaultInModal && active.clientName) {
+                    const clientObj = clientsData.find(c => c.name?.toLowerCase() === active.clientName?.toLowerCase());
+                    if (clientObj) {
+                      saveChargeAsClientDefault(clientObj, {
+                        description: newChargeDesc.trim(),
+                        amount: parseFloat(newChargeAmount) || 0,
+                        category: selectedChargeCategory || active.category,
+                        taxable: true
+                      }).then(updatedClient => {
+                        setClientsData(prev => prev.map(c => c.id === updatedClient.id ? updatedClient : c));
+                        setDraftToast(`✓ Saved "${newChargeDesc.trim()}" as permanent default charge for ${active.clientName}!`);
+                      }).catch(err => console.warn("Could not save client default:", err));
+                    }
+                  }
+
                   setShowAddChargeModal(false);
                   setSelectedChargeCategory('');
                   setNewChargeDesc('');
                   setNewChargeAmount('');
                   setNewChargeReceipt(null);
                   setIsAddingNewCategory(false);
+                  setSaveAsClientDefaultInModal(false);
                 }}
                 disabled={!newChargeDesc.trim() || !newChargeAmount || isUploadingReceipt}
                 className="bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white px-5 py-2 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-brand-600/30 flex items-center gap-1.5"
@@ -5479,6 +6956,136 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Add New Port Modal (In-flow without leaving page) */}
+      {showPortModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="glass-card p-5 sm:p-6 rounded-2xl w-full max-w-md border border-white/10 shadow-2xl bg-slate-900/95 space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-white/10">
+              <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                <Anchor size={20} className="text-brand-400" />
+                <span>Add Port / Terminal</span>
+              </h3>
+              <button 
+                type="button"
+                onClick={() => { setShowPortModal(false); setPortTargetField(null); }}
+                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-400">
+              {portTargetField === 'pol' 
+                ? 'Add a new Port of Loading. It will be immediately selected.' 
+                : portTargetField === 'pod' 
+                  ? 'Add a new Port of Destination. It will be immediately selected.' 
+                  : 'Add a new Pakistan or International port/terminal.'}
+            </p>
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="text-xs font-semibold text-gray-300 block mb-1">
+                  Port / Terminal Name <span className="text-red-400">*</span>
+                </label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. Gwadar Deep Sea Port / Sialkot Dry Port" 
+                  value={newPortName}
+                  onChange={(e) => setNewPortName(e.target.value)}
+                  className="w-full glass-input rounded-xl p-3 outline-none text-white text-sm bg-black/50 border border-white/15 focus:border-brand-400"
+                  autoFocus
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-300 block mb-1">
+                    Port Code / Acronym
+                  </label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. GWD, SKT" 
+                    value={newPortCode}
+                    onChange={(e) => setNewPortCode(e.target.value.toUpperCase())}
+                    className="w-full glass-input rounded-xl p-3 outline-none text-white text-sm bg-black/50 border border-white/15 focus:border-brand-400 uppercase font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-300 block mb-1">
+                    Port Type
+                  </label>
+                  <select
+                    value={newPortType}
+                    onChange={(e) => setNewPortType(e.target.value)}
+                    className="w-full glass-input rounded-xl p-3 outline-none text-white text-sm bg-black/50 border border-white/15 focus:border-brand-400"
+                  >
+                    <option value="Dry Port" className="bg-slate-900">Dry Port (Inland)</option>
+                    <option value="Sea Port" className="bg-slate-900">Sea Port (Coastal)</option>
+                    <option value="Border Terminal" className="bg-slate-900">Border Terminal</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button 
+                type="button"
+                onClick={() => { setShowPortModal(false); setPortTargetField(null); }}
+                className="flex-1 bg-white/10 hover:bg-white/15 text-gray-300 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                type="button"
+                onClick={() => handleAddPort()}
+                disabled={!newPortName.trim()}
+                className="flex-1 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white py-2.5 rounded-xl font-semibold text-xs sm:text-sm shadow-lg shadow-brand-600/20 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Plus size={16} /> Add & Select Port
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full-Featured Client Registration & Default Tariff Modal */}
+      <ClientRegistrationModal
+        isOpen={showAddClientModal}
+        onClose={() => setShowAddClientModal(false)}
+        defaultCategory={formData.category || 'Bonded Carrier'}
+        onSave={(client, appliedCharges) => {
+          setClientsData(prev => [client, ...prev.filter(c => c.name.toLowerCase() !== client.name.toLowerCase())]);
+          setRegisteredClients(prev => Array.from(new Set([client.name, ...prev])));
+
+          // Apply saved default arrangements to formData
+          const newArrangements = { ...formData.serviceArrangements };
+          if (client.defaultServiceArrangements) {
+            Object.entries(client.defaultServiceArrangements).forEach(([key, val]) => {
+              if (newArrangements[key]) {
+                newArrangements[key] = {
+                  ...newArrangements[key],
+                  arrangedBy: val
+                };
+              }
+            });
+          }
+
+          setFormData(prev => ({
+            ...prev,
+            client: client.name,
+            category: client.defaultCaseCategory || prev.category || 'Bonded Carrier',
+            serviceArrangements: newArrangements,
+            charges: appliedCharges.length > 0 ? appliedCharges : prev.charges
+          }));
+
+          setIsOtherClient(false);
+          setOtherClientName('');
+          setShowAddClientModal(false);
+          setDraftToast(`✓ Client "${client.name}" registered with default tariff and service arrangements applied!`);
+        }}
+      />
 
       {/* Dedicated In-App PDF Viewer Modal */}
       <PdfViewerModal

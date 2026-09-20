@@ -353,67 +353,8 @@ function generateStationCases(
   fromDateStr: string,
   toDateStr: string
 ) {
-  const cases = [];
-  const start = new Date(fromDateStr).getTime();
-  const end = new Date(toDateStr).getTime();
-  const sampleCount = Math.min(6, Math.max(3, Math.round(totalMoved / 40)));
-
-  const clients = [
-    'Global Traders Ltd', 'Kabul Express Logistics', 'Swift Freight Cargo', 
-    'Pak-Afghan Transit Link', 'Indus Valley Corporation', 'Asia Continental Shipping',
-    'National Transit Cargo', 'Pamir Highway Forwarders'
-  ];
-
-  const blPrefixes = ['MSK', 'HLC', 'COS', 'CMA', 'MSC', 'ONE', 'OOCL'];
-  const cntrPrefixes = ['MSKU', 'HLCU', 'TGHU', 'CMAU', 'MEDU', 'ONEY', 'FSCU'];
-
-  for (let i = 0; i < sampleCount; i++) {
-    // Generate pseudo-deterministic values
-    const hash = (station.name.length * 17 + i * 31 + totalMoved) % 1000;
-    const randomTime = start + ((hash * 997) % (end - start + 1));
-    const d = new Date(randomTime);
-    const dateFormatted = d.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
-
-    let category = 'Afghan Transit';
-    if (i % 5 === 0) category = 'Customs Clearance';
-    else if (i % 5 === 1) category = 'Afghan Transit';
-    else if (i % 5 === 2) category = 'Bonded Carrier';
-    else if (i % 5 === 3) category = 'TIR Carnet';
-    else category = 'Transportation of Private Cargo';
-
-    // Override if border terminal
-    if (station.type === 'Border Terminal') {
-      category = (i % 2 === 0) ? 'Afghan Transit' : 'TIR Carnet';
-    }
-
-    const blNo = `${blPrefixes[i % blPrefixes.length]}-${hash + 1000}`;
-    const cntrNo = `${cntrPrefixes[i % cntrPrefixes.length]}-${(hash * 7 + 1000000).toString().slice(0, 7)}`;
-    const size = (hash % 3 === 0) ? '20ft' : '40ft High Cube';
-    const client = clients[(i + hash) % clients.length];
-
-    let destination = station.city;
-    if (category === 'Afghan Transit') {
-      destination = station.type === 'Border Terminal' ? 'Kabul / Kandahar Inland' : 'Torkham / Chaman Border (ATT)';
-    } else if (category === 'Bonded Carrier') {
-      destination = `${station.name} (Customs Bond)`;
-    } else if (category === 'TIR Carnet') {
-      destination = station.code === 'TFT' ? 'Taftan ⇄ Mirjaveh (Iran / Turkey)' : 'Torkham ⇄ Kabul / Central Asia (TIR)';
-    } else {
-      destination = `${station.city} Commercial Yard`;
-    }
-
-    cases.push({
-      caseNo: `DPL-26-${(10000 + hash + i).toString().slice(1)}`,
-      blNumber: blNo,
-      category: category,
-      containerNo: cntrNo,
-      size: size,
-      destination: destination,
-      completionDate: dateFormatted
-    });
-  }
-
-  return cases;
+  // Pure live data - no artificial dummy cases
+  return [];
 }
 
 export function calculateStationMovements(
@@ -425,14 +366,6 @@ export function calculateStationMovements(
   selectedPort: string = 'ALL',
   categoryFilter: string = 'ALL'
 ): { movements: StationMovementDetail[]; summary: StationAnalyticsSummary } {
-  const from = new Date(fromDateStr);
-  const to = new Date(toDateStr);
-  const diffTime = Math.max(1, Math.abs(to.getTime() - from.getTime()));
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  
-  // Normalize ratio against standard 30-day baseline
-  const durationFactor = Math.min(4.0, Math.max(0.15, diffDays / 30));
-
   // Determine if specific ports are filtered
   const portIsSpecific = selectedPort && selectedPort !== 'ALL';
   const polIsSpecific = selectedPOL !== 'ALL';
@@ -457,7 +390,6 @@ export function calculateStationMovements(
       const matchPOL = station.name.toLowerCase().includes(selectedPOL.toLowerCase()) || 
                        selectedPOL.toLowerCase().includes(station.name.toLowerCase()) ||
                        station.code.toLowerCase() === selectedPOL.toLowerCase();
-      // If it's a dry port or border, check if this station's corridors mention the selected POL
       const matchCorridor = station.corridors.some(c => c.toLowerCase().includes(selectedPOL.toLowerCase()));
       if (!matchPOL && !matchCorridor) {
         continue;
@@ -475,88 +407,66 @@ export function calculateStationMovements(
       }
     }
 
-    // Calculate dynamic volumes
-    const calculatedTotal = Math.max(8, Math.round(station.baseMonthlyVolume * durationFactor));
-    
-    // Allocate realistic distribution including TIR Carnet (international road transit)
-    // Border terminals and international dry ports handle TIR
-    const tirRatio = (station.type === 'Border Terminal') ? 0.12 : (station.type === 'Sea Port' ? 0.05 : 0.04);
-    const tirCount = Math.max(1, Math.round(calculatedTotal * tirRatio));
+    // Filter matching live cases for this station and date range
+    const matchingLive = (liveCases || []).filter(c => {
+      const cDate = c.createdAt ? c.createdAt.split('T')[0] : '';
+      if (cDate && (cDate < fromDateStr || cDate > toDateStr)) {
+        return false;
+      }
+      const polMatch = c.pol && (station.name.toLowerCase().includes(c.pol.toLowerCase()) || station.code.toLowerCase() === c.pol.toLowerCase());
+      const podMatch = c.pod && (station.name.toLowerCase().includes(c.pod.toLowerCase()) || station.code.toLowerCase() === c.pod.toLowerCase());
+      const corridorMatch = station.corridors.some(corr => 
+        (c.pol && corr.toLowerCase().includes(c.pol.toLowerCase())) ||
+        (c.pod && corr.toLowerCase().includes(c.pod.toLowerCase()))
+      );
+      return polMatch || podMatch || corridorMatch;
+    });
 
-    const transitCount = Math.round(calculatedTotal * Math.max(0.04, station.transitRatio - tirRatio * 0.5));
-    const clearanceCount = Math.round(calculatedTotal * station.clearanceRatio);
-    const bondedCount = Math.round(calculatedTotal * station.bondedRatio);
-    const privateCount = Math.max(0, calculatedTotal - (transitCount + clearanceCount + bondedCount + tirCount));
+    // Calculate actual counts purely from live data
+    const calculatedTotal = matchingLive.reduce((sum, c) => sum + (c.containers?.length || 1), 0);
 
-    // Container sizing
-    const twentyFtCount = Math.round(calculatedTotal * 0.42);
-    const fortyFtCount = calculatedTotal - twentyFtCount;
+    const clearanceCount = matchingLive.filter(c => c.category === 'Customs Clearance').reduce((sum, c) => sum + (c.containers?.length || 1), 0);
+    const transitCount = matchingLive.filter(c => c.category === 'Afghan Transit').reduce((sum, c) => sum + (c.containers?.length || 1), 0);
+    const bondedCount = matchingLive.filter(c => c.category === 'Bonded Carrier').reduce((sum, c) => sum + (c.containers?.length || 1), 0);
+    const tirCount = matchingLive.filter(c => c.category === 'TIR' || c.category === 'TIR Carnet').reduce((sum, c) => sum + (c.containers?.length || 1), 0);
+    const privateCount = matchingLive.filter(c => c.category === 'Transportation of Private Cargo' || c.category === 'Private Cargo').reduce((sum, c) => sum + (c.containers?.length || 1), 0);
 
-    // Generate destinations breakdown for this station
+    let twentyFtCount = 0;
+    let fortyFtCount = 0;
+    matchingLive.forEach(c => {
+      if (c.containers && c.containers.length > 0) {
+        c.containers.forEach(cntr => {
+          if (cntr.size === '20ft') twentyFtCount++;
+          else fortyFtCount++;
+        });
+      } else {
+        fortyFtCount++;
+      }
+    });
+
     const destinationsBreakdown = [
       {
-        name: 'Faisalabad Dry Port',
+        name: `${station.city} Hub`,
         type: 'Dry Port' as const,
-        containers: Math.max(1, Math.round(bondedCount * 0.32)),
-        twentyFt: Math.max(1, Math.round(bondedCount * 0.32 * 0.42)),
-        fortyFt: Math.max(0, Math.round(bondedCount * 0.32 * 0.58))
-      },
-      {
-        name: 'Sialkot Dry Port (SICT)',
-        type: 'Dry Port' as const,
-        containers: Math.max(1, Math.round(bondedCount * 0.28)),
-        twentyFt: Math.max(1, Math.round(bondedCount * 0.28 * 0.42)),
-        fortyFt: Math.max(0, Math.round(bondedCount * 0.28 * 0.58))
-      },
-      {
-        name: 'Lahore Dry Port (NLC/MICT)',
-        type: 'Dry Port' as const,
-        containers: Math.max(1, Math.round(bondedCount * 0.25)),
-        twentyFt: Math.max(1, Math.round(bondedCount * 0.25 * 0.42)),
-        fortyFt: Math.max(0, Math.round(bondedCount * 0.25 * 0.58))
-      },
-      {
-        name: 'Multan / Rawalpindi Dry Ports',
-        type: 'Dry Port' as const,
-        containers: Math.max(1, Math.max(1, bondedCount - Math.round(bondedCount * 0.85))),
-        twentyFt: Math.max(1, Math.round(bondedCount * 0.15 * 0.42)),
-        fortyFt: Math.max(0, Math.round(bondedCount * 0.15 * 0.58))
+        containers: calculatedTotal,
+        twentyFt: twentyFtCount,
+        fortyFt: fortyFtCount
       }
     ];
 
-    // Generate countries / foreign ports breakdown for Afghan Transit and TIR
-    const countriesBreakdown = [
-      { country: 'Afghanistan', portOrTerminal: 'Torkham ⇄ Kabul / Jalalabad', containers: Math.round(transitCount * 0.55) },
-      { country: 'Afghanistan', portOrTerminal: 'Chaman ⇄ Kandahar / Spin Boldak', containers: Math.round(transitCount * 0.35) },
-      { country: 'Afghanistan', portOrTerminal: 'Ghulam Khan ⇄ Khost Province', containers: Math.max(1, transitCount - Math.round(transitCount * 0.9)) },
-      { country: 'Iran / Turkey (TIR)', portOrTerminal: 'Taftan Border ⇄ Mirjaveh / Bazargan', containers: Math.round(tirCount * 0.65) },
-      { country: 'Uzbekistan / Central Asia (TIR)', portOrTerminal: 'Torkham Border ⇄ Hairatan / Termez', containers: Math.max(1, tirCount - Math.round(tirCount * 0.65)) }
-    ];
+    const countriesBreakdown = transitCount > 0 ? [
+      { country: 'Afghanistan', portOrTerminal: `${station.name} Transit`, containers: transitCount }
+    ] : [];
 
-    // Generate recent dispatches
-    let recentCases = generateStationCases(station, calculatedTotal, fromDateStr, toDateStr);
-
-    // Merge any live cases matching this station
-    if (liveCases && liveCases.length > 0) {
-      const matchingLive = liveCases.filter(c => {
-        const polMatch = c.pol && (station.name.toLowerCase().includes(c.pol.toLowerCase()) || station.code.toLowerCase() === c.pol.toLowerCase());
-        const podMatch = c.pod && (station.name.toLowerCase().includes(c.pod.toLowerCase()) || station.code.toLowerCase() === c.pod.toLowerCase());
-        return polMatch || podMatch;
-      });
-
-      if (matchingLive.length > 0) {
-        const liveConverted = matchingLive.map((lc, idx) => ({
-          caseNo: lc.caseNo || `DPL-LIVE-${idx + 1}`,
-          blNumber: lc.extractedData?.blNumber || `BL-PK-${idx + 100}`,
-          category: lc.category || 'Customs Clearance',
-          containerNo: lc.containers?.[0]?.number || `CNTR-${idx + 1000}`,
-          size: lc.containers?.[0]?.size || '40ft',
-          destination: lc.pod || station.city,
-          completionDate: lc.createdAt ? new Date(lc.createdAt).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Recent'
-        }));
-        recentCases = [...liveConverted, ...recentCases].slice(0, 8);
-      }
-    }
+    const recentCases = matchingLive.map((lc, idx) => ({
+      caseNo: lc.caseNo || `DPL-${idx + 1}`,
+      blNumber: lc.extractedData?.blNumber || `BL-${idx + 100}`,
+      category: lc.category || 'Customs Clearance',
+      containerNo: lc.containers?.[0]?.number || `CNTR-${idx + 1000}`,
+      size: lc.containers?.[0]?.size || '40ft',
+      destination: lc.pod || station.city,
+      completionDate: lc.createdAt ? new Date(lc.createdAt).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Recent'
+    })).slice(0, 10);
 
     // Filter movements by category if specified
     if (categoryFilter && categoryFilter !== 'ALL') {

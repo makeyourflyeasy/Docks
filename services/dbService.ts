@@ -18,7 +18,8 @@ import {
   getActiveDbUserSession,
   clearActiveDbUserSession
 } from './firebase';
-import { Case, FinanceEntry, Vehicle, AppNotification, AppUser, Client, UserRole } from '../types';
+import { Case, FinanceEntry, Vehicle, AppNotification, AppUser, Client, UserRole, RecurringFinanceTemplate, DestinationStaff, StaffLedgerEntry } from '../types';
+import { safeAppStorage } from './storage';
 
 /**
  * Sanitizes an object recursively to ensure it is 100% compliant with Firestore:
@@ -162,6 +163,15 @@ export async function updateFinanceInFirestore(entry: FinanceEntry): Promise<voi
   }
 }
 
+export async function deleteFinanceFromFirestore(financeId: number | string): Promise<void> {
+  const path = 'finances';
+  try {
+    await deleteDoc(doc(db, path, String(financeId)));
+  } catch (error) {
+    console.warn(`Firestore deleteFinance warning:`, error);
+  }
+}
+
 // VEHICLES
 export function subscribeToVehicles(
   onData: (items: Vehicle[]) => void,
@@ -197,6 +207,26 @@ export async function saveVehicleToFirestore(vehicle: Vehicle): Promise<void> {
     await setDoc(doc(db, path, docId), payload);
   } catch (error) {
     console.warn(`Firestore saveVehicle warning:`, error);
+  }
+}
+
+export async function updateVehicleInFirestore(vehicle: Vehicle): Promise<void> {
+  const path = 'vehicles';
+  const docId = String(vehicle.id);
+  try {
+    const payload = sanitizeForFirestore({ ...vehicle, updatedAt: new Date().toISOString() });
+    await setDoc(doc(db, path, docId), payload, { merge: true });
+  } catch (error) {
+    console.warn(`Firestore updateVehicle warning:`, error);
+  }
+}
+
+export async function deleteVehicleFromFirestore(vehicleId: number | string): Promise<void> {
+  const path = 'vehicles';
+  try {
+    await deleteDoc(doc(db, path, String(vehicleId)));
+  } catch (error) {
+    console.warn(`Firestore deleteVehicle warning:`, error);
   }
 }
 
@@ -261,7 +291,7 @@ export const DEFAULT_DATABASE_USERS: AppUser[] = [
   { id: 6, userId: 'loading01', password: 'dpl01234', name: 'Loading Staff', role: UserRole.LOADING_PORT_STAFF, contact: '0302-3344556', email: 'loading@docks.com', status: 'ACTIVE' },
   { id: 7, userId: 'lahore', password: 'dpl01234', name: 'Destination Officer (Lahore)', role: UserRole.UNLOADING_PORT_STAFF, contact: '0303-4455667', email: 'lahore.destination@docks.com', status: 'ACTIVE' },
   { id: 8, userId: 'peshawar', password: 'dpl01234', name: 'Destination Officer (Peshawar)', role: UserRole.UNLOADING_PORT_STAFF, contact: '0303-9988776', email: 'peshawar.destination@docks.com', status: 'ACTIVE' },
-  { id: 9, userId: 'client01', password: 'dpl01234', name: 'Trial Client', role: UserRole.CLIENT, contact: '021-111-222-333', email: 'client01@docks.com', status: 'ACTIVE', clientName: 'Trial Client' }
+  { id: 9, userId: 'client01', password: 'dpl01234', name: 'Client User', role: UserRole.CLIENT, contact: '021-111-222-333', email: 'client01@docks.com', status: 'ACTIVE', clientName: 'Client Account' }
 ];
 
 let hasSeededInitialUsers = false;
@@ -485,9 +515,7 @@ export async function getUserProfile(userId: string): Promise<AppUser | null> {
 }
 
 // CLIENTS
-export const DEFAULT_CLIENTS: string[] = [
-  'Trial Client'
-];
+export const DEFAULT_CLIENTS: string[] = [];
 
 export function subscribeToClients(
   onData: (clients: Client[]) => void,
@@ -510,6 +538,15 @@ export function subscribeToClients(
   );
 }
 
+export async function deleteClientFromFirestore(clientId: string): Promise<void> {
+  const path = 'clients';
+  try {
+    await deleteDoc(doc(db, path, clientId));
+  } catch (error) {
+    console.warn(`Firestore deleteClient warning:`, error);
+  }
+}
+
 export async function saveClientToFirestore(client: Partial<Client>): Promise<string> {
   const path = 'clients';
   const docId = client.id || `client_${Date.now()}`;
@@ -523,11 +560,19 @@ export async function saveClientToFirestore(client: Partial<Client>): Promise<st
       mobileNumber: client.mobileNumber || '',
       whatsappNumber: client.whatsappNumber || '',
       email: client.email || '',
+      cnic: client.cnic || '',
       ntn: client.ntn || '',
       strn: client.strn || '',
-      defaultCaseCategory: client.defaultCaseCategory || 'Afghan Transit',
+      businessCardUrl: client.businessCardUrl || '',
+      contractLetterUrl: client.contractLetterUrl || '',
+      nicDocUrl: client.nicDocUrl || '',
+      defaultCaseCategory: client.defaultCaseCategory || 'Bonded Carrier',
+      defaultServiceArrangements: client.defaultServiceArrangements || {},
       defaultCharges: client.defaultCharges || [],
       openingBalance: client.openingBalance || 0,
+      userId: client.userId || '',
+      password: client.password || '',
+      loginEnabled: client.loginEnabled ?? false,
       createdAt: client.createdAt || new Date().toISOString()
     });
     await setDoc(doc(db, path, docId), payload, { merge: true });
@@ -535,6 +580,121 @@ export async function saveClientToFirestore(client: Partial<Client>): Promise<st
   } catch (error) {
     console.warn(`Firestore saveClient warning:`, error);
     return docId;
+  }
+}
+
+// DESTINATION STAFF
+export function subscribeToDestinationStaff(
+  onData: (staff: DestinationStaff[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = 'destination_staff';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const list: DestinationStaff[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({ ...docSnap.data(), id: docSnap.id } as DestinationStaff);
+      });
+      onData(list);
+    },
+    (error) => {
+      console.warn(`Firestore subscription notice on ${path}:`, error);
+      if (onError) onError(error);
+    }
+  );
+}
+
+export async function saveDestinationStaffToFirestore(staff: Partial<DestinationStaff>): Promise<string> {
+  const path = 'destination_staff';
+  const docId = staff.id || `dst_${Date.now()}`;
+  try {
+    const payload = sanitizeForFirestore({
+      id: docId,
+      name: staff.name?.trim() || 'Staff Representative',
+      station: staff.station || 'Karachi Port',
+      role: staff.role || 'Station Supervisor',
+      contact: staff.contact || '',
+      cnic: staff.cnic || '',
+      address: staff.address || '',
+      commissionOrSalary: staff.commissionOrSalary || 0,
+      paymentType: staff.paymentType || 'Monthly Salary',
+      status: staff.status || 'Active',
+      notes: staff.notes || '',
+      createdAt: staff.createdAt || new Date().toISOString()
+    });
+    await setDoc(doc(db, path, docId), payload, { merge: true });
+    return docId;
+  } catch (error) {
+    console.warn(`Firestore saveDestinationStaff warning:`, error);
+    return docId;
+  }
+}
+
+export async function deleteDestinationStaffFromFirestore(staffId: string): Promise<void> {
+  const path = 'destination_staff';
+  try {
+    await deleteDoc(doc(db, path, staffId));
+  } catch (error) {
+    console.warn(`Firestore deleteDestinationStaff warning:`, error);
+  }
+}
+
+// STAFF DUAL LEDGERS (Salary & Daily Routine / Petty Cash)
+export function subscribeToStaffLedgers(
+  onData: (entries: StaffLedgerEntry[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = 'staff_ledgers';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const list: StaffLedgerEntry[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({ ...docSnap.data(), id: docSnap.id } as StaffLedgerEntry);
+      });
+      onData(list);
+    },
+    (error) => {
+      console.warn(`Firestore subscription notice on ${path}:`, error);
+      if (onError) onError(error);
+    }
+  );
+}
+
+export async function saveStaffLedgerEntryToFirestore(entry: Partial<StaffLedgerEntry>): Promise<string> {
+  const path = 'staff_ledgers';
+  const docId = entry.id || `sled_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  try {
+    const payload = sanitizeForFirestore({
+      id: docId,
+      staffId: entry.staffId || '',
+      staffName: entry.staffName || 'Staff Member',
+      type: entry.type || 'SALARY',
+      date: entry.date || new Date().toISOString().split('T')[0],
+      description: entry.description || '',
+      category: entry.category || 'General',
+      debit: Number(entry.debit) || 0,
+      credit: Number(entry.credit) || 0,
+      balance: Number(entry.balance) || 0,
+      receiptUrl: entry.receiptUrl || '',
+      notes: entry.notes || '',
+      settled: entry.settled ?? false
+    });
+    await setDoc(doc(db, path, docId), payload, { merge: true });
+    return docId;
+  } catch (error) {
+    console.warn(`Firestore saveStaffLedger warning:`, error);
+    return docId;
+  }
+}
+
+export async function deleteStaffLedgerEntryFromFirestore(entryId: string): Promise<void> {
+  const path = 'staff_ledgers';
+  try {
+    await deleteDoc(doc(db, path, entryId));
+  } catch (error) {
+    console.warn(`Firestore deleteStaffLedger warning:`, error);
   }
 }
 
@@ -588,6 +748,138 @@ export async function exportCompleteDatabaseSnapshot(): Promise<{
     vehicles,
     clients,
     users
+  };
+}
+
+/**
+ * Selective export based on user-chosen modules:
+ * Full Backup, All Cases, All Finance, All Vehicles, All Clients
+ */
+export async function exportSelectiveDatabaseBackup(options: {
+  cases: boolean;
+  finance: boolean;
+  vehicles: boolean;
+  clients: boolean;
+  companyInfo?: any;
+}): Promise<any> {
+  const promises: Promise<any>[] = [];
+
+  promises.push(
+    options.cases 
+      ? getDocs(collection(db, 'cases')).catch(() => ({ docs: [] })) 
+      : Promise.resolve({ docs: [] })
+  );
+  promises.push(
+    options.finance 
+      ? getDocs(collection(db, 'finances')).catch(() => ({ docs: [] })) 
+      : Promise.resolve({ docs: [] })
+  );
+  promises.push(
+    options.vehicles 
+      ? getDocs(collection(db, 'vehicles')).catch(() => ({ docs: [] })) 
+      : Promise.resolve({ docs: [] })
+  );
+  promises.push(
+    options.clients 
+      ? getDocs(collection(db, 'clients')).catch(() => ({ docs: [] })) 
+      : Promise.resolve({ docs: [] })
+  );
+
+  const [casesSnap, finSnap, vehSnap, clientSnap] = await Promise.all(promises);
+
+  const cases: Case[] = (casesSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+  const finance: FinanceEntry[] = (finSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+  const vehicles: Vehicle[] = (vehSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+  const clients: Client[] = (clientSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+
+  const isFull = options.cases && options.finance && options.vehicles && options.clients;
+
+  return {
+    version: '2.0.0',
+    timestamp: new Date().toISOString(),
+    backupType: isFull ? 'FULL' : 'SELECTIVE',
+    app: 'DOCKS (PVT) LTD - ERP & Logistics Management',
+    includedModules: {
+      cases: options.cases,
+      finance: options.finance,
+      vehicles: options.vehicles,
+      clients: options.clients
+    },
+    stats: {
+      casesCount: cases.length,
+      financeCount: finance.length,
+      vehiclesCount: vehicles.length,
+      clientsCount: clients.length
+    },
+    companyInfo: options.companyInfo || null,
+    cases: options.cases ? cases : [],
+    finance: options.finance ? finance : [],
+    vehicles: options.vehicles ? vehicles : [],
+    clients: options.clients ? clients : []
+  };
+}
+
+/**
+ * Permanently wipes live operational data from Firebase Firestore (Cases, Finance, Vehicles, Clients, Notifications).
+ * Clears local and session storage caches as well.
+ */
+export async function wipeCompleteDatabase(): Promise<{
+  success: boolean;
+  deletedCounts: {
+    cases: number;
+    finances: number;
+    vehicles: number;
+    clients: number;
+    notifications: number;
+  };
+}> {
+  const deletedCounts = {
+    cases: 0,
+    finances: 0,
+    vehicles: 0,
+    clients: 0,
+    notifications: 0
+  };
+
+  const collectionsToWipe = ['cases', 'finances', 'vehicles', 'clients', 'notifications'] as const;
+
+  for (const colName of collectionsToWipe) {
+    try {
+      const snap = await getDocs(collection(db, colName));
+      const deletePromises = snap.docs.map(async (docSnap) => {
+        await deleteDoc(doc(db, colName, docSnap.id));
+        if (colName === 'cases') deletedCounts.cases++;
+        else if (colName === 'finances') deletedCounts.finances++;
+        else if (colName === 'vehicles') deletedCounts.vehicles++;
+        else if (colName === 'clients') deletedCounts.clients++;
+        else if (colName === 'notifications') deletedCounts.notifications++;
+      });
+      await Promise.all(deletePromises);
+    } catch (err) {
+      console.warn(`Error wiping collection ${colName}:`, err);
+    }
+  }
+
+  // Clear local storage / session storage cache for cases, finances, vehicles, drafts
+  try {
+    const keysToRemove = [
+      'dpl_reg_draft_active', 'dpl_reg_step', 'dpl_reg_caseno', 'dpl_reg_formdata', 
+      'dpl_reg_docs', 'dpl_reg_updated_at', 'dpl_reg_view', 'dpl_cached_cases',
+      'dpl_cached_finances', 'dpl_cached_vehicles', 'dpl_cached_clients',
+      'dpl_finance_active_tab', 'dpl_dashboard_timeframe'
+    ];
+    keysToRemove.forEach(k => {
+      safeAppStorage.removeItem(k);
+      try { localStorage.removeItem(k); } catch (_) {}
+      try { sessionStorage.removeItem(k); } catch (_) {}
+    });
+  } catch (e) {
+    console.warn('Storage clearance notice:', e);
+  }
+
+  return {
+    success: true,
+    deletedCounts
   };
 }
 
@@ -674,4 +966,110 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
       users: userCount
     }
   };
+}
+
+// RECURRING FINANCE TEMPLATES (Monthly Fixed Expenses & Receivables)
+export const DEFAULT_RECURRING_TEMPLATES: RecurringFinanceTemplate[] = [
+  {
+    id: 'rec_office_rent',
+    title: 'Head Office Monthly Rent',
+    type: 'PAYABLE',
+    amount: 150000,
+    party: 'Karachi Corporate Plaza Landlord',
+    category: 'Rent & Facilities',
+    frequency: 'MONTHLY_FIRST',
+    active: true,
+    notes: 'Payable automatically on 1st of every month'
+  },
+  {
+    id: 'rec_vehicle_loan',
+    title: 'Fleet Vehicle Financing (EMI)',
+    type: 'PAYABLE',
+    amount: 85000,
+    party: 'Meezan Bank Ltd (Auto Ijarah)',
+    category: 'Loan Repayment',
+    frequency: 'MONTHLY_FIRST',
+    active: true,
+    notes: 'Monthly loan installment'
+  },
+  {
+    id: 'rec_internet_util',
+    title: 'High Speed Optical Internet & Telecom',
+    type: 'PAYABLE',
+    amount: 14500,
+    party: 'PTCL Corporate Services',
+    category: 'Utilities & Telecom',
+    frequency: 'MONTHLY_FIRST',
+    active: true,
+    notes: 'Monthly broadband bill'
+  },
+  {
+    id: 'rec_security_guard',
+    title: 'Armed Security & Port Yard Retainer',
+    type: 'PAYABLE',
+    amount: 65000,
+    party: 'Askari Security Guards (Pvt) Ltd',
+    category: 'Security & Operations',
+    frequency: 'MONTHLY_FIRST',
+    active: true,
+    notes: 'Monthly security guard services'
+  }
+];
+
+export function subscribeToRecurringTemplates(
+  onData: (items: RecurringFinanceTemplate[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = 'recurring_templates';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      if (snapshot.empty) {
+        // Initialize default templates
+        DEFAULT_RECURRING_TEMPLATES.forEach(async (tpl) => {
+          try {
+            await setDoc(doc(db, path, tpl.id), sanitizeForFirestore(tpl));
+          } catch (e) {
+            console.warn('Seed recurring template warning:', e);
+          }
+        });
+        onData(DEFAULT_RECURRING_TEMPLATES);
+        return;
+      }
+      const items: RecurringFinanceTemplate[] = [];
+      snapshot.forEach((docSnap) => {
+        items.push({ ...docSnap.data(), id: docSnap.id } as RecurringFinanceTemplate);
+      });
+      onData(items);
+    },
+    (error) => {
+      console.warn(`Firestore subscription notice on ${path}:`, error);
+      if (onError) onError(error);
+      onData(DEFAULT_RECURRING_TEMPLATES);
+    }
+  );
+}
+
+export async function saveRecurringTemplateToFirestore(tpl: RecurringFinanceTemplate): Promise<void> {
+  const path = 'recurring_templates';
+  const docId = tpl.id || `rec_${Date.now()}`;
+  try {
+    const payload = sanitizeForFirestore({
+      ...tpl,
+      id: docId,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(doc(db, path, docId), payload, { merge: true });
+  } catch (error) {
+    console.warn(`Firestore saveRecurringTemplate warning:`, error);
+  }
+}
+
+export async function deleteRecurringTemplateFromFirestore(id: string): Promise<void> {
+  const path = 'recurring_templates';
+  try {
+    await deleteDoc(doc(db, path, id));
+  } catch (error) {
+    console.warn(`Firestore deleteRecurringTemplate warning:`, error);
+  }
 }

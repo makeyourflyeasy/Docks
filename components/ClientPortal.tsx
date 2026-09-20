@@ -13,6 +13,13 @@ import { Case, CaseStatus, Container, FinanceEntry, ExtractedData, MockDocument,
 import { compressAndPrepareFile } from '../services/fileUtils';
 import TopModeSwitcher, { ModeOption } from './TopModeSwitcher';
 import GoldenAmountWidget from './GoldenAmountWidget';
+import { safeAppStorage } from '../services/storage';
+import { 
+  subscribeToCases, 
+  saveCaseToFirestore, 
+  subscribeToFinances, 
+  saveFinanceToFirestore 
+} from '../services/dbService';
 
 // Standard Route Pricing Matrix
 export const DEFAULT_ROUTE_RATES: Record<string, number> = {
@@ -34,131 +41,8 @@ export const getRouteRate = (pol: string, pod: string): number => {
   return DEFAULT_ROUTE_RATES[key] || DEFAULT_ROUTE_RATES["Default Rate"];
 };
 
-// Initial Mock Cases for Client Portal
-const INITIAL_CLIENT_CASES: Case[] = [
-  {
-    id: 'c1',
-    caseNo: 'DPL-26-000004',
-    clientName: 'Global Traders Ltd',
-    category: 'Afghan Transit',
-    status: CaseStatus.IN_TRANSIT,
-    pol: 'Karachi Port Trust',
-    pod: 'Chaman Border Terminal',
-    createdAt: '2026-04-12',
-    charges: [
-      { description: 'Freight / Transportation (Karachi to Chaman)', amount: 220000 },
-      { description: 'Customs Clearance & Border Processing', amount: 35000 },
-      { description: 'Port Wharfage & Handling', amount: 15000 }
-    ],
-    documents: [
-      { name: 'Bill of Lading MSK-998877.pdf', type: 'application/pdf', url: 'https://placehold.co/600x800/png?text=Bill+of+Lading+MSK-998877' },
-      { name: 'Commercial Invoice #5542.jpg', type: 'image/jpeg', url: 'https://placehold.co/600x800/png?text=Commercial+Invoice+5542' }
-    ],
-    containers: [
-      { 
-        id: 101, 
-        number: 'MSKU-8876541', 
-        size: '40ft', 
-        weight: 28400, 
-        status: 'In Transit',
-        vehicleNo: 'TL-8842 / QTA',
-        driverName: 'Muhammad Ismail',
-        driverContact: '0300-8877665',
-        sealNo: 'SL-994821'
-      },
-      { 
-        id: 102, 
-        number: 'MSKU-8876542', 
-        size: '40ft', 
-        weight: 27900, 
-        status: 'In Transit',
-        vehicleNo: 'TL-9910 / KHI',
-        driverName: 'Ghulam Rasool',
-        driverContact: '0321-7766554',
-        sealNo: 'SL-994822'
-      }
-    ],
-    extractedData: {
-      shipperName: 'Shanghai Overseas Trade Co.',
-      consigneeName: 'Global Traders Ltd',
-      blNumber: 'MSK-998877',
-      vesselName: 'Maersk Danube',
-      arrivalDate: '2026-04-10',
-      totalWeight: 56300,
-      itemName: 'Solar Inverters & Batteries',
-      packageCount: 840
-    }
-  },
-  {
-    id: 'c2',
-    caseNo: 'DPL-26-000003',
-    clientName: 'Global Traders Ltd',
-    category: 'Bonded Carrier',
-    status: CaseStatus.LOADING_PORT_PROCESSING,
-    pol: 'Port Qasim',
-    pod: 'Lahore Dry Port',
-    createdAt: '2026-04-14',
-    charges: [
-      { description: 'Bonded Carrier Transport to Lahore', amount: 130000 },
-      { description: 'TP Filing & Customs Documentation', amount: 25000 }
-    ],
-    documents: [
-      { name: 'BL-HLC-554433.pdf', type: 'application/pdf', url: 'https://placehold.co/600x800/png?text=HLC+BL+Preview' }
-    ],
-    containers: [
-      { 
-        id: 103, 
-        number: 'HLCU-1122334', 
-        size: '20ft', 
-        weight: 14200, 
-        status: 'Loaded',
-        vehicleNo: 'LEA-4412',
-        driverName: 'Sardar Khan',
-        driverContact: '0312-3344556'
-      }
-    ],
-    extractedData: {
-      shipperName: 'Jebel Ali Industrial Hub',
-      consigneeName: 'Global Traders Ltd',
-      blNumber: 'HLC-554433',
-      vesselName: 'Hapag Lloyd Express',
-      arrivalDate: '2026-04-13',
-      itemName: 'Industrial Machinery Spares'
-    }
-  },
-  {
-    id: 'c3',
-    caseNo: 'DPL-26-000002',
-    clientName: 'Global Traders Ltd',
-    category: 'Customs Clearance',
-    status: CaseStatus.COMPLETED,
-    pol: 'Karachi Port Trust',
-    pod: 'Lahore Dry Port',
-    createdAt: '2026-03-28',
-    charges: [
-      { description: 'Freight to Lahore Port', amount: 125000 },
-      { description: 'Customs Clearance Fee', amount: 30000 }
-    ],
-    documents: [],
-    containers: [
-      { 
-        id: 104, 
-        number: 'COSU-9988112', 
-        size: '40ft', 
-        weight: 26000, 
-        status: 'Delivered',
-        vehicleNo: 'KHI-9922',
-        driverName: 'Naseer Ahmed',
-        driverContact: '0333-1122998'
-      }
-    ],
-    extractedData: {
-      blNumber: 'COS-110022',
-      vesselName: 'Cosco Shipping',
-      itemName: 'Fabric & Raw Textiles'
-    }
-  }
-];
+// Initial Clean Cases for Client Portal
+const INITIAL_CLIENT_CASES: Case[] = [];
 
 export interface ClientPaymentEntry {
   id: number;
@@ -172,30 +56,7 @@ export interface ClientPaymentEntry {
   remarks?: string;
 }
 
-const INITIAL_CLIENT_PAYMENTS: ClientPaymentEntry[] = [
-  {
-    id: 1,
-    date: '2026-04-02',
-    amount: 155000,
-    paymentMethod: 'ONLINE_TRANSFER',
-    bankName: 'Meezan Bank Ltd',
-    referenceNo: 'FT-20260402-9981',
-    slipUrl: 'https://placehold.co/600x800/png?text=Meezan+Bank+Transfer+Receipt',
-    status: 'CONFIRMED',
-    remarks: 'Clearance for Case DPL-26-000002'
-  },
-  {
-    id: 2,
-    date: '2026-04-13',
-    amount: 100000,
-    paymentMethod: 'BANK_DEPOSIT',
-    bankName: 'Habib Bank Limited (HBL)',
-    referenceNo: 'DEP-884210',
-    slipUrl: 'https://placehold.co/600x800/png?text=Bank+Deposit+Slip+884210',
-    status: 'CONFIRMED',
-    remarks: 'Advance for Case DPL-26-000004'
-  }
-];
+const INITIAL_CLIENT_PAYMENTS: ClientPaymentEntry[] = [];
 
 interface ClientPortalProps {
   customLogo?: string | null;
@@ -220,6 +81,37 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
   // Data States
   const [casesList, setCasesList] = useState<Case[]>(INITIAL_CLIENT_CASES);
   const [paymentsList, setPaymentsList] = useState<ClientPaymentEntry[]>(INITIAL_CLIENT_PAYMENTS);
+
+  // Synchronize Client Portal with live Firestore data
+  useEffect(() => {
+    const unsubCases = subscribeToCases((cases) => {
+      if (cases) {
+        setCasesList(cases);
+      }
+    });
+    const unsubFinances = subscribeToFinances((finances) => {
+      if (finances) {
+        const clientPayments: ClientPaymentEntry[] = finances
+          .filter(f => f.type === 'INCOME')
+          .map((f, idx) => ({
+            id: Number(f.id) || idx + 1,
+            date: f.date,
+            amount: f.amount,
+            paymentMethod: f.paymentMethod === 'CASH' ? 'CASH' : 'ONLINE_TRANSFER',
+            bankName: typeof f.bankId === 'string' ? f.bankId : String(f.bankId || 'Bank'),
+            referenceNo: f.reference || '',
+            slipUrl: f.slipUrl,
+            status: f.status === 'PAID' ? 'CONFIRMED' : 'PENDING',
+            remarks: f.description
+          }));
+        setPaymentsList(clientPayments);
+      }
+    });
+    return () => {
+      unsubCases();
+      unsubFinances();
+    };
+  }, []);
   
   // Selected Case for Modal / Details
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
@@ -428,6 +320,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
       return;
     }
 
+    const activeClient = safeAppStorage.getItem('dpl_client_name') || 'Client Account';
     const newPayment: ClientPaymentEntry = {
       id: Date.now(),
       date: new Date().toISOString().split('T')[0],
@@ -441,6 +334,24 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
     };
 
     setPaymentsList([newPayment, ...paymentsList]);
+    
+    // Save to Firestore finances collection
+    const financeEntry: Partial<FinanceEntry> = {
+      id: newPayment.id,
+      date: newPayment.date,
+      type: 'INCOME',
+      category: 'Client Payment',
+      description: `Client Deposit - ${newPayment.referenceNo || 'Direct Deposit'}`,
+      amount: newPayment.amount,
+      party: activeClient,
+      paymentMethod: newPayment.paymentMethod === 'CASH' ? 'CASH' : 'BANK',
+      bankId: newPayment.bankName,
+      reference: newPayment.referenceNo,
+      status: 'PENDING',
+      slipUrl: newPayment.slipUrl
+    };
+    saveFinanceToFirestore(financeEntry as FinanceEntry);
+
     setShowAddPaymentModal(false);
     setPaymentForm({
       amount: '',
@@ -457,6 +368,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
   // Submit New Case Registration from Client
   const handleRegisterCaseSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const activeClient = safeAppStorage.getItem('dpl_client_name') || 'Client Account';
     const caseYear = '26';
     const serialStr = String(casesList.length + 1).padStart(6, '0');
     const autoCaseNo = `DPL-${caseYear}-${serialStr}`;
@@ -465,7 +377,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
     const newCase: Case = {
       id: `case-${Date.now()}`,
       caseNo: autoCaseNo,
-      clientName: 'Global Traders Ltd',
+      clientName: activeClient,
       category: newCaseCategory,
       pol: newCasePol,
       pod: newCasePod,
@@ -490,11 +402,12 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
         vesselName: newCaseVessel,
         totalWeight: parseFloat(newCaseWeight) || 28000,
         itemName: newCaseItem || 'General Cargo',
-        consigneeName: 'Global Traders Ltd'
+        consigneeName: activeClient
       }
     };
 
     setCasesList([newCase, ...casesList]);
+    saveCaseToFirestore(newCase);
     setCasesSubView('overview');
     alert(`Case registration submitted successfully!\nCase No: ${autoCaseNo}\nStatus: Submitted for admin approval.`);
   };

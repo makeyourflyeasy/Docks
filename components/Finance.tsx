@@ -1,19 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  DollarSign, FileText, ArrowUpRight, ArrowDownLeft, Plus, 
+  Wallet, FileText, ArrowUpRight, ArrowDownLeft, Plus, 
   Search, Filter, Download, CreditCard, Banknote, Briefcase, X, Save, Calendar, Camera,
   BookOpen, ChevronDown, CheckCircle2, User, Layers, RefreshCw, AlertCircle, ArrowRight,
-  Eye, Loader2, Share2, Upload
+  Eye, Loader2, Share2, Upload, Zap, Trash2, Building, Truck, Clock, ShieldCheck
 } from 'lucide-react';
 import Logo from './Logo';
 import { PdfViewerModal } from './PdfViewerModal';
-import { FinanceEntry, Case, Client, LedgerEntry } from '../types';
+import { FinanceEntry, Case, Client, LedgerEntry, AppUser, RecurringFinanceTemplate, UserRole } from '../types';
 import { 
   subscribeToFinances, 
   saveFinanceToFirestore, 
   updateFinanceInFirestore,
   subscribeToCases,
   subscribeToClients,
+  subscribeToUsers,
+  subscribeToRecurringTemplates,
+  saveRecurringTemplateToFirestore,
+  deleteRecurringTemplateFromFirestore,
   saveClientToFirestore,
   DEFAULT_CLIENTS
 } from '../services/dbService';
@@ -66,18 +70,118 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const [payables, setPayables] = useState<FinanceEntry[]>(() => {
     return safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_payables', INITIAL_PAYABLES);
   });
-  const [cases, setCases] = useState<Case[]>([]);
+  const [cases, setCases] = useState<Case[]>(() => {
+    return safeAppStorage.getJSON<Case[]>('dpl_live_cases', []);
+  });
+
+  // Interactive Financial Counter Modal State
+  const [statBreakdownModal, setStatBreakdownModal] = useState<'cash_in_hand' | 'receivables' | 'payables' | 'received_amount' | null>(null);
+  const [statSearchQuery, setStatSearchQuery] = useState('');
+  const [statFilterSubtab, setStatFilterSubtab] = useState<string>('ALL');
+
+  // Cross-component and cross-storage live sync
+  useEffect(() => {
+    const handleSync = () => {
+      const storedCases = safeAppStorage.getJSON<Case[]>('dpl_live_cases', null);
+      if (storedCases && Array.isArray(storedCases)) {
+        setCases(storedCases);
+      }
+      const storedFinance = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_finance', null);
+      if (storedFinance && Array.isArray(storedFinance)) {
+        setFinanceData(storedFinance);
+      }
+      const storedRecv = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_receivables', null);
+      if (storedRecv && Array.isArray(storedRecv)) {
+        setReceivables(storedRecv);
+      }
+      const storedPay = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_payables', null);
+      if (storedPay && Array.isArray(storedPay)) {
+        setPayables(storedPay);
+      }
+    };
+
+    window.addEventListener('dpl_cases_updated', handleSync);
+    window.addEventListener('dpl_finance_updated', handleSync);
+    window.addEventListener('storage', handleSync);
+
+    return () => {
+      window.removeEventListener('dpl_cases_updated', handleSync);
+      window.removeEventListener('dpl_finance_updated', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, []);
+
+  // Sync to safeAppStorage whenever state updates
+  useEffect(() => {
+    safeAppStorage.setJSON('dpl_live_finance', financeData);
+  }, [financeData]);
+
+  useEffect(() => {
+    safeAppStorage.setJSON('dpl_live_receivables', receivables);
+  }, [receivables]);
+
+  useEffect(() => {
+    safeAppStorage.setJSON('dpl_live_payables', payables);
+  }, [payables]);
 
   // Registered Clients Management
   const [clientList, setClientList] = useState<string[]>(DEFAULT_CLIENTS);
   const [selectedLedgerClient, setSelectedLedgerClient] = useState<string>(() => {
-    return safeAppStorage.getItem('dpl_finance_client') || 'Trial Client';
+    return safeAppStorage.getItem('dpl_finance_client') || '';
   });
 
   useEffect(() => {
     safeAppStorage.setItem('dpl_finance_client', selectedLedgerClient);
   }, [selectedLedgerClient]);
   const [glAccountFilter, setGlAccountFilter] = useState<string>('ALL');
+
+  // Staff & Recurring Templates State
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [recurringTemplates, setRecurringTemplates] = useState<RecurringFinanceTemplate[]>([]);
+  const [showRecurringModal, setShowRecurringModal] = useState(false);
+  const [newRecurringForm, setNewRecurringForm] = useState<Partial<RecurringFinanceTemplate>>({
+    title: '',
+    type: 'PAYABLE',
+    amount: 0,
+    party: '',
+    category: 'Rent & Facilities',
+    frequency: 'MONTHLY_FIRST',
+    active: true,
+    notes: ''
+  });
+  const [isPostingRecurring, setIsPostingRecurring] = useState(false);
+  const [recurringPostMessage, setRecurringPostMessage] = useState<string | null>(null);
+
+  // Quick Payment Receive Modal for Invoice
+  const [showReceivePaymentModal, setShowReceivePaymentModal] = useState(false);
+  const [invoiceForReceive, setInvoiceForReceive] = useState<any>(null);
+  const [receivePaymentAmount, setReceivePaymentAmount] = useState<string>('');
+  const [receivePaymentMethod, setReceivePaymentMethod] = useState<'CASH' | 'BANK'>('BANK');
+  const [receivePaymentBank, setReceivePaymentBank] = useState<string>('HBL Corporate');
+  const [receivePaymentTrx, setReceivePaymentTrx] = useState<string>('');
+
+  // Recurring Template Modal State
+  const [newRecurringTemplate, setNewRecurringTemplate] = useState<{
+    title: string;
+    amount: number | string;
+    party: string;
+    category: string;
+    type: 'PAYABLE' | 'RECEIVABLE';
+    dayOfMonth: number;
+    notes?: string;
+  }>({
+    title: '',
+    amount: '',
+    party: '',
+    category: 'Office Rent',
+    type: 'PAYABLE',
+    dayOfMonth: 1,
+    notes: ''
+  });
+
+  // Staff & Transporter Ledger filters
+  const [staffFilter, setStaffFilter] = useState('ALL');
+  const [transporterFilter, setTransporterFilter] = useState('ALL');
 
   // Modals & Forms State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -135,14 +239,28 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   // 2. Synchronize cases from Firestore for automatic container/case charges
   useEffect(() => {
     const unsubscribe = subscribeToCases((casesFromDb) => {
-      if (casesFromDb && casesFromDb.length > 0) {
-        setCases(casesFromDb);
-      }
+      setCases(casesFromDb || []);
     });
     return () => unsubscribe();
   }, []);
 
-  // 3. Synchronize clients from Firestore
+  // 3. Synchronize users from Firestore for staff payroll & salaries
+  useEffect(() => {
+    const unsubscribe = subscribeToUsers((usersFromDb) => {
+      setUsers(usersFromDb || []);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 4. Synchronize recurring templates (Monthly Fixed Expenses / Receivables)
+  useEffect(() => {
+    const unsubscribe = subscribeToRecurringTemplates((tpls) => {
+      setRecurringTemplates(tpls || []);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 5. Synchronize clients from Firestore
   useEffect(() => {
     const unsubscribe = subscribeToClients((clientsFromDb) => {
       const dbNames = (clientsFromDb || []).map(c => c.name?.trim()).filter(Boolean);
@@ -157,6 +275,184 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     return () => unsubscribe();
   }, [cases, financeData, receivables]);
 
+  // AUTOMATIC 1ST OF THE MONTH RECURRING & SALARY EXPENSES
+  useEffect(() => {
+    if (users.length === 0 && recurringTemplates.length === 0) return;
+    
+    const now = new Date();
+    const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const firstOfMonthDate = `${currentMonthStr}-01`;
+
+    // A. Check staff salaries on 1st of month
+    users.forEach((u) => {
+      if (u.role !== UserRole.CLIENT && Number(u.baseSalary || 0) > 0) {
+        const salaryRef = `SAL-${currentMonthStr}-${u.id}`;
+        const alreadyExists = payables.some(p => p.reference === salaryRef);
+        if (!alreadyExists) {
+          const netSalary = Math.max(0, Number(u.baseSalary || 0) - Number(u.loansAdvances || 0));
+          const salaryPayable: FinanceEntry = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            date: firstOfMonthDate,
+            description: `Monthly Salary - ${u.name} (${u.role || 'Staff'}) [Gross: PKR ${Number(u.baseSalary).toLocaleString()}]`,
+            party: u.name,
+            amount: netSalary,
+            type: 'PAYABLE',
+            status: 'PENDING',
+            category: 'Staff Payroll & Salaries',
+            reference: salaryRef,
+            paymentMethod: 'BANK',
+            bankName: 'Meezan Bank'
+          };
+          saveFinanceToFirestore(salaryPayable).catch(() => {});
+        }
+      }
+    });
+
+    // B. Check active recurring fixed expenses & receivables on 1st of month
+    recurringTemplates.forEach((tpl) => {
+      if (tpl.active) {
+        const recRef = `REC-${currentMonthStr}-${tpl.id}`;
+        const targetList = tpl.type === 'PAYABLE' ? payables : receivables;
+        const alreadyExists = targetList.some(item => item.reference === recRef);
+        if (!alreadyExists) {
+          const recEntry: FinanceEntry = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            date: firstOfMonthDate,
+            description: `${tpl.title} (${tpl.category})`,
+            party: tpl.party,
+            amount: tpl.amount,
+            type: tpl.type,
+            status: 'PENDING',
+            category: tpl.category,
+            reference: recRef,
+            recurringTemplateId: tpl.id,
+            paymentMethod: 'BANK',
+            bankName: 'HBL Corporate'
+          };
+          saveFinanceToFirestore(recEntry).catch(() => {});
+        }
+      }
+    });
+  }, [users, recurringTemplates, payables, receivables]);
+
+  // MANUAL POST ALL FIXED EXPENSES & SALARIES FOR CURRENT MONTH
+  const handlePostAllMonthlyFixedExpenses = async () => {
+    setIsPostingRecurring(true);
+    setRecurringPostMessage(null);
+    try {
+      const now = new Date();
+      const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const firstOfMonthDate = `${currentMonthStr}-01`;
+      let addedCount = 0;
+
+      // 1. Post recurring templates
+      for (const tpl of recurringTemplates) {
+        if (tpl.active) {
+          const recRef = `REC-${currentMonthStr}-${tpl.id}`;
+          const targetList = tpl.type === 'PAYABLE' ? payables : receivables;
+          const alreadyExists = targetList.some(item => item.reference === recRef);
+          if (!alreadyExists) {
+            const recEntry: FinanceEntry = {
+              id: Date.now() + Math.floor(Math.random() * 1000),
+              date: firstOfMonthDate,
+              description: `${tpl.title} (${tpl.category})`,
+              party: tpl.party,
+              amount: tpl.amount,
+              type: tpl.type,
+              status: 'PENDING',
+              category: tpl.category,
+              reference: recRef,
+              recurringTemplateId: tpl.id,
+              paymentMethod: 'BANK',
+              bankName: 'HBL Corporate'
+            };
+            await saveFinanceToFirestore(recEntry);
+            addedCount++;
+          }
+        }
+      }
+
+      // 2. Post staff salaries
+      for (const u of users) {
+        if (u.role !== UserRole.CLIENT && Number(u.baseSalary || 0) > 0) {
+          const salaryRef = `SAL-${currentMonthStr}-${u.id}`;
+          const alreadyExists = payables.some(p => p.reference === salaryRef);
+          if (!alreadyExists) {
+            const netSalary = Math.max(0, Number(u.baseSalary || 0) - Number(u.loansAdvances || 0));
+            const salaryPayable: FinanceEntry = {
+              id: Date.now() + Math.floor(Math.random() * 1000),
+              date: firstOfMonthDate,
+              description: `Monthly Salary - ${u.name} (${u.role || 'Staff'}) [Gross: PKR ${Number(u.baseSalary).toLocaleString()}]`,
+              party: u.name,
+              amount: netSalary,
+              type: 'PAYABLE',
+              status: 'PENDING',
+              category: 'Staff Payroll & Salaries',
+              reference: salaryRef,
+              paymentMethod: 'BANK',
+              bankName: 'Meezan Bank'
+            };
+            await saveFinanceToFirestore(salaryPayable);
+            addedCount++;
+          }
+        }
+      }
+
+      setRecurringPostMessage(`Successfully verified and posted ${addedCount} monthly entries for ${currentMonthStr}!`);
+    } catch (err) {
+      console.error(err);
+      setRecurringPostMessage('Failed to post monthly fixed expenses.');
+    } finally {
+      setIsPostingRecurring(false);
+    }
+  };
+
+  // Helper to toggle active/inactive for recurring templates
+  const handleToggleRecurringActive = async (template: RecurringFinanceTemplate) => {
+    const updated = { ...template, isActive: !template.isActive };
+    setRecurringTemplates(prev => prev.map(t => t.id === template.id ? updated : t));
+    await saveRecurringTemplateToFirestore(updated);
+  };
+
+  // Helper to delete recurring template
+  const handleDeleteRecurringTemplate = async (templateId: string) => {
+    if (!window.confirm("Are you sure you want to delete this recurring expense template?")) return;
+    setRecurringTemplates(prev => prev.filter(t => t.id !== templateId));
+    await deleteRecurringTemplateFromFirestore(templateId);
+  };
+
+  // Helper to save new recurring template
+  const handleSaveNewRecurringTemplate = async () => {
+    if (!newRecurringTemplate.title || !newRecurringTemplate.amount || !newRecurringTemplate.party) {
+      alert("Please provide Title, Beneficiary/Party, and Amount.");
+      return;
+    }
+    const template: RecurringFinanceTemplate = {
+      id: `rec_${Date.now()}`,
+      title: newRecurringTemplate.title.trim(),
+      amount: Number(newRecurringTemplate.amount),
+      party: newRecurringTemplate.party.trim(),
+      category: newRecurringTemplate.category || 'Operational Expense',
+      type: newRecurringTemplate.type || 'PAYABLE',
+      dayOfMonth: Number(newRecurringTemplate.dayOfMonth) || 1,
+      isActive: true,
+      notes: newRecurringTemplate.notes?.trim() || ''
+    };
+
+    setRecurringTemplates(prev => [template, ...prev]);
+    await saveRecurringTemplateToFirestore(template);
+    setShowRecurringModal(false);
+    setNewRecurringTemplate({
+      title: '',
+      amount: '',
+      party: '',
+      category: 'Office Rent',
+      type: 'PAYABLE',
+      dayOfMonth: 1,
+      notes: ''
+    });
+  };
+
   useEffect(() => {
     if (initialFilter) {
       if (initialFilter.tab) setActiveTab(initialFilter.tab);
@@ -170,23 +466,20 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     { id: 'payables', label: 'Payables' },
     { id: 'client_ledger', label: 'Client Ledger' },
     { id: 'general_ledger', label: 'General Ledger' },
-    { id: 'transporter_ledger', label: 'Transporter Ledger' },
+    { id: 'transporter_ledger', label: 'Transporter/Broker Ledger' },
     { id: 'staff_ledger', label: 'Staff Ledger' },
-    { id: 'recurring', label: 'Recurring Amounts' },
+    { id: 'recurring', label: 'Monthly Fixed & Recurring' },
   ];
 
-  // Helper to calculate total charges for a case with Pakistan Customs accuracy
+  // Helper to calculate total charges for a case (ONLY explicit charges arranged by DPL, excluding Client arranged)
   const getCaseTotalCharges = (c: Case): { total: number; breakdown: string } => {
     if (c.charges && c.charges.length > 0) {
-      const sum = c.charges.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-      const details = c.charges.map(ch => `${ch.description}: PKR ${Number(ch.amount || 0).toLocaleString()}`).join(', ');
-      return { total: sum, breakdown: details };
+      const validCharges = c.charges.filter(ch => ch.arrangedBy !== 'Client');
+      const sum = validCharges.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+      const details = validCharges.map(ch => `${ch.description}: PKR ${Number(ch.amount || 0).toLocaleString()}`).join(', ');
+      return { total: sum, breakdown: details || 'No invoiced charges' };
     }
-    // Calculate statutory/standard tariff charges based on category & container count
-    const standardCharges = getStandardChargesForCategory(c.category, c.containers?.length || 1);
-    const sum = standardCharges.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-    const details = standardCharges.map(ch => `${ch.description}: PKR ${Number(ch.amount || 0).toLocaleString()}`).join(', ');
-    return { total: sum, breakdown: details };
+    return { total: 0, breakdown: 'No charges added' };
   };
 
   // Build real-time dynamic Client Ledger for selected client
@@ -208,35 +501,45 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       party: selectedLedgerClient
     });
 
-    // 2. Add Debits from Cases (Charges automatically billed per container & case)
+    // 2. Add Debits from Cases (Charges explicitly added per case & container)
     cases.forEach((c) => {
       if (c.clientName && c.clientName.trim().toLowerCase() === targetClient) {
         const { total, breakdown } = getCaseTotalCharges(c);
-        const cntrInfo = c.containers && c.containers.length > 0 
-          ? `[${c.containers.length} Cntr: ${c.containers.map(cntr => cntr.number).join(', ')}]` 
-          : '';
-        entries.push({
-          id: `case_${c.id}`,
-          date: c.createdAt || '2026-04-10',
-          reference: c.caseNo,
-          description: `Case ${c.caseNo}: ${c.category} ${cntrInfo} - ${c.pol || 'KPT'} to ${c.pod || 'KDH'} (${breakdown})`,
-          debit: total,
-          credit: 0,
-          balance: 0,
-          type: 'DEBIT',
-          party: selectedLedgerClient,
-          relatedCaseId: c.id
-        });
+        if (total > 0) {
+          const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
+          const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
+          const cntrInfo = cntrNumbers ? `[${(c.containers || []).length} Cntr: ${cntrNumbers}]` : '';
+          const refParts = [invNo, `Case: ${c.caseNo}`, cntrNumbers ? `Cntr: ${cntrNumbers}` : ''].filter(Boolean);
+
+          entries.push({
+            id: `case_${c.id}`,
+            date: c.createdAt || c.registrationDate || '2026-04-10',
+            reference: refParts.join(' | '),
+            description: `Case ${c.caseNo}: ${c.category} ${cntrInfo} - ${c.pol || 'POL'} to ${c.pod || 'POD'} (${breakdown})`,
+            debit: total,
+            credit: 0,
+            balance: 0,
+            type: 'DEBIT',
+            party: selectedLedgerClient,
+            relatedCaseId: c.id
+          });
+        }
       }
     });
 
     // 3. Add Receivables billed directly (if not from cases)
     receivables.forEach((r) => {
       if (r.party && r.party.trim().toLowerCase() === targetClient) {
+        const refParts = [
+          r.reference || `INV-${r.id}`,
+          r.caseNo ? `Case: ${r.caseNo}` : '',
+          r.containerNumber ? `Cntr: ${r.containerNumber}` : ''
+        ].filter(Boolean);
+
         entries.push({
           id: `recv_${r.id}`,
           date: r.date,
-          reference: r.reference || `INV-${r.id}`,
+          reference: refParts.join(' | '),
           description: `Invoice: ${r.description} (${r.category})`,
           debit: r.amount,
           credit: 0,
@@ -253,10 +556,16 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         const methodInfo = f.paymentMethod === 'BANK' 
           ? `Bank Transfer (${f.bankName || 'HBL'} Trx #${f.transactionId || 'Direct'})` 
           : 'Cash Receipt';
+        const refParts = [
+          f.reference || f.transactionId || `REC-${f.id}`,
+          f.caseNo ? `Case: ${f.caseNo}` : '',
+          f.containerNumber ? `Cntr: ${f.containerNumber}` : ''
+        ].filter(Boolean);
+
         entries.push({
           id: `pay_${f.id}`,
           date: f.date,
-          reference: f.reference || f.transactionId || `REC-${f.id}`,
+          reference: refParts.join(' | '),
           description: `Payment Received: ${f.description} [${methodInfo}]`,
           debit: 0,
           credit: f.amount,
@@ -298,6 +607,207 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     };
   }, [clientLedgerEntries, cases, selectedLedgerClient]);
 
+  // Unified Receivables with automatic FIFO payment deduction per client
+  const calculatedReceivables = useMemo(() => {
+    // 1. Collect all invoice / billing items
+    const allInvoices: (FinanceEntry & { isCaseInvoice?: boolean })[] = [];
+
+    // A. Case Invoices (only cases with explicit charges)
+    cases.forEach((c) => {
+      const { total, breakdown } = getCaseTotalCharges(c);
+      if (total > 0) {
+        const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
+        const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
+        allInvoices.push({
+          id: typeof c.id === 'number' ? c.id : Number(String(c.id).replace(/\D/g, '').slice(0, 9)) || 1000 + Math.floor(Math.random() * 8000),
+          date: c.createdAt || c.registrationDate || '2026-04-10',
+          party: c.clientName?.trim() || 'General Client',
+          description: `Case ${c.caseNo}: ${c.category} [${(c.containers || []).length || 1} Cntr: ${cntrNumbers || 'N/A'}] - ${c.pol || 'POL'} to ${c.pod || 'POD'} (${breakdown})`,
+          amount: total,
+          type: 'RECEIVABLE',
+          status: 'PENDING',
+          category: 'Freight & Clearance',
+          reference: invNo,
+          caseNo: c.caseNo,
+          containerNumber: cntrNumbers || 'N/A',
+          relatedCaseId: String(c.id),
+          isCaseInvoice: true
+        });
+      }
+    });
+
+    // B. Direct receivables from Firestore (avoid duplicate if exact reference matches)
+    receivables.forEach((r) => {
+      const existsInCases = allInvoices.some(inv => 
+        Boolean(r.reference && inv.reference && inv.reference.trim().toLowerCase() === r.reference.trim().toLowerCase())
+      );
+      if (!existsInCases) {
+        allInvoices.push({
+          ...r,
+          isCaseInvoice: false
+        });
+      }
+    });
+
+    // 2. FIFO Payment allocation per client
+    const clientGroups: Record<string, typeof allInvoices> = {};
+    allInvoices.forEach(inv => {
+      const key = (inv.party || 'General Client').trim().toLowerCase();
+      if (!clientGroups[key]) clientGroups[key] = [];
+      clientGroups[key].push(inv);
+    });
+
+    const settledInvoices: (FinanceEntry & { isCaseInvoice?: boolean })[] = [];
+
+    Object.entries(clientGroups).forEach(([clientKey, invList]) => {
+      // Sort oldest first for FIFO payment matching
+      invList.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      // Sum all payments received from this client
+      const totalPaid = financeData
+        .filter(f => f.party?.trim().toLowerCase() === clientKey && f.type === 'INCOME')
+        .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+
+      let availablePayment = totalPaid;
+
+      invList.forEach(inv => {
+        if (availablePayment >= inv.amount) {
+          inv.status = 'PAID';
+          inv.paidAmount = inv.amount;
+          inv.remainingAmount = 0;
+          availablePayment -= inv.amount;
+        } else if (availablePayment > 0) {
+          inv.status = 'PARTIAL';
+          inv.paidAmount = availablePayment;
+          inv.remainingAmount = inv.amount - availablePayment;
+          availablePayment = 0;
+        } else {
+          inv.status = 'PENDING';
+          inv.paidAmount = 0;
+          inv.remainingAmount = inv.amount;
+        }
+        settledInvoices.push(inv);
+      });
+    });
+
+    // Sort descending by date for display
+    settledInvoices.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return settledInvoices;
+  }, [cases, receivables, financeData]);
+
+  // Receivables Summary
+  const receivablesSummary = useMemo(() => {
+    const totalInvoiced = calculatedReceivables.reduce((sum, r) => sum + r.amount, 0);
+    const totalPaid = calculatedReceivables.reduce((sum, r) => sum + (r.paidAmount || 0), 0);
+    const totalOutstanding = calculatedReceivables.reduce((sum, r) => sum + (r.remainingAmount !== undefined ? r.remainingAmount : (r.status === 'PAID' ? 0 : r.amount)), 0);
+    const clearedCount = calculatedReceivables.filter(r => r.status === 'PAID').length;
+    const pendingCount = calculatedReceivables.filter(r => r.status !== 'PAID').length;
+
+    return {
+      totalInvoiced,
+      totalPaid,
+      totalOutstanding,
+      clearedCount,
+      pendingCount
+    };
+  }, [calculatedReceivables]);
+
+  // Payables Summary
+  const payablesSummary = useMemo(() => {
+    const totalInvoiced = payables.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const totalPaid = payables.filter(p => p.status === 'PAID').reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const totalPending = payables.filter(p => p.status !== 'PAID').reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    return {
+      totalInvoiced,
+      totalPaid,
+      totalPending,
+      pendingCount: payables.filter(p => p.status !== 'PAID').length
+    };
+  }, [payables]);
+
+  // Cashbook Summary
+  const cashbookSummary = useMemo(() => {
+    const totalIncome = financeData
+      .filter(f => f.type === 'INCOME')
+      .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+    const totalExpense = financeData
+      .filter(f => f.type === 'EXPENSE')
+      .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+    const netCashBalance = totalIncome - totalExpense;
+    return {
+      totalIncome,
+      totalExpense,
+      netCashBalance
+    };
+  }, [financeData]);
+
+  // Total Received Amount Summary: All payments received from 1st of current month to today
+  const currentMonthReceivedSummary = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const startOfMonthStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const monthName = now.toLocaleString('en-US', { month: 'long' });
+
+    // Filter all income payments from the 1st of this month to today
+    const receivedEntries = financeData.filter(f => {
+      if (f.type !== 'INCOME') return false;
+      const fDate = (f.date || '').slice(0, 10);
+      return fDate >= startOfMonthStr;
+    });
+
+    // Also include any settled receivables payments from this month if not already in financeData
+    calculatedReceivables.forEach(r => {
+      if ((r.paidAmount || 0) > 0) {
+        const rDate = (r.date || '').slice(0, 10);
+        if (rDate >= startOfMonthStr) {
+          const alreadyTracked = receivedEntries.some(e => 
+            (e.reference && r.reference && e.reference === r.reference) ||
+            (e.id === r.id)
+          );
+          if (!alreadyTracked && !r.isCaseInvoice) {
+            receivedEntries.push({
+              id: typeof r.id === 'number' ? r.id : 88000,
+              date: r.date,
+              description: `Payment Received: ${r.description}`,
+              party: r.party,
+              amount: r.paidAmount || r.amount,
+              type: 'INCOME',
+              status: 'PAID',
+              category: 'Client Payment',
+              reference: r.reference || `REC-${r.id}`,
+              caseNo: r.caseNo,
+              containerNumber: r.containerNumber,
+              paymentMethod: r.paymentMethod || 'BANK'
+            });
+          }
+        }
+      }
+    });
+
+    receivedEntries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    const totalAmount = receivedEntries.reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+    const cashTotal = receivedEntries
+      .filter(f => (f.paymentMethod || 'CASH') === 'CASH')
+      .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+    const bankTotal = receivedEntries
+      .filter(f => f.paymentMethod === 'BANK')
+      .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+
+    return {
+      monthName,
+      startOfMonthStr,
+      todayStr,
+      totalAmount,
+      cashTotal,
+      bankTotal,
+      count: receivedEntries.length,
+      entries: receivedEntries
+    };
+  }, [financeData, calculatedReceivables]);
+
   // Master General Ledger Entries (All Parties & Accounts)
   const generalLedgerEntries = useMemo(() => {
     const glEntries: (LedgerEntry & { party: string; category: string })[] = [];
@@ -305,27 +815,39 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     // All Client Case charges (Debits)
     cases.forEach((c) => {
       const { total, breakdown } = getCaseTotalCharges(c);
-      glEntries.push({
-        id: `gl_case_${c.id}`,
-        date: c.createdAt || '2026-04-10',
-        reference: c.caseNo,
-        description: `Case Billing: ${c.category} [${c.containers?.length || 1} Cntr] - ${breakdown}`,
-        debit: total,
-        credit: 0,
-        balance: 0,
-        type: 'DEBIT',
-        party: c.clientName || 'General Client',
-        category: 'Freight & Clearance'
-      });
+      if (total > 0) {
+        const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
+        const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
+        const refParts = [invNo, `Case: ${c.caseNo}`, cntrNumbers ? `Cntr: ${cntrNumbers}` : ''].filter(Boolean);
+
+        glEntries.push({
+          id: `gl_case_${c.id}`,
+          date: c.createdAt || c.registrationDate || '2026-04-10',
+          reference: refParts.join(' | '),
+          description: `Case Billing: ${c.category} [${(c.containers || []).length || 1} Cntr] - ${breakdown}`,
+          debit: total,
+          credit: 0,
+          balance: 0,
+          type: 'DEBIT',
+          party: c.clientName || 'General Client',
+          category: 'Freight & Clearance'
+        });
+      }
     });
 
     // All Cashbook Entries
     financeData.forEach((f) => {
       if (f.type === 'INCOME') {
+        const refParts = [
+          f.reference || `REC-${f.id}`,
+          f.caseNo ? `Case: ${f.caseNo}` : '',
+          f.containerNumber ? `Cntr: ${f.containerNumber}` : ''
+        ].filter(Boolean);
+
         glEntries.push({
           id: `gl_inc_${f.id}`,
           date: f.date,
-          reference: f.reference || `REC-${f.id}`,
+          reference: refParts.join(' | '),
           description: `Income: ${f.description}`,
           debit: 0,
           credit: f.amount,
@@ -352,10 +874,16 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     // All Receivables (Debits)
     receivables.forEach((r) => {
+      const refParts = [
+        r.reference || `INV-${r.id}`,
+        r.caseNo ? `Case: ${r.caseNo}` : '',
+        r.containerNumber ? `Cntr: ${r.containerNumber}` : ''
+      ].filter(Boolean);
+
       glEntries.push({
         id: `gl_recv_${r.id}`,
         date: r.date,
-        reference: r.reference || `INV-${r.id}`,
+        reference: refParts.join(' | '),
         description: `Receivable Invoiced: ${r.description}`,
         debit: r.amount,
         credit: 0,
@@ -462,21 +990,73 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     setShowConfirmPaidModal(true);
   };
 
+  // CONFIRM PAYMENT: Settles a Payable or Receivable and automatically posts into Cash Book
   const confirmPayment = () => {
     if (!pendingPaymentEntry) return;
     const { id, list, setList } = pendingPaymentEntry;
-    
-    const updatedItem = { 
-      ...list.find(item => item.id === id)!, 
-      status: 'PAID' as const, 
-      paymentMethod: newTransaction.paymentMethod as any,
+    const target = list.find(item => item.id === id);
+    if (!target) return;
+
+    const paymentMethod = (newTransaction.paymentMethod as any) || 'CASH';
+    const bankName = paymentMethod === 'BANK' ? (newTransaction.bankName || 'HBL Corporate') : undefined;
+    const transactionId = newTransaction.transactionId || (paymentMethod === 'BANK' ? `TRX-${Date.now().toString().slice(-6)}` : undefined);
+    const paidDate = new Date().toISOString().split('T')[0];
+
+    const updatedItem: FinanceEntry = { 
+      ...target, 
+      status: 'PAID', 
+      paidAmount: target.amount,
+      remainingAmount: 0,
+      paymentMethod,
       bankId: newTransaction.bankId,
-      bankName: newTransaction.bankName,
-      transactionId: newTransaction.transactionId
+      bankName,
+      transactionId
     };
 
     setList(list.map(item => item.id === id ? updatedItem : item));
     updateFinanceInFirestore(updatedItem).catch(() => {});
+
+    // If it's a PAYABLE being paid -> Auto-record an EXPENSE in Cash Book
+    if (target.type === 'PAYABLE') {
+      const expenseEntry: FinanceEntry = {
+        id: Date.now(),
+        date: paidDate,
+        description: `Payment Paid: ${target.description}`,
+        party: target.party,
+        amount: target.amount,
+        type: 'EXPENSE',
+        status: 'PAID',
+        category: target.category || 'Operational Expense',
+        reference: target.reference || `PAY-OUT-${target.id}`,
+        paymentMethod,
+        bankName,
+        transactionId
+      };
+      setFinanceData(prev => [expenseEntry, ...prev]);
+      saveFinanceToFirestore(expenseEntry).catch(() => {});
+    }
+
+    // If it's a RECEIVABLE being received -> Auto-record an INCOME in Cash Book
+    if (target.type === 'RECEIVABLE') {
+      const incomeEntry: FinanceEntry = {
+        id: Date.now(),
+        date: paidDate,
+        description: `Payment Received: ${target.description}`,
+        party: target.party,
+        amount: target.amount,
+        type: 'INCOME',
+        status: 'PAID',
+        category: 'Client Payment',
+        reference: target.reference || `REC-IN-${target.id}`,
+        caseNo: target.caseNo,
+        containerNumber: target.containerNumber,
+        paymentMethod,
+        bankName,
+        transactionId
+      };
+      setFinanceData(prev => [incomeEntry, ...prev]);
+      saveFinanceToFirestore(incomeEntry).catch(() => {});
+    }
 
     if (activeNotificationId && onActionComplete) {
       onActionComplete(activeNotificationId);
@@ -488,6 +1068,63 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     // Open receipt view/download modal immediately
     handleOpenReceipt(updatedItem);
+  };
+
+  // QUICK RECEIVE PAYMENT MODAL TRIGGER FROM RECEIVABLES TABLE
+  const handleOpenQuickReceiveModal = (invoice: any) => {
+    setInvoiceForReceive(invoice);
+    setReceivePaymentAmount(String(invoice.remainingAmount !== undefined ? invoice.remainingAmount : invoice.amount));
+    setReceivePaymentMethod('BANK');
+    setReceivePaymentBank('HBL Corporate');
+    setReceivePaymentTrx(`TRX-${Date.now().toString().slice(-6)}`);
+    setShowReceivePaymentModal(true);
+  };
+
+  // SUBMIT QUICK RECEIVE PAYMENT
+  const handleConfirmQuickReceive = async () => {
+    if (!invoiceForReceive) return;
+    const amt = parseFloat(receivePaymentAmount);
+    if (!amt || amt <= 0) {
+      alert("Please enter a valid received amount.");
+      return;
+    }
+
+    const paidDate = new Date().toISOString().split('T')[0];
+    const incomeEntry: FinanceEntry = {
+      id: Date.now(),
+      date: paidDate,
+      description: `Payment Received against ${invoiceForReceive.reference || 'Invoice'} (${invoiceForReceive.party})`,
+      party: invoiceForReceive.party,
+      amount: amt,
+      type: 'INCOME',
+      status: 'PAID',
+      category: 'Client Payment',
+      reference: invoiceForReceive.reference || `REC-${Date.now()}`,
+      caseNo: invoiceForReceive.caseNo,
+      containerNumber: invoiceForReceive.containerNumber,
+      paymentMethod: receivePaymentMethod,
+      bankName: receivePaymentMethod === 'BANK' ? receivePaymentBank : undefined,
+      transactionId: receivePaymentTrx || undefined
+    };
+
+    setFinanceData(prev => [incomeEntry, ...prev]);
+    await saveFinanceToFirestore(incomeEntry);
+
+    // If it's a direct receivable entry in Firestore, update it
+    if (!invoiceForReceive.isCaseInvoice) {
+      const updatedRecv: FinanceEntry = {
+        ...invoiceForReceive,
+        status: amt >= invoiceForReceive.amount ? 'PAID' : 'PARTIAL',
+        paidAmount: (invoiceForReceive.paidAmount || 0) + amt,
+        remainingAmount: Math.max(0, (invoiceForReceive.remainingAmount || invoiceForReceive.amount) - amt)
+      };
+      setReceivables(prev => prev.map(r => r.id === updatedRecv.id ? updatedRecv : r));
+      updateFinanceInFirestore(updatedRecv).catch(() => {});
+    }
+
+    setShowReceivePaymentModal(false);
+    setInvoiceForReceive(null);
+    handleOpenReceipt(incomeEntry);
   };
 
   // ADD TRANSACTION HANDLER (Payment Received, Payment Paid, Receivable, Payable)
@@ -780,16 +1417,38 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     exportCSVFile(filename, headers, rows);
   };
 
-  const StatCard = ({ title, amount, type, icon: Icon, subtitle }: any) => (
-    <div className="glass-card p-5 rounded-2xl flex items-center justify-between hover:bg-white/5 transition-colors no-print">
-      <div>
-        <p className="text-gray-400 text-xs uppercase font-semibold mb-1 tracking-wider">{title}</p>
-        <h4 className={`text-2xl font-bold font-mono drop-shadow-sm ${type === 'pos' ? 'text-green-400' : type === 'neg' ? 'text-red-400' : 'text-white'}`}>
-          PKR {amount.toLocaleString()}
+  const StatCard = ({ title, amount, type, icon: Icon, subtitle, badge, onClick }: any) => (
+    <div 
+      onClick={onClick}
+      className={`glass-card p-5 rounded-2xl flex items-center justify-between hover:bg-white/10 active:scale-[0.99] transition-all cursor-pointer no-print group border ${
+        type === 'pos' 
+          ? 'hover:border-emerald-500/40 border-white/5' 
+          : type === 'neg' 
+          ? 'hover:border-red-500/40 border-white/5' 
+          : 'hover:border-purple-500/40 border-white/5'
+      }`}
+      title="Click to view full breakdown list and details"
+    >
+      <div className="min-w-0 flex-1 pr-2">
+        <div className="flex items-center gap-2 mb-1">
+          <p className="text-gray-400 text-xs uppercase font-semibold tracking-wider truncate">{title}</p>
+          {badge && (
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-purple-300 border border-white/10 font-bold uppercase tracking-wider">
+              {badge}
+            </span>
+          )}
+        </div>
+        <h4 className={`text-2xl font-bold font-mono drop-shadow-sm truncate ${type === 'pos' ? 'text-green-400' : type === 'neg' ? 'text-red-400' : 'text-white'}`}>
+          PKR {(Number(amount) || 0).toLocaleString()}
         </h4>
-        {subtitle && <p className="text-[11px] text-gray-500 mt-1">{subtitle}</p>}
+        <div className="flex items-center justify-between gap-2 mt-1">
+          {subtitle && <p className="text-[11px] text-gray-400 truncate">{subtitle}</p>}
+          <span className="text-[10px] text-purple-400 font-semibold group-hover:underline flex items-center gap-0.5 shrink-0">
+            View list →
+          </span>
+        </div>
       </div>
-      <div className={`p-3 rounded-xl backdrop-blur-md shadow-lg ${
+      <div className={`p-3 rounded-xl backdrop-blur-md shadow-lg shrink-0 transition-transform group-hover:scale-110 ${
         type === 'pos' ? 'bg-green-500/10 text-green-400 shadow-green-500/10' : 
         type === 'neg' ? 'bg-red-500/10 text-red-400 shadow-red-500/10' : 
         'bg-white/5 text-gray-300 shadow-white/5'
@@ -799,18 +1458,725 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     </div>
   );
 
+  // Render Interactive Breakdown Modal for the 4 Counters
+  const renderStatBreakdownModal = () => {
+    if (!statBreakdownModal) return null;
+
+    let modalTitle = '';
+    let modalSubtitle = '';
+    let modalBadge = '';
+    let totalCount = 0;
+    let totalDisplayedAmount = 0;
+
+    let content: React.ReactNode = null;
+
+    if (statBreakdownModal === 'cash_in_hand') {
+      modalTitle = 'Cash in Hand - Balance Breakdown';
+      modalSubtitle = 'Real-time cash and bank vouchers contributing to the available cash in hand';
+      modalBadge = 'Cash & Bank';
+
+      const filtered = financeData.filter(entry => {
+        if (statFilterSubtab === 'INCOME' && entry.type !== 'INCOME') return false;
+        if (statFilterSubtab === 'EXPENSE' && entry.type !== 'EXPENSE') return false;
+        if (statFilterSubtab === 'CASH' && entry.paymentMethod === 'BANK') return false;
+        if (statFilterSubtab === 'BANK' && entry.paymentMethod !== 'BANK') return false;
+        if (statSearchQuery) {
+          const q = statSearchQuery.toLowerCase();
+          return (
+            entry.party?.toLowerCase().includes(q) ||
+            entry.description?.toLowerCase().includes(q) ||
+            entry.reference?.toLowerCase().includes(q) ||
+            entry.category?.toLowerCase().includes(q) ||
+            entry.bankName?.toLowerCase().includes(q) ||
+            entry.transactionId?.toLowerCase().includes(q)
+          );
+        }
+        return true;
+      });
+
+      totalCount = filtered.length;
+      totalDisplayedAmount = filtered.reduce((acc, curr) => {
+        return curr.type === 'INCOME' ? acc + (Number(curr.amount) || 0) : acc - (Number(curr.amount) || 0);
+      }, 0);
+
+      content = (
+        <div className="space-y-4">
+          {/* Top Metric Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-emerald-400 font-semibold block">Total Inflow (Income)</span>
+              <span className="text-base font-bold font-mono text-emerald-300">
+                + PKR {cashbookSummary.totalIncome.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-red-400 font-semibold block">Total Outflow (Expense)</span>
+              <span className="text-base font-bold font-mono text-red-300">
+                - PKR {cashbookSummary.totalExpense.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-purple-400 font-semibold block">Net Cash in Hand</span>
+              <span className={`text-base font-bold font-mono ${cashbookSummary.netCashBalance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                PKR {cashbookSummary.netCashBalance.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {/* Sub-tabs & Search */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[
+                { id: 'ALL', label: 'All Vouchers' },
+                { id: 'INCOME', label: 'Inflows Only' },
+                { id: 'EXPENSE', label: 'Outflows Only' },
+                { id: 'CASH', label: 'Cash Accounts' },
+                { id: 'BANK', label: 'Bank Accounts' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setStatFilterSubtab(tab.id)}
+                  className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
+                    statFilterSubtab === tab.id
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-white/5 hover:bg-white/10 text-gray-300'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+              <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search party, voucher, bank..."
+                value={statSearchQuery}
+                onChange={(e) => setStatSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-purple-500"
+              />
+            </div>
+          </div>
+
+          {/* List Table */}
+          <div className="overflow-x-auto rounded-xl border border-white/10 max-h-[380px] overflow-y-auto">
+            <table className="w-full text-left text-xs text-gray-300">
+              <thead className="bg-slate-900 sticky top-0 uppercase text-[10px] text-gray-400 border-b border-white/10 font-semibold">
+                <tr>
+                  <th className="p-3">Date / Ref</th>
+                  <th className="p-3">Party / Account</th>
+                  <th className="p-3">Category & Details</th>
+                  <th className="p-3">Payment Mode</th>
+                  <th className="p-3 text-right">Inflow / Outflow</th>
+                  <th className="p-3 text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filtered.map(entry => (
+                  <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                    <td className="p-3">
+                      <span className="font-mono text-white block">{entry.date}</span>
+                      <span className="text-[10px] text-gray-400 font-mono">{entry.reference || `REF-${entry.id}`}</span>
+                    </td>
+                    <td className="p-3 font-medium text-white">{entry.party}</td>
+                    <td className="p-3">
+                      <span className="text-gray-200 block truncate max-w-[220px]">{entry.description}</span>
+                      <span className="text-[10px] text-purple-300">{entry.category || 'General'}</span>
+                    </td>
+                    <td className="p-3">
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-white/5 border border-white/10 text-gray-300">
+                        {entry.paymentMethod === 'BANK' ? `${entry.bankName || 'Bank'}` : 'Cash in Hand'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right font-mono font-bold">
+                      <span className={entry.type === 'INCOME' ? 'text-emerald-400' : 'text-red-400'}>
+                        {entry.type === 'INCOME' ? '+' : '-'} PKR {(Number(entry.amount) || 0).toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <button
+                        onClick={() => handleOpenReceipt(entry)}
+                        className="px-2 py-1 bg-white/5 hover:bg-white/10 text-gray-200 rounded border border-white/10 text-[10px] flex items-center gap-1 mx-auto"
+                      >
+                        <Eye size={12} /> Voucher
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-gray-400">
+                      No transactions found matching your criteria.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    } else if (statBreakdownModal === 'receivables') {
+      modalTitle = 'Total Receivables - Client Invoices Breakdown';
+      modalSubtitle = 'Detailed list of outstanding and unpaid client bills and invoices';
+      modalBadge = 'Receivables';
+
+      const filtered = calculatedReceivables.filter(entry => {
+        if (statFilterSubtab === 'PENDING' && entry.status === 'PAID') return false;
+        if (statFilterSubtab === 'PAID' && entry.status !== 'PAID') return false;
+        if (statSearchQuery) {
+          const q = statSearchQuery.toLowerCase();
+          return (
+            entry.party?.toLowerCase().includes(q) ||
+            entry.description?.toLowerCase().includes(q) ||
+            entry.reference?.toLowerCase().includes(q) ||
+            entry.caseNo?.toLowerCase().includes(q) ||
+            entry.containerNumber?.toLowerCase().includes(q)
+          );
+        }
+        return true;
+      });
+
+      totalCount = filtered.length;
+      totalDisplayedAmount = filtered.reduce((acc, curr) => {
+        return acc + (curr.remainingAmount !== undefined ? curr.remainingAmount : (curr.status === 'PAID' ? 0 : curr.amount));
+      }, 0);
+
+      content = (
+        <div className="space-y-4">
+          {/* Metric Summary */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl">
+              <span className="text-[10px] uppercase text-gray-400 font-semibold block">Total Invoiced</span>
+              <span className="text-base font-bold font-mono text-white">
+                PKR {receivablesSummary.totalInvoiced.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-emerald-400 font-semibold block">Collected to Date</span>
+              <span className="text-base font-bold font-mono text-emerald-300">
+                PKR {receivablesSummary.totalPaid.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-amber-400 font-semibold block">Outstanding Dues</span>
+              <span className="text-base font-bold font-mono text-amber-300">
+                PKR {receivablesSummary.totalOutstanding.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-blue-400 font-semibold block">Unpaid Bills</span>
+              <span className="text-base font-bold font-mono text-blue-300">
+                {receivablesSummary.pendingCount} Invoices
+              </span>
+            </div>
+          </div>
+
+          {/* Subtabs & Search */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
+            <div className="flex items-center gap-1.5">
+              {[
+                { id: 'ALL', label: 'All Invoices' },
+                { id: 'PENDING', label: 'Pending Dues Only' },
+                { id: 'PAID', label: 'Settled & Cleared' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setStatFilterSubtab(tab.id)}
+                  className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
+                    statFilterSubtab === tab.id
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-white/5 hover:bg-white/10 text-gray-300'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+              <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search client, case, container, invoice #..."
+                value={statSearchQuery}
+                onChange={(e) => setStatSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-purple-500"
+              />
+            </div>
+          </div>
+
+          {/* List Table */}
+          <div className="overflow-x-auto rounded-xl border border-white/10 max-h-[380px] overflow-y-auto">
+            <table className="w-full text-left text-xs text-gray-300">
+              <thead className="bg-slate-900 sticky top-0 uppercase text-[10px] text-gray-400 border-b border-white/10 font-semibold">
+                <tr>
+                  <th className="p-3">Date / Invoice #</th>
+                  <th className="p-3">Client Name</th>
+                  <th className="p-3">Case & Service</th>
+                  <th className="p-3 text-right">Invoiced</th>
+                  <th className="p-3 text-right">Collected</th>
+                  <th className="p-3 text-right">Outstanding Due</th>
+                  <th className="p-3 text-center">Status</th>
+                  <th className="p-3 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filtered.map(entry => {
+                  const remaining = entry.remainingAmount !== undefined ? entry.remainingAmount : (entry.status === 'PAID' ? 0 : entry.amount);
+                  return (
+                    <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                      <td className="p-3">
+                        <span className="font-mono text-white block">{entry.date}</span>
+                        <span className="text-[10px] text-purple-300 font-mono">{entry.reference || `INV-${entry.id}`}</span>
+                      </td>
+                      <td className="p-3 font-semibold text-white">{entry.party}</td>
+                      <td className="p-3">
+                        <span className="text-gray-200 block truncate max-w-[200px]">{entry.description}</span>
+                        {entry.caseNo && <span className="text-[10px] text-gray-400">Case: {entry.caseNo}</span>}
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold text-white">
+                        PKR {entry.amount.toLocaleString()}
+                      </td>
+                      <td className="p-3 text-right font-mono text-emerald-400">
+                        PKR {(entry.paidAmount || 0).toLocaleString()}
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold text-amber-300">
+                        PKR {remaining.toLocaleString()}
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                          entry.status === 'PAID' 
+                            ? 'bg-emerald-500/20 text-emerald-300' 
+                            : entry.status === 'PARTIAL' 
+                            ? 'bg-amber-500/20 text-amber-300' 
+                            : 'bg-red-500/20 text-red-300'
+                        }`}>
+                          {entry.status || 'PENDING'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenInvoice(entry)}
+                            className="px-2 py-1 bg-white/5 hover:bg-white/10 text-gray-200 rounded border border-white/10 text-[10px] flex items-center gap-1"
+                            title="View Invoice"
+                          >
+                            <FileText size={12} />
+                          </button>
+                          {entry.status !== 'PAID' && (
+                            <button
+                              onClick={() => {
+                                setStatBreakdownModal(null);
+                                handleOpenQuickReceiveModal(entry);
+                              }}
+                              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-semibold flex items-center gap-1 shadow"
+                              title="Receive Payment"
+                            >
+                              <ArrowDownLeft size={12} /> Receive
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-gray-400">
+                      No invoices found matching your criteria.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    } else if (statBreakdownModal === 'payables') {
+      modalTitle = 'Total Payables - Outstanding Dues Breakdown';
+      modalSubtitle = 'All pending obligations to transporters, shipping lines, terminals, staff, and vendors';
+      modalBadge = 'Payables';
+
+      const filtered = payables.filter(entry => {
+        if (statFilterSubtab === 'PENDING' && entry.status === 'PAID') return false;
+        if (statFilterSubtab === 'PAID' && entry.status !== 'PAID') return false;
+        if (statSearchQuery) {
+          const q = statSearchQuery.toLowerCase();
+          return (
+            entry.party?.toLowerCase().includes(q) ||
+            entry.description?.toLowerCase().includes(q) ||
+            entry.reference?.toLowerCase().includes(q) ||
+            entry.category?.toLowerCase().includes(q)
+          );
+        }
+        return true;
+      });
+
+      totalCount = filtered.length;
+      totalDisplayedAmount = filtered.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+
+      content = (
+        <div className="space-y-4">
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl">
+              <span className="text-[10px] uppercase text-gray-400 font-semibold block">Total Billed Payables</span>
+              <span className="text-base font-bold font-mono text-white">
+                PKR {payablesSummary.totalInvoiced.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-emerald-400 font-semibold block">Settled to Date</span>
+              <span className="text-base font-bold font-mono text-emerald-300">
+                PKR {payablesSummary.totalPaid.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-red-400 font-semibold block">Total Pending Dues</span>
+              <span className="text-base font-bold font-mono text-red-300">
+                PKR {payablesSummary.totalPending.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {/* Subtabs & Search */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
+            <div className="flex items-center gap-1.5">
+              {[
+                { id: 'ALL', label: 'All Bills' },
+                { id: 'PENDING', label: 'Pending Dues Only' },
+                { id: 'PAID', label: 'Paid Bills' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setStatFilterSubtab(tab.id)}
+                  className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
+                    statFilterSubtab === tab.id
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-white/5 hover:bg-white/10 text-gray-300'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+              <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search vendor, description, category..."
+                value={statSearchQuery}
+                onChange={(e) => setStatSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-purple-500"
+              />
+            </div>
+          </div>
+
+          {/* List Table */}
+          <div className="overflow-x-auto rounded-xl border border-white/10 max-h-[380px] overflow-y-auto">
+            <table className="w-full text-left text-xs text-gray-300">
+              <thead className="bg-slate-900 sticky top-0 uppercase text-[10px] text-gray-400 border-b border-white/10 font-semibold">
+                <tr>
+                  <th className="p-3">Date / Ref</th>
+                  <th className="p-3">Vendor / Party</th>
+                  <th className="p-3">Category & Details</th>
+                  <th className="p-3 text-right">Amount</th>
+                  <th className="p-3 text-center">Status</th>
+                  <th className="p-3 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filtered.map(entry => (
+                  <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                    <td className="p-3">
+                      <span className="font-mono text-white block">{entry.date}</span>
+                      <span className="text-[10px] text-gray-400 font-mono">{entry.reference || `PAY-${entry.id}`}</span>
+                    </td>
+                    <td className="p-3 font-semibold text-white">{entry.party}</td>
+                    <td className="p-3">
+                      <span className="text-gray-200 block truncate max-w-[220px]">{entry.description}</span>
+                      <span className="text-[10px] text-red-300">{entry.category || 'Operational'}</span>
+                    </td>
+                    <td className="p-3 text-right font-mono font-bold text-red-300">
+                      PKR {entry.amount.toLocaleString()}
+                    </td>
+                    <td className="p-3 text-center">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                        entry.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                      }`}>
+                        {entry.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          onClick={() => handleOpenReceipt(entry)}
+                          className="px-2 py-1 bg-white/5 hover:bg-white/10 text-gray-200 rounded border border-white/10 text-[10px]"
+                          title="View Voucher"
+                        >
+                          <Eye size={12} />
+                        </button>
+                        {entry.status !== 'PAID' && (
+                          <button
+                            onClick={() => {
+                              setStatBreakdownModal(null);
+                              handleStatusChange(entry.id, payables, setPayables);
+                            }}
+                            className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-[10px] font-semibold flex items-center gap-1 shadow"
+                          >
+                            <ArrowUpRight size={12} /> Pay
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-gray-400">
+                      No payable bills found matching your criteria.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    } else if (statBreakdownModal === 'received_amount') {
+      modalTitle = 'Total Received Amount - Month to Date';
+      modalSubtitle = `Payments and income collected from 1st ${currentMonthReceivedSummary.monthName} to Today (${currentMonthReceivedSummary.startOfMonthStr} to ${currentMonthReceivedSummary.todayStr})`;
+      modalBadge = 'Received This Month';
+
+      const filtered = currentMonthReceivedSummary.entries.filter(entry => {
+        if (statFilterSubtab === 'CASH' && entry.paymentMethod === 'BANK') return false;
+        if (statFilterSubtab === 'BANK' && entry.paymentMethod !== 'BANK') return false;
+        if (statSearchQuery) {
+          const q = statSearchQuery.toLowerCase();
+          return (
+            entry.party?.toLowerCase().includes(q) ||
+            entry.description?.toLowerCase().includes(q) ||
+            entry.reference?.toLowerCase().includes(q) ||
+            entry.bankName?.toLowerCase().includes(q) ||
+            entry.transactionId?.toLowerCase().includes(q) ||
+            entry.caseNo?.toLowerCase().includes(q)
+          );
+        }
+        return true;
+      });
+
+      totalCount = filtered.length;
+      totalDisplayedAmount = filtered.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+
+      content = (
+        <div className="space-y-4">
+          {/* Summary Strip */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-emerald-400 font-semibold block">Total Received This Month</span>
+              <span className="text-base font-bold font-mono text-emerald-300">
+                PKR {currentMonthReceivedSummary.totalAmount.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-blue-400 font-semibold block">Bank Transfers</span>
+              <span className="text-base font-bold font-mono text-blue-300">
+                PKR {currentMonthReceivedSummary.bankTotal.toLocaleString()}
+              </span>
+            </div>
+            <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl">
+              <span className="text-[10px] uppercase text-purple-400 font-semibold block">Cash Receipts</span>
+              <span className="text-base font-bold font-mono text-purple-300">
+                PKR {currentMonthReceivedSummary.cashTotal.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {/* Subtabs & Search */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
+            <div className="flex items-center gap-1.5">
+              {[
+                { id: 'ALL', label: 'All Receipts' },
+                { id: 'BANK', label: 'Bank Transfers' },
+                { id: 'CASH', label: 'Cash Receipts' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setStatFilterSubtab(tab.id)}
+                  className={`px-3 py-1 text-xs rounded-lg font-medium transition-all ${
+                    statFilterSubtab === tab.id
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-white/5 hover:bg-white/10 text-gray-300'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+              <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search payer, receipt #, bank, case..."
+                value={statSearchQuery}
+                onChange={(e) => setStatSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-purple-500"
+              />
+            </div>
+          </div>
+
+          {/* List Table */}
+          <div className="overflow-x-auto rounded-xl border border-white/10 max-h-[380px] overflow-y-auto">
+            <table className="w-full text-left text-xs text-gray-300">
+              <thead className="bg-slate-900 sticky top-0 uppercase text-[10px] text-gray-400 border-b border-white/10 font-semibold">
+                <tr>
+                  <th className="p-3">Date / Receipt #</th>
+                  <th className="p-3">Client / Payer</th>
+                  <th className="p-3">Details & Case</th>
+                  <th className="p-3">Method & Bank</th>
+                  <th className="p-3 text-right">Amount Received</th>
+                  <th className="p-3 text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {filtered.map(entry => (
+                  <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                    <td className="p-3">
+                      <span className="font-mono text-white block">{entry.date}</span>
+                      <span className="text-[10px] text-purple-300 font-mono">{entry.reference || `REC-${entry.id}`}</span>
+                    </td>
+                    <td className="p-3 font-semibold text-white">{entry.party}</td>
+                    <td className="p-3">
+                      <span className="text-gray-200 block truncate max-w-[220px]">{entry.description}</span>
+                      {entry.caseNo && <span className="text-[10px] text-gray-400">Case: {entry.caseNo}</span>}
+                    </td>
+                    <td className="p-3">
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-white/5 border border-white/10 text-gray-300 block w-fit">
+                        {entry.paymentMethod === 'BANK' ? `${entry.bankName || 'Bank'}` : 'Cash'}
+                      </span>
+                      {entry.transactionId && (
+                        <span className="text-[9px] text-gray-400 font-mono mt-0.5 block">{entry.transactionId}</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-right font-mono font-bold text-emerald-400">
+                      PKR {(Number(entry.amount) || 0).toLocaleString()}
+                    </td>
+                    <td className="p-3 text-center">
+                      <button
+                        onClick={() => handleOpenReceipt(entry)}
+                        className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-200 rounded border border-white/10 text-[10px] flex items-center gap-1 mx-auto"
+                        title="View Official Receipt"
+                      >
+                        <Eye size={12} /> Receipt
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-gray-400">
+                      No payments received this month yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
+        <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+          {/* Modal Header */}
+          <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-950/60">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-bold text-white">{modalTitle}</h3>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold uppercase">
+                  {modalBadge}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">{modalSubtitle}</p>
+            </div>
+            <button
+              onClick={() => {
+                setStatBreakdownModal(null);
+                setStatSearchQuery('');
+                setStatFilterSubtab('ALL');
+              }}
+              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Modal Body */}
+          <div className="p-5 overflow-y-auto flex-1 space-y-4">
+            {content}
+          </div>
+
+          {/* Modal Footer */}
+          <div className="p-4 border-t border-white/10 bg-slate-950/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="text-gray-400">
+              Showing <span className="text-white font-bold">{totalCount}</span> items &bull; Total Value:{' '}
+              <span className="text-white font-mono font-bold">PKR {Math.abs(totalDisplayedAmount).toLocaleString()}</span>
+            </div>
+            <button
+              onClick={() => {
+                setStatBreakdownModal(null);
+                setStatSearchQuery('');
+                setStatFilterSubtab('ALL');
+              }}
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl font-medium transition-all"
+            >
+              Close Window
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderTableContent = () => {
     switch (activeTab) {
       case 'receivables': {
-        const filteredReceivables = receivables.filter(entry => 
+        const filteredReceivables = calculatedReceivables.filter(entry => 
           !searchTerm || 
           entry.party.toLowerCase().includes(searchTerm.toLowerCase()) || 
           entry.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (entry.reference && entry.reference.toLowerCase().includes(searchTerm.toLowerCase()))
+          (entry.reference && entry.reference.toLowerCase().includes(searchTerm.toLowerCase())) ||
+          (entry.caseNo && entry.caseNo.toLowerCase().includes(searchTerm.toLowerCase())) ||
+          (entry.containerNumber && entry.containerNumber.toLowerCase().includes(searchTerm.toLowerCase()))
         );
 
         return (
           <>
+            {/* Receivables High-Level Settlement Summary Bar */}
+            <div className="p-4 bg-slate-900/60 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 no-print">
+              <div className="flex flex-wrap items-center gap-4 text-xs">
+                <div>
+                  <span className="text-gray-400 block text-[10px] uppercase">Total Invoiced</span>
+                  <span className="text-white font-mono font-bold text-sm">PKR {receivablesSummary.totalInvoiced.toLocaleString()}</span>
+                </div>
+                <div className="h-6 w-px bg-white/10 hidden sm:block" />
+                <div>
+                  <span className="text-emerald-400 block text-[10px] uppercase">Received to Date</span>
+                  <span className="text-emerald-400 font-mono font-bold text-sm">PKR {receivablesSummary.totalPaid.toLocaleString()}</span>
+                </div>
+                <div className="h-6 w-px bg-white/10 hidden sm:block" />
+                <div>
+                  <span className="text-amber-400 block text-[10px] uppercase">Outstanding Balance</span>
+                  <span className="text-amber-300 font-mono font-bold text-sm">PKR {receivablesSummary.totalOutstanding.toLocaleString()}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-gray-400 bg-white/5 px-2.5 py-1 rounded-lg border border-white/10">
+                  {receivablesSummary.clearedCount} Cleared • {receivablesSummary.pendingCount} Pending
+                </span>
+              </div>
+            </div>
+
             {/* Mobile View: Compact, Zero-Horizontal Scroll, Smooth Touch Pan-Y */}
             <div className="block sm:hidden divide-y divide-white/10 touch-pan-y">
               {filteredReceivables.length === 0 ? (
@@ -825,50 +2191,66 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                         <span className="text-xs font-bold text-white truncate">{entry.party}</span>
                       </div>
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
-                        entry.status === 'PAID' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'
+                        entry.status === 'PAID' ? 'bg-green-500/20 text-green-400' : 
+                        entry.status === 'PARTIAL' ? 'bg-amber-500/20 text-amber-300' : 'bg-blue-500/20 text-blue-400'
                       }`}>
                         {entry.status}
                       </span>
                     </div>
 
-                    {/* Middle: Description & Reference */}
+                    {/* Middle: Description, Case & Container Info */}
                     <p className="text-[11px] text-gray-300 leading-snug line-clamp-2">
                       {entry.description}
-                      {entry.reference && (
-                        <span className="text-[10px] text-gray-500 block">Ref: {entry.reference}</span>
-                      )}
                     </p>
+                    <div className="text-[10px] text-gray-400 flex flex-wrap gap-2">
+                      <span className="bg-white/5 px-1.5 py-0.5 rounded text-gray-300">Inv: {entry.reference}</span>
+                      {entry.caseNo && <span className="bg-white/5 px-1.5 py-0.5 rounded text-brand-300">Case: {entry.caseNo}</span>}
+                      {entry.containerNumber && entry.containerNumber !== 'N/A' && (
+                        <span className="bg-white/5 px-1.5 py-0.5 rounded text-gray-300">Cntr: {entry.containerNumber}</span>
+                      )}
+                    </div>
 
-                    {/* Bottom: Amount + Compact Action Buttons */}
-                    <div className="flex items-center justify-between pt-1 border-t border-white/5">
-                      <div className="text-xs font-bold font-mono text-green-400">
-                        PKR {entry.amount.toLocaleString()}
+                    {/* Settlement Details */}
+                    <div className="flex items-center justify-between text-[11px] pt-1 border-t border-white/5">
+                      <div className="space-y-0.5">
+                        <span className="text-gray-400 block text-[10px]">Total: PKR {entry.amount.toLocaleString()}</span>
+                        {entry.paidAmount ? (
+                          <span className="text-emerald-400 block text-[10px]">Paid: PKR {entry.paidAmount.toLocaleString()}</span>
+                        ) : null}
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <button 
-                          onClick={() => handleOpenInvoice(entry)}
-                          className="text-brand-400 hover:text-white text-[11px] font-semibold px-2 py-0.5 rounded bg-brand-600/20 border border-brand-500/30 flex items-center gap-1"
-                          title="View Official Invoice"
-                        >
-                          <Eye size={11} />
-                          <span>Invoice</span>
-                        </button>
-                        <button 
-                          onClick={() => handleDirectDownloadInvoice(entry)}
-                          className="text-emerald-400 hover:text-white p-1 rounded bg-emerald-600/20 border border-emerald-500/30"
-                          title="Direct Download Invoice PDF"
-                        >
-                          <Download size={11} />
-                        </button>
-                        {entry.status !== 'PAID' && (
-                          <button 
-                            onClick={() => handleStatusChange(entry.id, receivables, setReceivables)}
-                            className="text-amber-300 hover:text-white text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-600/20 border border-amber-500/30"
-                          >
-                            Receive
-                          </button>
-                        )}
+                      <div className="text-right">
+                        <span className="text-xs font-bold font-mono text-amber-300">
+                          Due: PKR {(entry.remainingAmount !== undefined ? entry.remainingAmount : (entry.status === 'PAID' ? 0 : entry.amount)).toLocaleString()}
+                        </span>
                       </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-end gap-1.5 pt-1">
+                      <button 
+                        onClick={() => handleOpenInvoice(entry)}
+                        className="text-brand-400 hover:text-white text-[11px] font-semibold px-2 py-0.5 rounded bg-brand-600/20 border border-brand-500/30 flex items-center gap-1"
+                        title="View Official Invoice"
+                      >
+                        <Eye size={11} />
+                        <span>Invoice</span>
+                      </button>
+                      <button 
+                        onClick={() => handleDirectDownloadInvoice(entry)}
+                        className="text-emerald-400 hover:text-white p-1 rounded bg-emerald-600/20 border border-emerald-500/30"
+                        title="Direct Download Invoice PDF"
+                      >
+                        <Download size={11} />
+                      </button>
+                      {entry.status !== 'PAID' && (
+                        <button 
+                          onClick={() => handleOpenQuickReceiveModal(entry)}
+                          className="text-amber-300 hover:text-white text-[11px] font-semibold px-2.5 py-0.5 rounded bg-amber-600/20 border border-amber-500/30 flex items-center gap-1"
+                        >
+                          <Banknote size={11} />
+                          <span>Receive</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))
@@ -881,10 +2263,12 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/5 print:text-black print:border-black">
                   <tr>
                     <th className="p-4">Date</th>
+                    <th className="p-4">Client / Party</th>
+                    <th className="p-4">Invoice / Case / Cntr</th>
                     <th className="p-4">Description</th>
-                    <th className="p-4">Party</th>
-                    <th className="p-4 text-right">Amount</th>
-                    <th className="p-4">Ref No</th>
+                    <th className="p-4 text-right">Invoiced</th>
+                    <th className="p-4 text-right">Paid</th>
+                    <th className="p-4 text-right">Balance Due</th>
                     <th className="p-4">Status</th>
                     <th className="p-4 text-center no-print">Action</th>
                   </tr>
@@ -892,13 +2276,31 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 <tbody className="divide-y divide-white/5 print:divide-gray-300">
                   {filteredReceivables.map((entry) => (
                     <tr key={entry.id} className="hover:bg-white/5 transition-colors">
-                      <td className="p-4">{entry.date}</td>
-                      <td className="p-4">{entry.description}</td>
-                      <td className="p-4 font-medium text-white print:text-black">{entry.party}</td>
-                      <td className="p-4 text-right text-green-400 font-mono print:text-black">PKR {entry.amount.toLocaleString()}</td>
-                      <td className="p-4 text-gray-400 print:text-black">{entry.reference}</td>
+                      <td className="p-4 text-xs font-mono text-gray-400">{entry.date}</td>
+                      <td className="p-4 font-semibold text-white print:text-black">{entry.party}</td>
+                      <td className="p-4 text-xs space-y-0.5">
+                        <span className="font-mono text-brand-300 font-bold block">{entry.reference}</span>
+                        {entry.caseNo && <span className="text-gray-400 block">Case: {entry.caseNo}</span>}
+                        {entry.containerNumber && entry.containerNumber !== 'N/A' && (
+                          <span className="text-gray-500 block truncate max-w-[180px]">Cntr: {entry.containerNumber}</span>
+                        )}
+                      </td>
+                      <td className="p-4 text-xs text-gray-300 max-w-xs">{entry.description}</td>
+                      <td className="p-4 text-right font-mono text-white print:text-black font-semibold">
+                        PKR {entry.amount.toLocaleString()}
+                      </td>
+                      <td className="p-4 text-right font-mono text-emerald-400 print:text-black">
+                        PKR {(entry.paidAmount || 0).toLocaleString()}
+                      </td>
+                      <td className="p-4 text-right font-mono text-amber-300 print:text-black font-bold">
+                        PKR {(entry.remainingAmount !== undefined ? entry.remainingAmount : (entry.status === 'PAID' ? 0 : entry.amount)).toLocaleString()}
+                      </td>
                       <td className="p-4">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${entry.status === 'PAID' ? 'bg-green-500/20 text-green-400 print:border print:border-black print:text-black' : 'bg-blue-500/20 text-blue-400 print:border print:border-black print:text-black'}`}>
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                          entry.status === 'PAID' ? 'bg-green-500/20 text-green-400 print:border print:border-black print:text-black' : 
+                          entry.status === 'PARTIAL' ? 'bg-amber-500/20 text-amber-300 print:border print:border-black print:text-black' :
+                          'bg-blue-500/20 text-blue-400 print:border print:border-black print:text-black'
+                        }`}>
                           {entry.status}
                         </span>
                       </td>
@@ -921,10 +2323,12 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                           </button>
                           {entry.status !== 'PAID' && (
                             <button 
-                              onClick={() => handleStatusChange(entry.id, receivables, setReceivables)}
-                              className="text-amber-300 hover:text-white transition-colors text-xs font-semibold px-2 py-1 rounded bg-amber-600/20 border border-amber-500/30"
+                              onClick={() => handleOpenQuickReceiveModal(entry)}
+                              className="text-amber-300 hover:text-white transition-colors text-xs font-semibold px-2 py-1 rounded bg-amber-600/20 border border-amber-500/30 flex items-center gap-1"
+                              title="Receive payment against this invoice"
                             >
-                              Receive
+                              <Banknote size={12} />
+                              <span>Receive</span>
                             </button>
                           )}
                         </div>
@@ -933,7 +2337,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                   ))}
                   {filteredReceivables.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-gray-400">No receivables found.</td>
+                      <td colSpan={9} className="p-8 text-center text-gray-400">No receivables found.</td>
                     </tr>
                   )}
                 </tbody>
@@ -953,6 +2357,47 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
         return (
           <>
+            {/* Monthly Fixed & Recurring Expenses Quick Bar */}
+            <div className="p-4 bg-slate-900/60 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 no-print">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <RefreshCw size={18} className={isPostingRecurring ? 'animate-spin' : ''} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                    Monthly Fixed Expenses & Salaries
+                    <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      Auto-posts on 1st
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-gray-400">
+                    Office rent, vehicle loans, internet, security, and staff base salaries.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePostAllMonthlyFixedExpenses}
+                  disabled={isPostingRecurring}
+                  className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-purple-500/40 flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                  title="Verify and post all monthly fixed expenses for the 1st of the month into Payables"
+                >
+                  <Zap size={13} />
+                  <span>{isPostingRecurring ? 'Posting Expenses...' : 'Post 1st-of-Month Expenses'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('recurring')}
+                  className="bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-semibold px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-1.5 transition-all"
+                >
+                  <Calendar size={13} />
+                  <span>Manage Templates</span>
+                </button>
+              </div>
+            </div>
+
             {/* Mobile View: Compact, Zero-Horizontal Scroll, Smooth Touch Pan-Y */}
             <div className="block sm:hidden divide-y divide-white/10 touch-pan-y">
               {filteredPayables.length === 0 ? (
@@ -1572,24 +3017,527 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           </div>
         );
 
-      case 'transporter_ledger':
-      case 'staff_ledger':
-      case 'recurring':
+      case 'recurring': {
+        const totalFixedOverhead = recurringTemplates
+          .filter(t => t.isActive && t.type === 'PAYABLE')
+          .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+        const activeStaffList = users.filter(u => u.role !== UserRole.CLIENT && (u.status || 'ACTIVE') === 'ACTIVE');
+        const totalMonthlySalaries = activeStaffList.reduce((sum, u) => sum + (Number(u.baseSalary) || 0), 0);
+        const totalMonthlyOutflow = totalFixedOverhead + totalMonthlySalaries;
+
+        const currentMonthKey = new Date().toISOString().slice(0, 7);
+
         return (
-          <div className="flex flex-col items-center justify-center p-12 text-center text-gray-500 no-print">
-            <div className="bg-white/5 p-6 rounded-full mb-4">
-              <FileText size={48} className="text-brand-600 opacity-50" />
+          <div className="p-4 space-y-6">
+            {/* Header & Controls */}
+            <div className="bg-slate-900/60 p-5 rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Building size={18} className="text-purple-400" />
+                    Monthly Fixed Expenses & Recurring Payments
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[11px] border border-purple-500/30">
+                    Automated on 1st of Month
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 mt-1 max-w-xl">
+                  Office rent, loan installments, security, utilities, and staff base salaries are verified and scheduled to log into <strong>Payables</strong> on the 1st of every month automatically.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={handlePostAllMonthlyFixedExpenses}
+                  disabled={isPostingRecurring}
+                  className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2.5 rounded-xl border border-purple-500/40 flex items-center gap-2 shadow-lg shadow-purple-950/40 transition-all active:scale-95"
+                  title="Verify and post all monthly recurring templates and salaries for the 1st of the month"
+                >
+                  <Zap size={14} className={isPostingRecurring ? 'animate-spin' : ''} />
+                  <span>{isPostingRecurring ? 'Posting to Payables...' : 'Post 1st-of-Month Payables Now'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowRecurringModal(true)}
+                  className="bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl border border-brand-500/40 flex items-center gap-2 transition-all active:scale-95"
+                >
+                  <Plus size={14} />
+                  <span>Add Fixed Expense</span>
+                </button>
+              </div>
             </div>
-            <h3 className="text-lg font-medium text-white mb-2">{tabs.find(t => t.id === activeTab)?.label}</h3>
-            <p className="max-w-xs mx-auto mb-6">No records found. Start by adding a new entry.</p>
-            <button 
-              onClick={() => { setTransactionType('INCOME'); setShowAddModal(true); }}
-              className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-            >
-              Add First Entry
-            </button>
+
+            {/* Notification message */}
+            {recurringPostMessage && (
+              <div className="p-3 bg-purple-500/20 border border-purple-500/40 rounded-xl flex items-center justify-between text-xs text-purple-200">
+                <span className="flex items-center gap-2">
+                  <CheckCircle2 size={16} className="text-purple-400" />
+                  {recurringPostMessage}
+                </span>
+                <button 
+                  onClick={() => setRecurringPostMessage(null)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Monthly Outflow Metrics */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <span className="text-[11px] uppercase tracking-wider text-gray-400 block font-medium">Monthly Fixed Overhead</span>
+                <div className="text-xl font-mono font-bold text-white mt-1">
+                  PKR {totalFixedOverhead.toLocaleString()}
+                </div>
+                <span className="text-[11px] text-gray-500 mt-1 block">
+                  {recurringTemplates.filter(t => t.isActive).length} active fixed templates
+                </span>
+              </div>
+
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <span className="text-[11px] uppercase tracking-wider text-gray-400 block font-medium">Monthly Staff Payroll</span>
+                <div className="text-xl font-mono font-bold text-purple-300 mt-1">
+                  PKR {totalMonthlySalaries.toLocaleString()}
+                </div>
+                <span className="text-[11px] text-gray-500 mt-1 block">
+                  {activeStaffList.length} active team members
+                </span>
+              </div>
+
+              <div className="p-4 bg-purple-950/30 rounded-2xl border border-purple-500/20">
+                <span className="text-[11px] uppercase tracking-wider text-purple-300 block font-medium">Total Monthly Commitment</span>
+                <div className="text-xl font-mono font-bold text-emerald-400 mt-1">
+                  PKR {totalMonthlyOutflow.toLocaleString()}
+                </div>
+                <span className="text-[11px] text-gray-400 mt-1 block">
+                  Due on 1st of every month
+                </span>
+              </div>
+            </div>
+
+            {/* Section 1: Configured Recurring Templates */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs uppercase font-bold text-gray-400 tracking-wider">
+                  Configured Recurring Templates ({recurringTemplates.length})
+                </h4>
+              </div>
+
+              {recurringTemplates.length === 0 ? (
+                <div className="p-8 text-center text-gray-400 text-xs bg-white/5 rounded-2xl border border-white/5">
+                  No recurring expense templates configured yet. Click "Add Fixed Expense" to add office rent, loan repayments, or utility bills.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {recurringTemplates.map((template) => {
+                    const isPostedThisMonth = payables.some(p => 
+                      p.reference && p.reference.toLowerCase().includes(`${template.id}_${currentMonthKey}`.toLowerCase())
+                    );
+
+                    return (
+                      <div 
+                        key={template.id} 
+                        className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                          template.isActive 
+                            ? 'bg-white/5 border-white/10 hover:border-purple-500/40' 
+                            : 'bg-black/40 border-white/5 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="text-[10px] uppercase font-semibold text-purple-400 block tracking-wider">
+                              {template.category}
+                            </span>
+                            <h5 className="text-sm font-bold text-white truncate">{template.title}</h5>
+                            <span className="text-xs text-gray-400 block mt-0.5">Payee: {template.party}</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0 ${
+                            template.isActive ? 'bg-emerald-500/20 text-emerald-300' : 'bg-gray-500/20 text-gray-400'
+                          }`}>
+                            {template.isActive ? 'Active' : 'Paused'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-baseline justify-between pt-2 border-t border-white/5">
+                          <span className="text-xs text-gray-400">Scheduled: 1st of month</span>
+                          <span className="text-base font-bold font-mono text-white">
+                            PKR {Number(template.amount).toLocaleString()}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs">
+                          <span className={`text-[11px] flex items-center gap-1 ${isPostedThisMonth ? 'text-emerald-400' : 'text-gray-400'}`}>
+                            {isPostedThisMonth ? (
+                              <>
+                                <CheckCircle2 size={12} />
+                                <span>Logged in {currentMonthKey}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Clock size={12} />
+                                <span>Pending for {currentMonthKey}</span>
+                              </>
+                            )}
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleRecurringActive(template)}
+                              className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-[11px] text-gray-300 border border-white/10 transition-colors"
+                            >
+                              {template.isActive ? 'Pause' : 'Activate'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRecurringTemplate(template.id)}
+                              className="p-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-colors"
+                              title="Delete template"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Section 2: Automated Monthly Staff Payroll Preview */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs uppercase font-bold text-gray-400 tracking-wider">
+                  Automated Monthly Staff Payroll Preview (1st of Month)
+                </h4>
+                <span className="text-xs text-purple-400 font-medium">
+                  {activeStaffList.length} Active Employees
+                </span>
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-white/5 bg-white/5">
+                <table className="w-full text-left text-xs text-gray-300">
+                  <thead className="bg-white/5 uppercase text-[10px] text-gray-400 border-b border-white/5 font-semibold">
+                    <tr>
+                      <th className="p-3">Staff Name</th>
+                      <th className="p-3">Designation / Role</th>
+                      <th className="p-3">Schedule</th>
+                      <th className="p-3 text-right">Base Salary</th>
+                      <th className="p-3 text-center">{currentMonthKey} Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {activeStaffList.map((user) => {
+                      const salaryRef = `SAL-${user.id}-${currentMonthKey}`;
+                      const isPosted = payables.some(p => p.reference === salaryRef);
+                      const isPaid = payables.some(p => p.reference === salaryRef && p.status === 'PAID');
+
+                      return (
+                        <tr key={user.id} className="hover:bg-white/5 transition-colors">
+                          <td className="p-3 font-semibold text-white flex items-center gap-2">
+                            <User size={14} className="text-purple-400" />
+                            <span>{user.name}</span>
+                          </td>
+                          <td className="p-3 text-gray-400">{user.role}</td>
+                          <td className="p-3 text-gray-400">1st of Every Month</td>
+                          <td className="p-3 text-right font-mono font-bold text-white">
+                            PKR {(Number(user.baseSalary) || 0).toLocaleString()}
+                          </td>
+                          <td className="p-3 text-center">
+                            {isPaid ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-medium">
+                                Paid
+                              </span>
+                            ) : isPosted ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 font-medium">
+                                In Payables
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] bg-gray-500/20 text-gray-400 font-medium">
+                                Scheduled
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         );
+      }
+
+      case 'staff_ledger': {
+        const staffPayables = payables.filter(p => 
+          p.category === 'Payroll / Salary' || 
+          (p.reference && p.reference.startsWith('SAL-')) ||
+          p.description.toLowerCase().includes('salary')
+        );
+
+        const staffExpenses = financeData.filter(f => 
+          f.type === 'EXPENSE' && 
+          (f.category === 'Payroll / Salary' || f.description.toLowerCase().includes('salary'))
+        );
+
+        const allStaffMembers = Array.from(new Set([
+          ...users.filter(u => u.role !== UserRole.CLIENT).map(u => u.name),
+          ...staffPayables.map(p => p.party),
+          ...staffExpenses.map(e => e.party)
+        ])).filter(Boolean);
+
+        const filteredStaffRecords = staffPayables.filter(p => 
+          staffFilter === 'ALL' || p.party.trim().toLowerCase() === staffFilter.trim().toLowerCase()
+        );
+
+        const totalSalaryBilled = filteredStaffRecords.reduce((sum, p) => sum + p.amount, 0);
+        const totalSalaryPaid = filteredStaffRecords.filter(p => p.status === 'PAID').reduce((sum, p) => sum + p.amount, 0);
+        const totalSalaryPending = filteredStaffRecords.filter(p => p.status !== 'PAID').reduce((sum, p) => sum + p.amount, 0);
+
+        return (
+          <div className="p-4 space-y-4">
+            {/* Filter & Summary Header */}
+            <div className="p-4 bg-slate-900/60 rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <User size={20} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Staff & Employee Payroll Ledger</h4>
+                  <p className="text-xs text-gray-400">Monthly salaries, advances, and payment records.</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-gray-400 font-medium">Filter Employee:</label>
+                <select
+                  value={staffFilter}
+                  onChange={(e) => setStaffFilter(e.target.value)}
+                  className="bg-white/5 text-white text-xs border border-white/10 rounded-xl px-3 py-2 outline-none focus:border-purple-500"
+                >
+                  <option value="ALL">All Staff Members</option>
+                  {allStaffMembers.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Quick Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <span className="text-[10px] uppercase text-gray-400 block font-medium">Total Salaries Invoiced</span>
+                <span className="text-lg font-bold font-mono text-white mt-1 block">PKR {totalSalaryBilled.toLocaleString()}</span>
+              </div>
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <span className="text-[10px] uppercase text-gray-400 block font-medium">Salaries Paid to Date</span>
+                <span className="text-lg font-bold font-mono text-emerald-400 mt-1 block">PKR {totalSalaryPaid.toLocaleString()}</span>
+              </div>
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <span className="text-[10px] uppercase text-gray-400 block font-medium">Pending Unpaid Salaries</span>
+                <span className="text-lg font-bold font-mono text-red-400 mt-1 block">PKR {totalSalaryPending.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Staff Ledger Table */}
+            <div className="overflow-x-auto rounded-2xl border border-white/5 bg-white/5">
+              <table className="w-full text-left text-xs text-gray-300">
+                <thead className="bg-white/5 uppercase text-[10px] text-gray-400 border-b border-white/5 font-semibold">
+                  <tr>
+                    <th className="p-3">Month / Date</th>
+                    <th className="p-3">Staff Member</th>
+                    <th className="p-3">Description & Ref</th>
+                    <th className="p-3 text-right">Amount</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3 text-center no-print">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredStaffRecords.map((entry) => (
+                    <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                      <td className="p-3 font-mono text-gray-400">{entry.date}</td>
+                      <td className="p-3 font-semibold text-white">{entry.party}</td>
+                      <td className="p-3 text-gray-300">
+                        <span>{entry.description}</span>
+                        {entry.reference && <span className="block text-[10px] text-gray-500 font-mono">Ref: {entry.reference}</span>}
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold text-white">
+                        PKR {entry.amount.toLocaleString()}
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                          entry.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                        }`}>
+                          {entry.status}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center no-print">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenReceipt(entry)}
+                            className="p-1 rounded bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10"
+                            title="View Voucher"
+                          >
+                            <Eye size={12} />
+                          </button>
+                          {entry.status !== 'PAID' && (
+                            <button
+                              onClick={() => handleStatusChange(entry.id, payables, setPayables)}
+                              className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-semibold"
+                            >
+                              Pay Salary
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredStaffRecords.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-gray-400">No staff salary records found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      }
+
+      case 'transporter_ledger': {
+        const transporterPayables = payables.filter(p => 
+          p.category === 'Fleet & Transportation' || 
+          p.category === 'Transporter' ||
+          p.category === 'Vehicle Rent' ||
+          p.description.toLowerCase().includes('transporter') ||
+          p.description.toLowerCase().includes('freight')
+        );
+
+        const allTransporters = Array.from(new Set(transporterPayables.map(p => p.party))).filter(Boolean);
+
+        const filteredTransporters = transporterPayables.filter(p => 
+          transporterFilter === 'ALL' || p.party.trim().toLowerCase() === transporterFilter.trim().toLowerCase()
+        );
+
+        const totalTransBilled = filteredTransporters.reduce((sum, p) => sum + p.amount, 0);
+        const totalTransPaid = filteredTransporters.filter(p => p.status === 'PAID').reduce((sum, p) => sum + p.amount, 0);
+        const totalTransPending = filteredTransporters.filter(p => p.status !== 'PAID').reduce((sum, p) => sum + p.amount, 0);
+
+        return (
+          <div className="p-4 space-y-4">
+            {/* Filter & Summary Header */}
+            <div className="p-4 bg-slate-900/60 rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <Truck size={20} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">Transporter/Broker & Fleet Logistics Ledger</h4>
+                  <p className="text-xs text-gray-400">Trucking charges, broker commission, container haulage, and carrier payables.</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-gray-400 font-medium">Filter Transporter/Broker:</label>
+                <select
+                  value={transporterFilter}
+                  onChange={(e) => setTransporterFilter(e.target.value)}
+                  className="bg-white/5 text-white text-xs border border-white/10 rounded-xl px-3 py-2 outline-none focus:border-blue-500"
+                >
+                  <option value="ALL">All Transporters/Brokers & Fleets</option>
+                  {allTransporters.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Quick Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <span className="text-[10px] uppercase text-gray-400 block font-medium">Total Freight Billed</span>
+                <span className="text-lg font-bold font-mono text-white mt-1 block">PKR {totalTransBilled.toLocaleString()}</span>
+              </div>
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <span className="text-[10px] uppercase text-gray-400 block font-medium">Freight Paid to Date</span>
+                <span className="text-lg font-bold font-mono text-emerald-400 mt-1 block">PKR {totalTransPaid.toLocaleString()}</span>
+              </div>
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <span className="text-[10px] uppercase text-gray-400 block font-medium">Outstanding Carrier Dues</span>
+                <span className="text-lg font-bold font-mono text-red-400 mt-1 block">PKR {totalTransPending.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Transporter Ledger Table */}
+            <div className="overflow-x-auto rounded-2xl border border-white/5 bg-white/5">
+              <table className="w-full text-left text-xs text-gray-300">
+                <thead className="bg-white/5 uppercase text-[10px] text-gray-400 border-b border-white/5 font-semibold">
+                  <tr>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Transporter/Broker / Fleet</th>
+                    <th className="p-3">Description & Route</th>
+                    <th className="p-3 text-right">Amount</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3 text-center no-print">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {filteredTransporters.map((entry) => (
+                    <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                      <td className="p-3 font-mono text-gray-400">{entry.date}</td>
+                      <td className="p-3 font-semibold text-white">{entry.party}</td>
+                      <td className="p-3 text-gray-300">
+                        <span>{entry.description}</span>
+                        {entry.reference && <span className="block text-[10px] text-gray-500 font-mono">Ref: {entry.reference}</span>}
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold text-white">
+                        PKR {entry.amount.toLocaleString()}
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                          entry.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                        }`}>
+                          {entry.status}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center no-print">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenReceipt(entry)}
+                            className="p-1 rounded bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10"
+                            title="View Voucher"
+                          >
+                            <Eye size={12} />
+                          </button>
+                          {entry.status !== 'PAID' && (
+                            <button
+                              onClick={() => handleStatusChange(entry.id, payables, setPayables)}
+                              className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-semibold"
+                            >
+                              Pay Now
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredTransporters.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-gray-400">No transporter ledger records found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      }
 
       case 'cashbook':
       default: {
@@ -1836,10 +3784,58 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* Stats Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 no-print">
-        <StatCard title="Cash in Hand" amount={45200} type="neutral" icon={DollarSign} subtitle="Vault & Petty Cash" />
-        <StatCard title="Total Receivables" amount={128500} type="pos" icon={ArrowDownLeft} subtitle="Pending client bills" />
-        <StatCard title="Total Payables" amount={32100} type="neg" icon={ArrowUpRight} subtitle="Transporter & port dues" />
-        <StatCard title="Client Ledger Dues" amount={clientSummary.netBalance} type="pos" icon={Briefcase} subtitle={`${selectedLedgerClient}`} />
+        <StatCard 
+          title="Cash in Hand" 
+          amount={cashbookSummary.netCashBalance} 
+          type={cashbookSummary.netCashBalance >= 0 ? 'pos' : 'neg'} 
+          icon={Wallet} 
+          subtitle="Real-time Cash & Bank Balance" 
+          badge="Live"
+          onClick={() => {
+            setStatSearchQuery('');
+            setStatFilterSubtab('ALL');
+            setStatBreakdownModal('cash_in_hand');
+          }}
+        />
+        <StatCard 
+          title="Total Receivables" 
+          amount={receivablesSummary.totalOutstanding} 
+          type="pos" 
+          icon={ArrowDownLeft} 
+          subtitle={`${receivablesSummary.pendingCount} unpaid client bills`} 
+          badge="Live"
+          onClick={() => {
+            setStatSearchQuery('');
+            setStatFilterSubtab('ALL');
+            setStatBreakdownModal('receivables');
+          }}
+        />
+        <StatCard 
+          title="Total Payables" 
+          amount={payablesSummary.totalPending} 
+          type="neg" 
+          icon={ArrowUpRight} 
+          subtitle={`${payablesSummary.pendingCount} pending expense & dues`} 
+          badge="Live"
+          onClick={() => {
+            setStatSearchQuery('');
+            setStatFilterSubtab('ALL');
+            setStatBreakdownModal('payables');
+          }}
+        />
+        <StatCard 
+          title="Total Received Amount" 
+          amount={currentMonthReceivedSummary.totalAmount} 
+          type="pos" 
+          icon={Banknote} 
+          subtitle={`1st ${currentMonthReceivedSummary.monthName} to Today (${currentMonthReceivedSummary.count} receipts)`} 
+          badge="This Month"
+          onClick={() => {
+            setStatSearchQuery('');
+            setStatFilterSubtab('ALL');
+            setStatBreakdownModal('received_amount');
+          }}
+        />
       </div>
 
       {/* Action Buttons: Payable, Receivable, Payment Received, Payment Paid */}
@@ -2595,6 +4591,125 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           </div>
         </div>
       )}
+
+      {/* Add Recurring Expense Template Modal */}
+      {showRecurringModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-fade-in">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400">
+                  <Building size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Add Monthly Fixed Expense</h3>
+                  <p className="text-[11px] text-gray-400">Will automatically post to Payables on the 1st of every month</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowRecurringModal(false)}
+                className="text-gray-400 hover:text-white p-1"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs">
+              <div>
+                <label className="block text-gray-400 font-medium mb-1">Expense Title / Description *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Office Rent, Vehicle Loan Installment, PTCL Internet"
+                  value={newRecurringTemplate.title}
+                  onChange={(e) => setNewRecurringTemplate(prev => ({ ...prev, title: e.target.value }))}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-400 font-medium mb-1">Payee / Beneficiary *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Landlord, Bank Name, Vendor"
+                    value={newRecurringTemplate.party}
+                    onChange={(e) => setNewRecurringTemplate(prev => ({ ...prev, party: e.target.value }))}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-400 font-medium mb-1">Monthly Amount (PKR) *</label>
+                  <input
+                    type="number"
+                    placeholder="e.g. 150000"
+                    value={newRecurringTemplate.amount}
+                    onChange={(e) => setNewRecurringTemplate(prev => ({ ...prev, amount: e.target.value }))}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-400 font-medium mb-1">Category</label>
+                  <select
+                    value={newRecurringTemplate.category}
+                    onChange={(e) => setNewRecurringTemplate(prev => ({ ...prev, category: e.target.value }))}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
+                  >
+                    <option value="Office Rent">Office Rent</option>
+                    <option value="Vehicle Loan / Lease">Vehicle Loan / Lease</option>
+                    <option value="Utilities & Internet">Utilities & Internet</option>
+                    <option value="Building & Security">Building & Security</option>
+                    <option value="Legal & Retainers">Legal & Retainers</option>
+                    <option value="IT & Software Subscriptions">IT & Subscriptions</option>
+                    <option value="Operational Expense">Operational Expense</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-gray-400 font-medium mb-1">Posting Schedule</label>
+                  <div className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-purple-300 font-medium flex items-center gap-1.5">
+                    <Calendar size={13} />
+                    <span>1st of Every Month</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-400 font-medium mb-1">Notes / Agreement Details (Optional)</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Account number, contract period, voucher instructions"
+                  value={newRecurringTemplate.notes || ''}
+                  onChange={(e) => setNewRecurringTemplate(prev => ({ ...prev, notes: e.target.value }))}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950/60 border-t border-white/10 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRecurringModal(false)}
+                className="px-4 py-2 text-xs text-gray-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveNewRecurringTemplate}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-lg shadow-purple-950/50 transition-all"
+              >
+                <Save size={14} />
+                <span>Save Recurring Expense</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive Financial Counter Breakdown Modal */}
+      {renderStatBreakdownModal()}
 
       {/* In-App PDF Viewer Modal for Receipts & Invoices */}
       <PdfViewerModal

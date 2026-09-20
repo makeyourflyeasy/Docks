@@ -140,6 +140,19 @@ export interface ExtractedData {
   routePermitNo?: string; // NHA Axle Load / Route Permit
   chassisNumbers?: string; // VIN / Chassis for Car Carrier
   currency?: string; // PKR, USD, EUR
+  // Private Cargo Specific Fields
+  pickupDestination?: string; // Loading / Pick up location
+  dropoffDestination?: string; // Delivery / Drop off destination
+  cargoOwner?: string; // Cargo Owner / Sender Name
+  cargoOwnerContact?: string; // Cargo Owner Phone
+  cargoOwnerCnic?: string; // Cargo Owner CNIC / NTN
+  builtyNumber?: string; // Bilty / Consignment Note No
+  builtyDate?: string; // Bilty Date
+  vehicleNumber?: string; // Vehicle / Truck Registration
+  driverName?: string; // Driver Name
+  driverContact?: string; // Driver Mobile Number
+  driverCnic?: string; // Driver CNIC
+  paymentTerms?: string; // Paid / To-Pay / Advance / COD
 }
 
 export interface CaseCharge {
@@ -151,6 +164,16 @@ export interface CaseCharge {
   notes?: string;
   receiptUrl?: string;
   receiptName?: string;
+  syncKey?: string;
+  arrangedBy?: 'DPL' | 'Client';
+}
+
+export interface CaseServiceArrangement {
+  key: string;
+  label: string;
+  arrangedBy: 'DPL' | 'Client';
+  amount: number;
+  category?: string;
 }
 
 export interface MockDocument {
@@ -636,6 +659,8 @@ export interface CaseStepDetail {
 export interface Case {
   id: string;
   caseNo: string; // DPL-YY-00001
+  invoiceNo?: string;
+  registrationDate?: string;
   clientName: string;
   category: string;
   subCategory?: string;
@@ -650,6 +675,7 @@ export interface Case {
   containers: Container[];
   createdAt: string;
   charges?: CaseCharge[];
+  serviceArrangements?: Record<string, { arrangedBy: 'DPL' | 'Client'; amount: number }>;
   workflowDetails?: Record<string, CaseStepDetail>;
   isIncidentVault?: boolean;
   incidentDetails?: {
@@ -686,19 +712,58 @@ export interface ClientDefaultCharge {
 
 export interface Client {
   id: string;
-  name: string; // Company Name
+  name: string; // Company Name / Company Title
   ownerName?: string;
-  contact?: string; // Office Phone
+  contact?: string; // Office Phone / Primary Contact
   officeAddress?: string;
   mobileNumber?: string;
   whatsappNumber?: string;
   email?: string;
+  cnic?: string; // Owner NIC / CNIC
   ntn?: string;
   strn?: string;
+  businessCardUrl?: string; // Business Card photo / doc
+  contractLetterUrl?: string; // Contract Letter document
+  nicDocUrl?: string; // Owner CNIC copy
   defaultCaseCategory?: string;
+  defaultServiceArrangements?: Record<string, 'DPL' | 'Client'>; // Default Arranged By DPL vs Arranged By Client
   defaultCharges?: ClientDefaultCharge[];
   openingBalance?: number;
+  userId?: string; // Optional portal login user ID
+  password?: string; // Optional portal login password
+  loginEnabled?: boolean;
   createdAt?: string;
+}
+
+export interface DestinationStaff {
+  id: string;
+  name: string;
+  station: string; // e.g. Torkham, Chaman, Peshawar, Quetta, Lahore Dryport, Faisalabad, Karachi Port, Kabul
+  role: 'Loading Agent' | 'Unloading Agent' | 'Clearing Agent' | 'Station Supervisor';
+  contact: string;
+  cnic?: string;
+  address?: string;
+  commissionOrSalary?: number;
+  paymentType?: 'Monthly Salary' | 'Per Case Commission' | 'Daily Rate';
+  status: 'Active' | 'Inactive';
+  notes?: string;
+  createdAt?: string;
+}
+
+export interface StaffLedgerEntry {
+  id: string;
+  staffId: number | string;
+  staffName: string;
+  type: 'SALARY' | 'DAILY_ROUTINE'; // Salary/Fuel/Loan vs Daily Khana Peena / Petty Cash
+  date: string;
+  description: string;
+  category?: string; // 'Monthly Salary', 'Fuel Allowance', 'Mobile Allowance', 'Loan / Advance', 'Daily Meal / Chai', 'Market Purchase', 'Cash Return', 'Settlement'
+  debit: number; // For Salary: Salary payable, Loan given. For Daily: Cash given to staff for purchases
+  credit: number; // For Salary: Salary paid, Loan recovered. For Daily: Expense bill submitted, Cash balance returned
+  balance: number;
+  receiptUrl?: string;
+  notes?: string;
+  settled?: boolean;
 }
 
 export interface LedgerEntry {
@@ -733,6 +798,12 @@ export interface FinanceEntry {
   party: string; // Client or Vendor
   category: string;
   reference?: string; // Invoice No etc
+  caseNo?: string;
+  containerNumber?: string;
+  paidAmount?: number;
+  remainingAmount?: number;
+  relatedCaseId?: string;
+  recurringTemplateId?: string;
   paymentMethod?: 'CASH' | 'BANK';
   bankId?: string | number;
   bankName?: string;
@@ -741,6 +812,21 @@ export interface FinanceEntry {
   slipUrl?: string;
   documentUrl?: string;
   documentName?: string;
+}
+
+export interface RecurringFinanceTemplate {
+  id: string;
+  title: string;
+  type: 'PAYABLE' | 'RECEIVABLE';
+  amount: number;
+  party: string;
+  category: string;
+  frequency?: 'MONTHLY_FIRST'; // Automatically triggers on the 1st of every month
+  active?: boolean;
+  isActive?: boolean;
+  dayOfMonth?: number;
+  notes?: string;
+  lastPostedMonth?: string; // e.g. "2026-04"
 }
 
 export enum VehicleCategory {

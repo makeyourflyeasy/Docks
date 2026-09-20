@@ -8,16 +8,17 @@ import {
   Building2, MapPin, Search, Download, ShieldCheck, Globe, ChevronDown, ChevronUp,
   Layers, CheckCircle2, Boxes
 } from 'lucide-react';
-import { LogEntry, CaseStatus, Case } from '../types';
-import { subscribeToCases } from '../services/dbService';
+import { LogEntry, CaseStatus, Case, Vehicle, FinanceEntry } from '../types';
+import { subscribeToCases, subscribeToVehicles, subscribeToFinances } from '../services/dbService';
+import { safeAppStorage } from '../services/storage';
 import { 
   calculateStationMovements, 
   StationMovementDetail, 
   StationAnalyticsSummary 
 } from '../services/stationAnalytics';
 
-// Standalone Data Generator based on dates
-const generateGraphData = (startStr: string, endStr: string) => {
+// Data Generator based on real cases per date
+const generateGraphData = (startStr: string, endStr: string, casesList: Case[] = []) => {
   const data = [];
   const end = new Date(endStr);
   const start = new Date(startStr);
@@ -27,20 +28,20 @@ const generateGraphData = (startStr: string, endStr: string) => {
   if (diffDays > 90) diffDays = 90; // Cap at 90 days for performance/looks
   const totalDays = diffDays + 1; // Inclusive
 
-  let prevVal = 45; 
+  let prevVal = 0; 
 
   for (let i = totalDays - 1; i >= 0; i--) {
     const d = new Date(end);
     d.setDate(end.getDate() - i);
+    const dateStr = d.toISOString().split('T')[0];
     
-    // Random volatility
-    const MathSign = Math.random() > 0.45 ? 1 : -1;
-    const change = Math.floor(Math.random() * 18) * MathSign; 
-    let val = prevVal + change;
-    
-    // Boundaries
-    if (val < 2) val = 2; 
-    if (val > 115) val = 115;
+    // Count real containers/cases for this date
+    const dayCases = casesList.filter(c => {
+      const cDate = c.createdAt ? c.createdAt.split('T')[0] : '';
+      return cDate === dateStr;
+    });
+
+    const val = dayCases.reduce((sum, c) => sum + (c.containers?.length || 1), 0);
 
     // Determine Trend
     const isBullish = val >= prevVal;
@@ -59,7 +60,7 @@ const generateGraphData = (startStr: string, endStr: string) => {
       containers: val,
       prevVal: prevVal,
       trend: isBullish ? 'UP' : 'DOWN',
-      isToday: i === totalDays - 1, // Assume last point is the "end" target
+      isToday: i === 0,
       isCritical: val > 100
     });
 
@@ -90,23 +91,10 @@ const BORDER_TERMINALS = [
   "Wagha Border Terminal", "Torkham Border Terminal", "Chaman Border Terminal", "Taftan Border Terminal", 
   "Angur Ada", "Badini", "Ghulam Khan", "Kharlachi", "Mand"
 ];
-// Mock Activity Log
-const INITIAL_LOGS: LogEntry[] = [
-  { id: 1, action: 'User Login', user: 'Arbab Khan (Admin)', timestamp: 'Just Now', type: 'SUCCESS' },
-  { id: 2, action: 'New Case Submitted: DPL-24-00042', user: 'Global Traders (Client)', timestamp: '10:42 AM', type: 'SUCCESS' },
-  { id: 3, action: 'Vehicle Registration Expired: KLA-992', user: 'System Alert', timestamp: '09:15 AM', type: 'ERROR' },
-  { id: 4, action: 'Payment Received: PKR 12,500', user: 'Finance Manager', timestamp: 'Yesterday', type: 'INFO' },
-  { id: 5, action: 'Document Uploaded: TP Filing', user: 'Ops Manager', timestamp: 'Yesterday', type: 'INFO' },
-];
+// Mock Activity Log (Empty for fresh production start)
+const INITIAL_LOGS: LogEntry[] = [];
 
-const FULL_LOGS: LogEntry[] = [
-    ...INITIAL_LOGS,
-    { id: 6, action: 'Driver Assigned: Ahmed Ali', user: 'Transport Officer', timestamp: 'Yesterday', type: 'INFO' },
-    { id: 7, action: 'Container Arrived at Port', user: 'Port Staff', timestamp: '2 days ago', type: 'SUCCESS' },
-    { id: 8, action: 'Invoice Generated #8821', user: 'Finance Manager', timestamp: '2 days ago', type: 'INFO' },
-    { id: 9, action: 'System Backup Completed', user: 'System', timestamp: '3 days ago', type: 'SUCCESS' },
-    { id: 10, action: 'Login Failed (3 attempts)', user: 'Unknown IP', timestamp: '3 days ago', type: 'WARNING' },
-];
+const FULL_LOGS: LogEntry[] = [];
 
 const SectionHeader = ({ title, icon: Icon }: any) => (
   <div className="flex items-center gap-2 mb-4 border-b border-white/5 pb-2">
@@ -141,20 +129,86 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const [logs, setLogs] = useState<LogEntry[]>(INITIAL_LOGS);
   const [showAllLogs, setShowAllLogs] = useState(false);
 
-  // Live Cases from Firestore
+  // Live Data from Firestore
   const [liveCases, setLiveCases] = useState<Case[]>([]);
+  const [liveVehicles, setLiveVehicles] = useState<Vehicle[]>([]);
+  const [liveFinances, setLiveFinances] = useState<FinanceEntry[]>([]);
 
   useEffect(() => {
-    const unsubscribe = subscribeToCases(
-      (cases) => {
-        if (cases && cases.length > 0) {
-          setLiveCases(cases);
-        }
-      },
+    const unsubCases = subscribeToCases(
+      (cases) => setLiveCases(cases || []),
       (err) => console.warn("Dashboard case subscription warning:", err)
     );
-    return () => unsubscribe();
+    const unsubVehicles = subscribeToVehicles(
+      (vehicles) => setLiveVehicles(vehicles || []),
+      (err) => console.warn("Dashboard vehicle subscription warning:", err)
+    );
+    const unsubFinances = subscribeToFinances(
+      (finances) => setLiveFinances(finances || []),
+      (err) => console.warn("Dashboard finance subscription warning:", err)
+    );
+
+    return () => {
+      unsubCases();
+      unsubVehicles();
+      unsubFinances();
+    };
   }, []);
+
+  // Compute Live Metrics from real Firestore data
+  const casePendingApproval = liveCases.filter(c => c.status === CaseStatus.SHIPPING_LINE_DO).length;
+  const loadingPortProcessing = liveCases.filter(c => c.status === CaseStatus.LOADING_PORT_PROCESSING).length;
+  const inTransitCases = liveCases.filter(c => c.status === CaseStatus.IN_TRANSIT).length;
+  const completedCases = liveCases.filter(c => c.status === CaseStatus.COMPLETED).length;
+
+  const vehiclesExpiringSoon = liveVehicles.filter(v => v.status === 'EXPIRE_SOON').length;
+  const vehiclesExpired = liveVehicles.filter(v => v.status === 'EXPIRED').length;
+  const vehiclesAvailable = liveVehicles.filter(v => v.status === 'AVAILABLE').length;
+  const vehiclesOnTrip = liveVehicles.filter(v => v.status === 'ON_TRIP').length;
+
+  const companyDocs = safeAppStorage.getJSON<any[]>('dpl_company_docs', []);
+  const docExpiringSoon = companyDocs.filter(d => {
+    if (d.unlimitedValidity || !d.expiryDate) return false;
+    const diffDays = Math.ceil((new Date(d.expiryDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+    return diffDays <= 30 && diffDays > 0;
+  }).length;
+  const docExpired = companyDocs.filter(d => {
+    if (d.unlimitedValidity || !d.expiryDate) return false;
+    const diffDays = Math.ceil((new Date(d.expiryDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+    return diffDays <= 0;
+  }).length;
+  const docValid = companyDocs.filter(d => {
+    if (d.unlimitedValidity) return true;
+    if (!d.expiryDate) return false;
+    const diffDays = Math.ceil((new Date(d.expiryDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+    return diffDays > 30;
+  }).length;
+  const docPendingRenewal = companyDocs.filter(d => d.pendingRenewal).length;
+
+  const cashInHand = liveFinances
+    .filter(f => f.paymentMethod === 'CASH')
+    .reduce((sum, f) => sum + (f.type === 'INCOME' ? Number(f.amount) || 0 : -(Number(f.amount) || 0)), 0);
+
+  const totalReceivables = liveFinances
+    .filter(f => f.type === 'RECEIVABLE' && f.status !== 'PAID')
+    .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const expensesToday = liveFinances
+    .filter(f => f.type === 'EXPENSE' && f.date === todayStr)
+    .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+
+  const totalPayables = liveFinances
+    .filter(f => f.type === 'PAYABLE' && f.status !== 'PAID')
+    .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
+
+  const officeCash = Math.max(0, cashInHand);
+  const hblCorporate = liveFinances
+    .filter(f => (f.bankId === '1' || f.bankId === 'HBL Corporate') && f.paymentMethod === 'BANK')
+    .reduce((sum, f) => sum + (f.type === 'INCOME' ? Number(f.amount) || 0 : -(Number(f.amount) || 0)), 0);
+  const meezanActive = liveFinances
+    .filter(f => (f.bankId === '2' || f.bankId === 'Meezan Active') && f.paymentMethod === 'BANK')
+    .reduce((sum, f) => sum + (f.type === 'INCOME' ? Number(f.amount) || 0 : -(Number(f.amount) || 0)), 0);
 
   // Drag to Scroll State for Graph (used in modal)
   const [isDragging, setIsDragging] = useState(false);
@@ -227,7 +281,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
   const handleGenerateStats = (e: React.FormEvent) => {
     e.preventDefault();
-    const data = generateGraphData(statsFilter.fromDate, statsFilter.toDate);
+    const data = generateGraphData(statsFilter.fromDate, statsFilter.toDate, liveCases);
     setGeneratedGraphData(data);
 
     const { movements, summary } = calculateStationMovements(
@@ -1105,10 +1159,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         <div className="glass-card rounded-2xl p-5 hover:bg-white/5 transition-colors">
           <SectionHeader title="Company Documents" icon={FileText} />
           <div className="space-y-1">
-            <StatusRow label="Expiring Soon (30 Days)" count="2" color="text-yellow-400" onClick={() => onNavigate('settings', { section: 'general' })} />
-            <StatusRow label="Already Expired" count="1" color="text-red-400" onClick={() => onNavigate('settings', { section: 'general' })}/>
-            <StatusRow label="Valid Documents" count="14" color="text-green-400" onClick={() => onNavigate('settings', { section: 'general' })}/>
-            <StatusRow label="Pending Renewal" count="0" onClick={() => onNavigate('settings', { section: 'general' })}/>
+            <StatusRow label="Expiring Soon (30 Days)" count={docExpiringSoon} color="text-yellow-400" onClick={() => onNavigate('settings', { section: 'general' })} />
+            <StatusRow label="Already Expired" count={docExpired} color="text-red-400" onClick={() => onNavigate('settings', { section: 'general' })}/>
+            <StatusRow label="Valid Documents" count={docValid} color="text-green-400" onClick={() => onNavigate('settings', { section: 'general' })}/>
+            <StatusRow label="Pending Renewal" count={docPendingRenewal} onClick={() => onNavigate('settings', { section: 'general' })}/>
           </div>
         </div>
 
@@ -1116,10 +1170,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         <div className="glass-card rounded-2xl p-5 hover:bg-white/5 transition-colors">
           <SectionHeader title="Case Overview" icon={CheckCircle} />
           <div className="space-y-1">
-            <StatusRow label="Case Approval Pending" count="5" color="text-brand-accent" onClick={() => onNavigate('cases', { status: CaseStatus.SHIPPING_LINE_DO })} />
-            <StatusRow label="Loading Port Processing" count="12" color="text-yellow-400" onClick={() => onNavigate('cases', { status: CaseStatus.LOADING_PORT_PROCESSING })} />
-            <StatusRow label="In Transit" count="8" color="text-blue-400" onClick={() => onNavigate('cases', { status: CaseStatus.IN_TRANSIT })} />
-            <StatusRow label="Completed" count="3" color="text-green-400" onClick={() => onNavigate('cases', { status: CaseStatus.COMPLETED })} />
+            <StatusRow label="Case Approval Pending" count={casePendingApproval} color="text-brand-accent" onClick={() => onNavigate('cases', { status: CaseStatus.SHIPPING_LINE_DO })} />
+            <StatusRow label="Loading Port Processing" count={loadingPortProcessing} color="text-yellow-400" onClick={() => onNavigate('cases', { status: CaseStatus.LOADING_PORT_PROCESSING })} />
+            <StatusRow label="In Transit" count={inTransitCases} color="text-blue-400" onClick={() => onNavigate('cases', { status: CaseStatus.IN_TRANSIT })} />
+            <StatusRow label="Completed" count={completedCases} color="text-green-400" onClick={() => onNavigate('cases', { status: CaseStatus.COMPLETED })} />
           </div>
         </div>
 
@@ -1127,10 +1181,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         <div className="glass-card rounded-2xl p-5 hover:bg-white/5 transition-colors">
           <SectionHeader title="Vehicles Status" icon={Truck} />
           <div className="space-y-1">
-            <StatusRow label="Expiring Soon (5 days)" count="3" color="text-yellow-400" onClick={() => onNavigate('vehicles', { filter: 'expiring' })} />
-            <StatusRow label="Expired" count="1" color="text-red-400" onClick={() => onNavigate('vehicles', { filter: 'expired' })} />
-            <StatusRow label="Available" count="4" color="text-blue-400" onClick={() => onNavigate('vehicles', { status: 'AVAILABLE' })} />
-            <StatusRow label="On Trip" count="2" color="text-orange-400" onClick={() => onNavigate('vehicles', { status: 'ON_TRIP' })} />
+            <StatusRow label="Expiring Soon (5 days)" count={vehiclesExpiringSoon} color="text-yellow-400" onClick={() => onNavigate('vehicles', { filter: 'expiring' })} />
+            <StatusRow label="Expired" count={vehiclesExpired} color="text-red-400" onClick={() => onNavigate('vehicles', { filter: 'expired' })} />
+            <StatusRow label="Available" count={vehiclesAvailable} color="text-blue-400" onClick={() => onNavigate('vehicles', { status: 'AVAILABLE' })} />
+            <StatusRow label="On Trip" count={vehiclesOnTrip} color="text-orange-400" onClick={() => onNavigate('vehicles', { status: 'ON_TRIP' })} />
           </div>
         </div>
       </div>
@@ -1149,28 +1203,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 className="glass-panel p-4 rounded-xl border-none bg-gradient-to-br from-white/5 to-white/0 hover:bg-white/10 transition-colors cursor-pointer group"
             >
               <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold group-hover:text-gray-200">Cash in Hand</p>
-              <h4 className="text-2xl font-bold text-green-400 mt-2 font-mono drop-shadow">PKR 45,200</h4>
+              <h4 className="text-2xl font-bold text-green-400 mt-2 font-mono drop-shadow">PKR {cashInHand.toLocaleString()}</h4>
             </div>
             <div 
                 onClick={() => onNavigate('finance', { tab: 'receivables' })}
                 className="glass-panel p-4 rounded-xl border-none bg-gradient-to-br from-white/5 to-white/0 hover:bg-white/10 transition-colors cursor-pointer group"
             >
               <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold group-hover:text-gray-200">Total Receivables</p>
-              <h4 className="text-2xl font-bold text-blue-400 mt-2 font-mono drop-shadow">PKR 128,500</h4>
+              <h4 className="text-2xl font-bold text-blue-400 mt-2 font-mono drop-shadow">PKR {totalReceivables.toLocaleString()}</h4>
             </div>
             <div 
                 onClick={() => onNavigate('finance', { tab: 'payables' })}
                 className="glass-panel p-4 rounded-xl border-none bg-gradient-to-br from-white/5 to-white/0 hover:bg-white/10 transition-colors cursor-pointer group"
             >
               <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold group-hover:text-gray-200">Expenses Today</p>
-              <h4 className="text-2xl font-bold text-red-400 mt-2 font-mono drop-shadow">PKR 1,240</h4>
+              <h4 className="text-2xl font-bold text-red-400 mt-2 font-mono drop-shadow">PKR {expensesToday.toLocaleString()}</h4>
             </div>
             <div 
                 onClick={() => onNavigate('finance', { tab: 'payables' })}
                 className="glass-panel p-4 rounded-xl border-none bg-gradient-to-br from-white/5 to-white/0 hover:bg-white/10 transition-colors cursor-pointer group"
             >
               <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold group-hover:text-gray-200">Total Payables</p>
-              <h4 className="text-2xl font-bold text-orange-400 mt-2 font-mono drop-shadow">PKR 32,100</h4>
+              <h4 className="text-2xl font-bold text-orange-400 mt-2 font-mono drop-shadow">PKR {totalPayables.toLocaleString()}</h4>
             </div>
           </div>
 
@@ -1179,15 +1233,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
              <div className="space-y-3">
                <div className="flex justify-between text-sm items-center">
                  <span className="text-gray-300 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-gray-500"></div> Office Cash</span>
-                 <span className="text-white font-mono">PKR 12,000</span>
+                 <span className="text-white font-mono">PKR {officeCash.toLocaleString()}</span>
                </div>
                <div className="flex justify-between text-sm items-center">
                  <span className="text-gray-300 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-brand-500"></div> HBL Corporate</span>
-                 <span className="text-white font-mono">PKR 25,000</span>
+                 <span className="text-white font-mono">PKR {hblCorporate.toLocaleString()}</span>
                </div>
                <div className="flex justify-between text-sm items-center">
                  <span className="text-gray-300 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-purple-500"></div> Meezan Active</span>
-                 <span className="text-white font-mono">PKR 8,200</span>
+                 <span className="text-white font-mono">PKR {meezanActive.toLocaleString()}</span>
                </div>
              </div>
           </div>

@@ -32,9 +32,9 @@ interface LoginModeSelectionProps {
 export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelectMode }) => {
   const { customLogo, companyName, subtitle } = useBranding();
 
-  // Credentials Form State - Defaulted to admin with universal password dpl01234
-  const [identifier, setIdentifier] = useState('admin');
-  const [password, setPassword] = useState('dpl01234');
+  // Credentials Form State - Blank by default, user enters their credentials
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -128,16 +128,16 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
       />
 
       {/* Top Header with Corporate Identity */}
-      <div className="w-full max-w-xl mx-auto flex flex-col items-center text-center pt-4 pb-2 relative z-10">
-        <div className="flex items-center justify-center mb-3 transform hover:scale-105 transition-transform duration-300">
+      <div className="w-full max-w-xl mx-auto flex flex-col items-center text-center pt-2 pb-1 relative z-10">
+        <div className="flex items-center justify-center mb-2 transform hover:scale-105 transition-transform duration-300">
           {customLogo ? (
             <img 
               src={customLogo} 
               alt="Corporate Logo" 
-              className="w-48 sm:w-60 max-h-24 object-contain drop-shadow-[0_4px_20px_rgba(245,158,11,0.25)]" 
+              className="w-40 sm:w-48 max-h-16 object-contain drop-shadow-[0_4px_20px_rgba(245,158,11,0.25)]" 
             />
           ) : (
-            <Logo className="w-56 sm:w-64 h-auto drop-shadow-xl" />
+            <Logo className="w-44 sm:w-52 h-auto drop-shadow-xl" />
           )}
         </div>
 
@@ -148,7 +148,7 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
           const formattedTitle = isDocks ? 'DOCKS PRIVATE LIMITED' : rawName.toUpperCase();
           return (
             <h1 
-              className="text-2xl sm:text-3xl font-extrabold tracking-wider text-amber-300 uppercase drop-shadow-[0_2px_14px_rgba(245,158,11,0.65)] font-sans px-2"
+              className="text-xl sm:text-2xl font-extrabold tracking-wider text-amber-300 uppercase drop-shadow-[0_2px_14px_rgba(245,158,11,0.65)] font-sans px-2"
               style={{ color: '#FCD34D', textShadow: '0 2px 14px rgba(245, 158, 11, 0.65)' }}
             >
               {formattedTitle}
@@ -156,7 +156,7 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
           );
         })()}
         <p 
-          className="text-xs sm:text-sm font-bold text-amber-400 tracking-widest uppercase mt-1 px-4 max-w-xl leading-relaxed"
+          className="text-[11px] sm:text-xs font-bold text-amber-400 tracking-widest uppercase mt-0.5 px-4 max-w-xl leading-relaxed"
           style={{ color: '#FBBF24' }}
         >
           {subtitle || 'CUSTOMS CLEARANCE, BONDED CARRIER, AFGHAN TRANSIT & LOGISTICS'}
@@ -164,19 +164,19 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
       </div>
 
       {/* Main Single Login Form Container */}
-      <div className="w-full max-w-md mx-auto my-auto py-4 relative z-10 animate-fade-in">
-        <div className="bg-slate-900/95 border border-amber-500/30 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
+      <div className="w-full max-w-md mx-auto my-auto py-2 relative z-10 animate-fade-in">
+        <div className="bg-slate-900/95 border border-amber-500/30 rounded-3xl p-5 sm:p-7 shadow-2xl backdrop-blur-xl">
           
           {/* Form Header */}
-          <div className="text-center mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mx-auto mb-3 shadow-inner">
-              <Lock className="text-amber-300" size={24} />
+          <div className="text-center mb-5">
+            <div className="w-11 h-11 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mx-auto mb-2 shadow-inner">
+              <Lock className="text-amber-300" size={22} />
             </div>
-            <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide">
-              Official Portal Sign In
+            <h2 className="text-2xl sm:text-3xl font-black text-white tracking-wide">
+              Sign In
             </h2>
             <p className="text-xs text-gray-400 mt-1">
-              Please enter your authorized User ID and Password
+              Please enter your User ID and Password
             </p>
           </div>
 
@@ -250,17 +250,17 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
               type="submit"
               id="btn-submit-credentials"
               disabled={isLoading}
-              className="w-full mt-2 py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 active:scale-[0.99] text-slate-950 font-extrabold text-sm shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+              className="w-full mt-3 py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 active:scale-[0.99] text-slate-950 font-black text-base shadow-xl shadow-amber-500/25 flex items-center justify-center gap-2.5 transition cursor-pointer disabled:opacity-50 border border-amber-300/40"
             >
               {isLoading ? (
                 <>
-                  <Loader2 size={18} className="animate-spin" />
-                  <span>Verifying Credentials...</span>
+                  <Loader2 size={19} className="animate-spin text-slate-950" />
+                  <span className="font-extrabold text-slate-950">Verifying Credentials...</span>
                 </>
               ) : (
                 <>
-                  <LogIn size={18} />
-                  <span>Sign In</span>
+                  <LogIn size={19} className="text-slate-950 stroke-[2.5]" />
+                  <span className="font-black text-slate-950 text-base tracking-wide">Sign In</span>
                 </>
               )}
             </button>

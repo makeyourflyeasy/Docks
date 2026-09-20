@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { compressAndPrepareFile, detectMimeType, readBlobAsBase64 } from "./fileUtils";
+export * from "./fileUtils";
 
 declare const __GEMINI_API_KEY__: string | undefined;
 
@@ -374,6 +375,20 @@ TARGET EXTRACTION SPECIFICATIONS:
    - indexNo: Manifest Index number
    - docCategoryDetected: Summary of detected documents (e.g. "Bill of Lading (Maersk) & Commercial Invoice")
 
+7. PRIVATE CARGO & DOMESTIC TRANSPORT / BUILTY (if present):
+   - builtyNumber: Goods Delivery receipt or Builty (Bilty) number
+   - builtyDate: Builty issuance date (YYYY-MM-DD)
+   - pickupDestination: Loading location or factory terminal (Origin)
+   - dropoffDestination: Unloading location or mill/warehouse (Destination)
+   - cargoOwner: Name of cargo owner / owner of goods
+   - cargoOwnerContact: Cargo owner phone number
+   - cargoOwnerCnic: Cargo owner CNIC / NTN
+   - paymentTerms: "Paid", "To-Pay", "Advance", or "COD"
+   - vehicleNumber: Truck registration or vehicle number
+   - driverName: Name of the truck driver
+   - driverContact: Driver phone number
+   - driverCnic: Driver National Identity Card (CNIC) number
+
 Return ONLY valid JSON matching the schema.`
     });
 
@@ -423,6 +438,18 @@ Return ONLY valid JSON matching the schema.`
         indexNo: { type: Type.STRING },
         arrivalDate: { type: Type.STRING },
         docCategoryDetected: { type: Type.STRING },
+        builtyNumber: { type: Type.STRING },
+        builtyDate: { type: Type.STRING },
+        pickupDestination: { type: Type.STRING },
+        dropoffDestination: { type: Type.STRING },
+        cargoOwner: { type: Type.STRING },
+        cargoOwnerContact: { type: Type.STRING },
+        cargoOwnerCnic: { type: Type.STRING },
+        paymentTerms: { type: Type.STRING },
+        vehicleNumber: { type: Type.STRING },
+        driverName: { type: Type.STRING },
+        driverContact: { type: Type.STRING },
+        driverCnic: { type: Type.STRING },
         containers: {
           type: Type.ARRAY,
           items: {

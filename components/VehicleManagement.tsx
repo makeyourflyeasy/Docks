@@ -5,6 +5,12 @@ import { autoFillVehicleData } from '../services/geminiService';
 import { safeAppStorage } from '../services/storage';
 import { downloadVehicleDetailsPdf, downloadVehicleNocPdf } from '../services/pdfExportService';
 import { PdfViewerModal } from './PdfViewerModal';
+import { 
+  subscribeToVehicles, 
+  saveVehicleToFirestore, 
+  updateVehicleInFirestore, 
+  deleteVehicleFromFirestore 
+} from '../services/dbService';
 
 // --- Clean Live Data ---
 
@@ -54,6 +60,20 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
     return safeAppStorage.getJSON<Vehicle[]>('dpl_live_vehicles', INITIAL_VEHICLES);
   });
 
+  // Real-time synchronization with Firestore
+  useEffect(() => {
+    const unsub = subscribeToVehicles(
+      (firestoreVehicles) => {
+        if (firestoreVehicles) {
+          setVehicles(firestoreVehicles);
+          safeAppStorage.setJSON('dpl_live_vehicles', firestoreVehicles);
+        }
+      },
+      (err) => console.warn('Vehicle subscription warning:', err)
+    );
+    return () => unsub();
+  }, []);
+
   useEffect(() => {
     safeAppStorage.setJSON('dpl_live_transporters', transporters);
   }, [transporters]);
@@ -85,22 +105,25 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
     const nocRef = `NOC-DPL-${Date.now().toString().slice(-6)}`;
 
     // Update vehicle status in state
+    const cancelledVehicle: Vehicle = {
+      ...vehicleToCancel,
+      status: 'CANCELLED' as const,
+      cancellationRequested: true,
+      cancellationApproved: true,
+      cancellationDate: today,
+      cancellationReason: cancellationReason,
+      nocReference: nocRef,
+      nocDate: today
+    };
+
     const updatedVehicles = vehicles.map(v => {
       if (v.id === vehicleToCancel.id) {
-        return {
-          ...v,
-          status: 'CANCELLED' as const,
-          cancellationRequested: true,
-          cancellationApproved: true,
-          cancellationDate: today,
-          cancellationReason: cancellationReason,
-          nocReference: nocRef,
-          nocDate: today
-        };
+        return cancelledVehicle;
       }
       return v;
     });
     setVehicles(updatedVehicles);
+    updateVehicleInFirestore(cancelledVehicle);
 
     // Automatically generate and download official NOC PDF
     try {
@@ -204,7 +227,7 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
         dplSerial: generateDPLSerial(),
         createdAt: new Date().toISOString().split('T')[0],
         history: [],
-        status: 'AVAILABLE',
+        status: 'AVAILABLE' as const,
         transporterId: newTransporterId,
         transporterName: data.name,
         driverName: 'N/A',
@@ -213,6 +236,7 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
         ...v
       }));
       setVehicles(prev => [...prev, ...newVehicles]);
+      newVehicles.forEach(nv => saveVehicleToFirestore(nv));
     }
     
     setShowAddTransporter(false);
@@ -227,12 +251,14 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
       ...data
     };
     setVehicles([...vehicles, newVehicle]);
+    saveVehicleToFirestore(newVehicle);
     setShowAddVehicle(false);
   };
 
   const handleDeleteVehicle = (id: number) => {
     if (window.confirm("Are you sure you want to delete this vehicle?")) {
       setVehicles(vehicles.filter(v => v.id !== id));
+      deleteVehicleFromFirestore(id);
     }
   };
 

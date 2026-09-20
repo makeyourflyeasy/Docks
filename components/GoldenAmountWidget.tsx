@@ -48,17 +48,8 @@ export const GoldenAmountWidget: React.FC<GoldenAmountWidgetProps> = ({ onOpenFi
     };
   }, [isOpen]);
 
-  // Compute live amounts from finances or reliable fallback
+  // Compute live amounts purely from Firestore finances (starts at 0 for fresh live app)
   const { totalRevenue, totalReceivables, cashBankBalance, pendingPayables } = React.useMemo(() => {
-    if (finances.length === 0) {
-      return {
-        totalRevenue: 4850000,
-        totalReceivables: 360000,
-        cashBankBalance: 4490000,
-        pendingPayables: 68500
-      };
-    }
-
     let income = 0;
     let expense = 0;
     let receivables = 0;
@@ -72,15 +63,11 @@ export const GoldenAmountWidget: React.FC<GoldenAmountWidgetProps> = ({ onOpenFi
       else if (f.type === 'PAYABLE') payables += amt;
     });
 
-    const computedTotal = Math.max(income + 4500000, 4850000);
-    const computedReceivables = Math.max(receivables, 360000);
-    const computedBalance = computedTotal - (expense > 0 ? expense : 360000);
-
     return {
-      totalRevenue: computedTotal,
-      totalReceivables: computedReceivables,
-      cashBankBalance: computedBalance,
-      pendingPayables: Math.max(payables, 68500)
+      totalRevenue: income,
+      totalReceivables: receivables,
+      cashBankBalance: Math.max(0, income - expense),
+      pendingPayables: payables
     };
   }, [finances]);
 
