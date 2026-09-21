@@ -846,7 +846,8 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
         ...currentArrangements,
         [key]: {
           ...currentItem,
-          arrangedBy: targetArrangedBy
+          arrangedBy: targetArrangedBy,
+          ...(targetArrangedBy === 'Client' ? { amount: 0 } : {})
         }
       };
 
@@ -4063,32 +4064,44 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   </div>
                 </div>
 
-                {/* Amount Field and Invoiced Badge */}
-                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-gray-400 font-medium">Est. Amount:</span>
-                    <div className="relative w-32">
-                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-mono text-gray-400">PKR</span>
-                      <input
-                        type="number"
-                        value={item.amount || ''}
-                        onChange={(e) => handleUpdateArrangementAmount(key, Number(e.target.value) || 0)}
-                        placeholder="0"
-                        className="w-full pl-9 pr-2 py-1 bg-black/40 border border-white/10 rounded-lg text-xs font-mono font-bold text-white focus:border-amber-400 outline-none"
-                      />
+                {/* Amount Field or Client Direct Settlement Notice */}
+                {isDpl ? (
+                  /* Arranged by DPL: Amount is written step-by-step for invoicing */
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-emerald-500/20">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-emerald-300 font-medium flex items-center gap-1">
+                        <DollarSign size={12} className="text-emerald-400" />
+                        <span>DPL Charge:</span>
+                      </span>
+                      <div className="relative w-32">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-emerald-400/80 font-bold">PKR</span>
+                        <input
+                          type="number"
+                          value={item.amount || ''}
+                          onChange={(e) => handleUpdateArrangementAmount(key, Number(e.target.value) || 0)}
+                          placeholder="Enter amount..."
+                          className="w-full pl-10 pr-2 py-1 bg-black/60 border border-emerald-500/40 rounded-lg text-xs font-mono font-bold text-emerald-300 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 outline-none transition-all"
+                        />
+                      </div>
                     </div>
-                  </div>
 
-                  {isDpl ? (
-                    <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">
-                      ✓ Invoiced (PKR {Number(item.amount).toLocaleString()})
+                    <span className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/15 px-2.5 py-1 rounded-lg border border-emerald-500/30 whitespace-nowrap flex items-center gap-1 self-start sm:self-auto">
+                      <CheckCircle size={11} className="text-emerald-400" />
+                      <span>Invoiced: PKR {Number(item.amount || 0).toLocaleString()}</span>
                     </span>
-                  ) : (
-                    <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded border border-white/5 whitespace-nowrap">
-                      ⊘ Excluded from Invoice
+                  </div>
+                ) : (
+                  /* Arranged by Client: Excluded from invoice - No amount input needed */
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+                    <div className="flex items-center gap-1.5 text-sky-400/80">
+                      <User size={12} className="text-sky-400 shrink-0" />
+                      <span className="text-[11px] text-sky-300 font-medium">Client settles directly</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2.5 py-1 rounded-lg border border-white/10 whitespace-nowrap flex items-center gap-1">
+                      <span>⊘ Excluded from Invoice</span>
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             );
           })}

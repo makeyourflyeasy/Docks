@@ -21,7 +21,8 @@ import {
   ChevronRight,
   RotateCcw,
   Sparkles,
-  AlertCircle
+  AlertCircle,
+  User
 } from 'lucide-react';
 import { 
   Case, 
@@ -1006,21 +1007,31 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                   </div>
                 </div>
 
-                <div className="pt-1">
-                  <label className="text-gray-400 block mb-1 text-xs">Due Charges Amount (PKR)</label>
-                  <input 
-                    type="number"
-                    value={formData.doDueChargesAmount || ''}
-                    onChange={(e) => setFormData({ ...formData, doDueChargesAmount: Number(e.target.value) })}
-                    placeholder="0"
-                    className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-sm"
-                  />
-                  {formData.doDueChargesArrangedBy === 'DPL' && (
+                {formData.doDueChargesArrangedBy === 'DPL' ? (
+                  <div className="pt-1 animate-fade-in">
+                    <label className="text-emerald-400 block mb-1 text-xs font-semibold">DPL Due Charges Amount (PKR)</label>
+                    <input 
+                      type="number"
+                      value={formData.doDueChargesAmount || ''}
+                      onChange={(e) => setFormData({ ...formData, doDueChargesAmount: Number(e.target.value) })}
+                      placeholder="Enter amount..."
+                      className="w-full bg-slate-800 border border-emerald-500/40 rounded-xl px-3 py-2 text-white font-mono text-sm focus:border-emerald-400 outline-none"
+                    />
                     <span className="text-[10px] text-emerald-400 mt-1 block">
                       Auto-appends DO Due Charges directly to client's final invoice.
                     </span>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="pt-1 text-xs text-sky-400/80 flex items-center justify-between bg-black/20 p-2.5 rounded-xl border border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <User size={13} className="text-sky-400" />
+                      <span className="text-sky-300 font-medium">Client settles DO due charges directly</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded">
+                      ⊘ Excluded from Invoice
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Global Financial Rule: DO Deposit */}
@@ -1049,21 +1060,21 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="text-gray-400 block mb-1">Deposit Amount (PKR)</label>
-                    <input 
-                      type="number"
-                      value={formData.doDepositAmount || ''}
-                      onChange={(e) => setFormData({ ...formData, doDepositAmount: Number(e.target.value) })}
-                      placeholder="0"
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
-                    />
-                  </div>
+                {formData.doDepositArrangedBy === 'DPL' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 animate-fade-in">
+                    <div>
+                      <label className="text-gray-400 block mb-1 text-xs">Deposit Amount (PKR)</label>
+                      <input 
+                        type="number"
+                        value={formData.doDepositAmount || ''}
+                        onChange={(e) => setFormData({ ...formData, doDepositAmount: Number(e.target.value) })}
+                        placeholder="0"
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
 
-                  {formData.doDepositArrangedBy === 'DPL' && (
                     <div className="animate-fade-in">
-                      <label className="text-emerald-400 font-bold block mb-1 flex items-center gap-1">
+                      <label className="text-emerald-400 font-bold block mb-1 text-xs flex items-center gap-1">
                         <Sparkles size={13} /> DPL Commission Amount (Compulsory)
                       </label>
                       <input 
@@ -1074,8 +1085,18 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                         className="w-full bg-emerald-950/40 border border-emerald-500/50 rounded-xl px-3 py-2 text-emerald-200 font-mono font-bold"
                       />
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="pt-1 text-xs text-sky-400/80 flex items-center justify-between bg-black/20 p-2.5 rounded-xl border border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <User size={13} className="text-sky-400" />
+                      <span className="text-sky-300 font-medium">Client deposits security guarantee directly</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded">
+                      ⊘ Excluded from Invoice
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1552,21 +1573,21 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="text-gray-400 block mb-1">Rent Amount (PKR)</label>
-                    <input 
-                      type="number"
-                      value={formData.vehicleRentAmount || ''}
-                      onChange={(e) => setFormData({ ...formData, vehicleRentAmount: Number(e.target.value) })}
-                      placeholder="e.g. 125000"
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
-                    />
-                  </div>
+                {formData.vehicleRentArrangedBy === 'DPL' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 animate-fade-in">
+                    <div>
+                      <label className="text-gray-400 block mb-1 text-xs">Rent Amount (PKR)</label>
+                      <input 
+                        type="number"
+                        value={formData.vehicleRentAmount || ''}
+                        onChange={(e) => setFormData({ ...formData, vehicleRentAmount: Number(e.target.value) })}
+                        placeholder="e.g. 125000"
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
+                      />
+                    </div>
 
-                  {formData.vehicleRentArrangedBy === 'DPL' && (
                     <div className="animate-fade-in">
-                      <label className="text-emerald-400 font-bold block mb-1 flex items-center gap-1">
+                      <label className="text-emerald-400 font-bold block mb-1 text-xs flex items-center gap-1">
                         <Sparkles size={13} /> DPL Commission Amount (Compulsory)
                       </label>
                       <input 
@@ -1577,8 +1598,18 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                         className="w-full bg-emerald-950/40 border border-emerald-500/50 rounded-xl px-3 py-2 text-emerald-200 font-mono font-bold"
                       />
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="pt-1 text-xs text-sky-400/80 flex items-center justify-between bg-black/20 p-2.5 rounded-xl border border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <User size={13} className="text-sky-400" />
+                      <span className="text-sky-300 font-medium">Vehicle freight arranged & settled directly by client</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded">
+                      ⊘ Excluded from Invoice
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}

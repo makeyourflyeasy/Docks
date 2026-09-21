@@ -22,106 +22,106 @@ export interface ServiceArrangementItem {
  */
 export const CATEGORY_SERVICE_ARRANGEMENTS: Record<string, Record<string, ServiceArrangementItem>> = {
   "Bonded Carrier": {
-    loading_charges: { label: 'Loading / Labor Handling Charges', arrangedBy: 'Client', amount: 6000 },
-    do_charges: { label: 'Shipping Line Delivery Order (DO) Charges', arrangedBy: 'Client', amount: 8500 },
-    security_deposit: { label: 'DO Security Deposit / Guarantee', arrangedBy: 'Client', amount: 50000 },
-    dryport_do_charges: { label: 'Dry Port Delivery Order (DO) Charges', arrangedBy: 'Client', amount: 8500 },
-    unloading_charges: { label: 'Unloading / Offloading Charges', arrangedBy: 'Client', amount: 6000 },
-    seal_charges: { label: 'Customs Bullet Seal & E-Seal Tracking Fee', arrangedBy: 'Client', amount: 5000 },
-    vehicle_rent: { label: 'Vehicle Rent / Transporter Freight', arrangedBy: 'Client', amount: 120000 },
-    vehicle_detention: { label: 'Vehicle Detention / Waiting Surcharge', arrangedBy: 'Client', amount: 10000 },
-    wharfage_charges: { label: 'Wharfage Terminal & Port Dues', arrangedBy: 'Client', amount: 12000 }
+    loading_charges: { label: 'Loading / Labor Handling Charges', arrangedBy: 'Client', amount: 0 },
+    do_charges: { label: 'Shipping Line Delivery Order (DO) Charges', arrangedBy: 'Client', amount: 0 },
+    security_deposit: { label: 'DO Security Deposit / Guarantee', arrangedBy: 'Client', amount: 0 },
+    dryport_do_charges: { label: 'Dry Port Delivery Order (DO) Charges', arrangedBy: 'Client', amount: 0 },
+    unloading_charges: { label: 'Unloading / Offloading Charges', arrangedBy: 'Client', amount: 0 },
+    seal_charges: { label: 'Customs Bullet Seal & E-Seal Tracking Fee', arrangedBy: 'Client', amount: 0 },
+    vehicle_rent: { label: 'Vehicle Rent / Transporter Freight', arrangedBy: 'Client', amount: 0 },
+    vehicle_detention: { label: 'Vehicle Detention / Waiting Surcharge', arrangedBy: 'Client', amount: 0 },
+    wharfage_charges: { label: 'Wharfage Terminal & Port Dues', arrangedBy: 'Client', amount: 0 }
   },
 
   "Afghan Transit": {
-    manifest_charges: { label: 'Transit Manifest Charges (AT-GD WeBOC)', arrangedBy: 'Client', amount: 20000 },
-    loading_charges: { label: 'Loading / Port Handling Charges', arrangedBy: 'Client', amount: 8000 },
-    seal_charges: { label: 'Customs Bullet Seal & Satellite Tracker Device', arrangedBy: 'Client', amount: 7500 },
-    border_clearance_charges: { label: 'Border Clearance Charges (Torkham / Chaman)', arrangedBy: 'Client', amount: 18500 },
-    convoy_charges: { label: 'Convoy Charges (Customs Armed Escort)', arrangedBy: 'Client', amount: 15000 },
-    service_charges: { label: 'Service Charges (Transit Agency & Formalities)', arrangedBy: 'Client', amount: 20000 },
-    sales_tax_srb: { label: 'Sales Tax / SRB Tax Assessment', arrangedBy: 'Client', amount: 3500 },
-    nlc_charges: { label: 'NLC Terminal & Weighbridge Charges', arrangedBy: 'Client', amount: 12000 },
-    insurance_charges: { label: 'Insurance Charges (Cross-Border Transit Policy)', arrangedBy: 'Client', amount: 15000 },
-    vehicle_rent: { label: 'Vehicle Rent / Cross-Border Heavy Freight', arrangedBy: 'Client', amount: 180000 },
-    vehicle_detention: { label: 'Vehicle Detention / Demurrage Charges', arrangedBy: 'Client', amount: 12000 }
+    manifest_charges: { label: 'Transit Manifest Charges (AT-GD WeBOC)', arrangedBy: 'Client', amount: 0 },
+    loading_charges: { label: 'Loading / Port Handling Charges', arrangedBy: 'Client', amount: 0 },
+    seal_charges: { label: 'Customs Bullet Seal & Satellite Tracker Device', arrangedBy: 'Client', amount: 0 },
+    border_clearance_charges: { label: 'Border Clearance Charges (Torkham / Chaman)', arrangedBy: 'Client', amount: 0 },
+    convoy_charges: { label: 'Convoy Charges (Customs Armed Escort)', arrangedBy: 'Client', amount: 0 },
+    service_charges: { label: 'Service Charges (Transit Agency & Formalities)', arrangedBy: 'Client', amount: 0 },
+    sales_tax_srb: { label: 'Sales Tax / SRB Tax Assessment', arrangedBy: 'Client', amount: 0 },
+    nlc_charges: { label: 'NLC Terminal & Weighbridge Charges', arrangedBy: 'Client', amount: 0 },
+    insurance_charges: { label: 'Insurance Charges (Cross-Border Transit Policy)', arrangedBy: 'Client', amount: 0 },
+    vehicle_rent: { label: 'Vehicle Rent / Cross-Border Heavy Freight', arrangedBy: 'Client', amount: 0 },
+    vehicle_detention: { label: 'Vehicle Detention / Demurrage Charges', arrangedBy: 'Client', amount: 0 }
   },
 
   "Import & Export Services": {
-    vessel_charges: { label: 'Vessel Charges (Ocean Freight / Slot Booking)', arrangedBy: 'Client', amount: 185000 },
-    container_charges: { label: 'Container Charges (CRO & Empty Allocation)', arrangedBy: 'Client', amount: 14500 },
-    customs_clearance_charges: { label: 'Customs Clearance Charges (GD Assessment & OOC)', arrangedBy: 'Client', amount: 25000 },
-    service_charges: { label: 'Service Charges (Agency & Documentation)', arrangedBy: 'Client', amount: 15000 },
-    sales_tax_srb: { label: 'Sales Tax / SRB Tax Assessment', arrangedBy: 'Client', amount: 3500 },
-    nlc_charges: { label: 'NLC / Terminal Staging Charges', arrangedBy: 'Client', amount: 12000 },
-    insurance_charges: { label: 'Insurance Charges (Marine Cargo Transit)', arrangedBy: 'Client', amount: 15000 },
-    vgm_charges: { label: 'SOLAS VGM Weighbridge & Terminal Staging', arrangedBy: 'Client', amount: 18000 },
-    delivery_order: { label: 'Shipping Line Delivery Order (DO) Fee', arrangedBy: 'Client', amount: 12500 }
+    vessel_charges: { label: 'Vessel Charges (Ocean Freight / Slot Booking)', arrangedBy: 'Client', amount: 0 },
+    container_charges: { label: 'Container Charges (CRO & Empty Allocation)', arrangedBy: 'Client', amount: 0 },
+    customs_clearance_charges: { label: 'Customs Clearance Charges (GD Assessment & OOC)', arrangedBy: 'Client', amount: 0 },
+    service_charges: { label: 'Service Charges (Agency & Documentation)', arrangedBy: 'Client', amount: 0 },
+    sales_tax_srb: { label: 'Sales Tax / SRB Tax Assessment', arrangedBy: 'Client', amount: 0 },
+    nlc_charges: { label: 'NLC / Terminal Staging Charges', arrangedBy: 'Client', amount: 0 },
+    insurance_charges: { label: 'Insurance Charges (Marine Cargo Transit)', arrangedBy: 'Client', amount: 0 },
+    vgm_charges: { label: 'SOLAS VGM Weighbridge & Terminal Staging', arrangedBy: 'Client', amount: 0 },
+    delivery_order: { label: 'Shipping Line Delivery Order (DO) Fee', arrangedBy: 'Client', amount: 0 }
   },
 
   "Transportation of Private Cargo": {
     loading_charges: { label: 'Loading / Labor Handling Charges', arrangedBy: 'DPL', amount: 8000, isDefaultDpl: true },
     unloading_charges: { label: 'Unloading / Offloading Charges', arrangedBy: 'DPL', amount: 8000, isDefaultDpl: true },
-    vehicle_rent: { label: 'Vehicle Rent / Inland Truck Freight', arrangedBy: 'Client', amount: 75000 },
-    builty_charges: { label: 'Builty / Consignment Note Documentation Fee', arrangedBy: 'Client', amount: 2500 },
-    transit_toll: { label: 'Transit Toll & Weigh Station Charges', arrangedBy: 'Client', amount: 5000 },
-    insurance_charges: { label: 'Cargo Transit Insurance Surcharge', arrangedBy: 'Client', amount: 7500 },
-    vehicle_detention: { label: 'Vehicle Detention / Waiting Charges', arrangedBy: 'Client', amount: 8000 }
+    vehicle_rent: { label: 'Vehicle Rent / Inland Truck Freight', arrangedBy: 'Client', amount: 0 },
+    builty_charges: { label: 'Builty / Consignment Note Documentation Fee', arrangedBy: 'Client', amount: 0 },
+    transit_toll: { label: 'Transit Toll & Weigh Station Charges', arrangedBy: 'Client', amount: 0 },
+    insurance_charges: { label: 'Cargo Transit Insurance Surcharge', arrangedBy: 'Client', amount: 0 },
+    vehicle_detention: { label: 'Vehicle Detention / Waiting Charges', arrangedBy: 'Client', amount: 0 }
   },
 
   "TIR": {
-    tir_carnet_charges: { label: 'TIR Carnet Administration Charges', arrangedBy: 'Client', amount: 25000 },
-    border_escort_charges: { label: 'Border Customs Escort & E-Seal Endorsement', arrangedBy: 'Client', amount: 20000 },
-    transit_toll_charges: { label: 'International Transit Tolls & Route Permits', arrangedBy: 'Client', amount: 15000 },
-    loading_charges: { label: 'Loading & Securing Charges', arrangedBy: 'Client', amount: 8000 },
-    unloading_charges: { label: 'Destination Unloading Charges', arrangedBy: 'Client', amount: 8000 },
-    freight_charges: { label: 'International Road Haulage / Freight', arrangedBy: 'Client', amount: 240000 }
+    tir_carnet_charges: { label: 'TIR Carnet Administration Charges', arrangedBy: 'Client', amount: 0 },
+    border_escort_charges: { label: 'Border Customs Escort & E-Seal Endorsement', arrangedBy: 'Client', amount: 0 },
+    transit_toll_charges: { label: 'International Transit Tolls & Route Permits', arrangedBy: 'Client', amount: 0 },
+    loading_charges: { label: 'Loading & Securing Charges', arrangedBy: 'Client', amount: 0 },
+    unloading_charges: { label: 'Destination Unloading Charges', arrangedBy: 'Client', amount: 0 },
+    freight_charges: { label: 'International Road Haulage / Freight', arrangedBy: 'Client', amount: 0 }
   },
 
   "Customs Clearance": {
     service_charges: { label: 'Customs Agency Service Charges / Commission', arrangedBy: 'DPL', amount: 15000, isDefaultDpl: true },
     loading_charges: { label: 'Terminal / Port Loading Charges', arrangedBy: 'DPL', amount: 7000, isDefaultDpl: true },
     unloading_charges: { label: 'Destuffing / Examination Unloading Charges', arrangedBy: 'DPL', amount: 7000, isDefaultDpl: true },
-    weboc_psw_charges: { label: 'WeBOC / PSW Electronic Declaration Fee', arrangedBy: 'Client', amount: 5000 },
-    customs_examination_charges: { label: 'Customs Examination Surcharge', arrangedBy: 'Client', amount: 8000 },
-    wharfage_charges: { label: 'Port Wharfage & Terminal Handling Dues', arrangedBy: 'Client', amount: 18500 },
-    delivery_order_charges: { label: 'Shipping Line Delivery Order (DO) Fee', arrangedBy: 'Client', amount: 8500 },
-    sindh_excise_cess: { label: 'Sindh Infrastructure Cess / Excise Challan', arrangedBy: 'Client', amount: 12000 }
+    weboc_psw_charges: { label: 'WeBOC / PSW Electronic Declaration Fee', arrangedBy: 'Client', amount: 0 },
+    customs_examination_charges: { label: 'Customs Examination Surcharge', arrangedBy: 'Client', amount: 0 },
+    wharfage_charges: { label: 'Port Wharfage & Terminal Handling Dues', arrangedBy: 'Client', amount: 0 },
+    delivery_order_charges: { label: 'Shipping Line Delivery Order (DO) Fee', arrangedBy: 'Client', amount: 0 },
+    sindh_excise_cess: { label: 'Sindh Infrastructure Cess / Excise Challan', arrangedBy: 'Client', amount: 0 }
   },
 
   "ISO Tank Service": {
-    iso_freight: { label: 'Specialized ISO Tank Haulage', arrangedBy: 'Client', amount: 140000 },
-    hazmat_safety: { label: 'IMO Hazmat Placarding & Emergency Response', arrangedBy: 'Client', amount: 16500 },
-    valve_inspection: { label: 'Pre-Trip Valve & Pressure Gauge Certification', arrangedBy: 'Client', amount: 18500 },
-    terminal_stevedoring: { label: 'Dangerous Goods Port Stevedoring', arrangedBy: 'Client', amount: 15000 }
+    iso_freight: { label: 'Specialized ISO Tank Haulage', arrangedBy: 'Client', amount: 0 },
+    hazmat_safety: { label: 'IMO Hazmat Placarding & Emergency Response', arrangedBy: 'Client', amount: 0 },
+    valve_inspection: { label: 'Pre-Trip Valve & Pressure Gauge Certification', arrangedBy: 'Client', amount: 0 },
+    terminal_stevedoring: { label: 'Dangerous Goods Port Stevedoring', arrangedBy: 'Client', amount: 0 }
   },
 
   "Car Carrier": {
-    vehicle_haulage: { label: 'Multi-Vehicle Auto Carrier Haulage', arrangedBy: 'Client', amount: 95000 },
-    condition_survey: { label: 'Pre-Loading Scratch & Condition Audit', arrangedBy: 'Client', amount: 7500 },
-    transit_insurance: { label: 'En-route Vehicle Transit Insurance', arrangedBy: 'Client', amount: 12500 },
-    ramp_handling: { label: 'Ramp Loading & Wheel Strapping Fee', arrangedBy: 'Client', amount: 8000 }
+    vehicle_haulage: { label: 'Multi-Vehicle Auto Carrier Haulage', arrangedBy: 'Client', amount: 0 },
+    condition_survey: { label: 'Pre-Loading Scratch & Condition Audit', arrangedBy: 'Client', amount: 0 },
+    transit_insurance: { label: 'En-route Vehicle Transit Insurance', arrangedBy: 'Client', amount: 0 },
+    ramp_handling: { label: 'Ramp Loading & Wheel Strapping Fee', arrangedBy: 'Client', amount: 0 }
   },
 
   "Liner & NVOCC": {
-    ocean_freight: { label: 'Ocean Freight & Feeder Slot Allocation', arrangedBy: 'Client', amount: 155000 },
-    thc_charges: { label: 'Terminal Handling Charges (THC)', arrangedBy: 'Client', amount: 35000 },
-    line_do: { label: 'Shipping Line Delivery Order (DO) & Manifest Fee', arrangedBy: 'Client', amount: 16500 },
-    security_deposit: { label: 'Container Security Deposit Administration', arrangedBy: 'Client', amount: 12000 }
+    ocean_freight: { label: 'Ocean Freight & Feeder Slot Allocation', arrangedBy: 'Client', amount: 0 },
+    thc_charges: { label: 'Terminal Handling Charges (THC)', arrangedBy: 'Client', amount: 0 },
+    line_do: { label: 'Shipping Line Delivery Order (DO) & Manifest Fee', arrangedBy: 'Client', amount: 0 },
+    security_deposit: { label: 'Container Security Deposit Administration', arrangedBy: 'Client', amount: 0 }
   },
 
   "Breakbulk/Chartering Services": {
-    heavy_haulage: { label: 'Hydraulic Multi-Axle Modular Haulage', arrangedBy: 'Client', amount: 165000 },
-    stevedoring_crane: { label: 'Port Stevedoring & Shore Crane Rigging', arrangedBy: 'Client', amount: 65000 },
-    nha_escort: { label: 'NHA Route Permit & Heavy Escort Surcharge', arrangedBy: 'Client', amount: 28000 },
-    marine_lashing: { label: 'Marine Lashing & Technical Survey', arrangedBy: 'Client', amount: 22000 }
+    heavy_haulage: { label: 'Hydraulic Multi-Axle Modular Haulage', arrangedBy: 'Client', amount: 0 },
+    stevedoring_crane: { label: 'Port Stevedoring & Shore Crane Rigging', arrangedBy: 'Client', amount: 0 },
+    nha_escort: { label: 'NHA Route Permit & Heavy Escort Surcharge', arrangedBy: 'Client', amount: 0 },
+    marine_lashing: { label: 'Marine Lashing & Technical Survey', arrangedBy: 'Client', amount: 0 }
   },
 
   "Warehousing & Distribution": {
-    bonded_storage: { label: 'Bonded Warehouse Storage Rental', arrangedBy: 'Client', amount: 48000 },
-    destuffing_pallet: { label: 'Container De-stuffing & Palletization', arrangedBy: 'Client', amount: 17500 },
-    gate_pass_admin: { label: 'Into-Bond / Ex-Bond Documentation Fee', arrangedBy: 'Client', amount: 9500 },
-    stock_insurance: { label: 'Warehouse Fire & Stock Insurance', arrangedBy: 'Client', amount: 11000 }
+    bonded_storage: { label: 'Bonded Warehouse Storage Rental', arrangedBy: 'Client', amount: 0 },
+    destuffing_pallet: { label: 'Container De-stuffing & Palletization', arrangedBy: 'Client', amount: 0 },
+    gate_pass_admin: { label: 'Into-Bond / Ex-Bond Documentation Fee', arrangedBy: 'Client', amount: 0 },
+    stock_insurance: { label: 'Warehouse Fire & Stock Insurance', arrangedBy: 'Client', amount: 0 }
   }
 };
 

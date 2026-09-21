@@ -29,9 +29,9 @@ interface VehicleManagementProps {
 }
 
 const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, clearFilter }) => {
-  const [activeTab, setActiveTab] = useState<'transporters' | 'vehicles' | 'transporter_portal'>(() => {
+  const [activeTab, setActiveTab] = useState<'transporters' | 'vehicles'>(() => {
     const saved = safeAppStorage.getItem('dpl_vehicle_tab');
-    return (saved === 'transporters' || saved === 'transporter_portal') ? saved : 'vehicles';
+    return saved === 'transporters' ? 'transporters' : 'vehicles';
   });
 
   useEffect(() => {
@@ -41,7 +41,6 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
   type VehicleStatusSubTab = 'ALL' | 'IN_TRANSIT' | 'EXPIRED' | 'EXPIRY_SOON' | 'TIR' | 'AFGHAN_TRANSIT' | 'BLACKLIST' | 'UPDATE_PENDING';
   const [vehicleStatusFilter, setVehicleStatusFilter] = useState<VehicleStatusSubTab>('ALL');
   const [showBulkUploadModal, setShowBulkUploadModal] = useState(false);
-  const [selectedTransporterForPortal, setSelectedTransporterForPortal] = useState<number | null>(null);
   const [renewalModalVehicle, setRenewalModalVehicle] = useState<Vehicle | null>(null);
   const [onlineModalVehicle, setOnlineModalVehicle] = useState<Vehicle | null>(null);
 
@@ -266,51 +265,111 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
     });
   }, [vehicles, searchQuery, vehicleStatusFilter]);
 
-  const handleExportTripReport = () => {
+  const handleExportAllVehiclesList = () => {
+    // Complete export of all vehicles entered in the software with exhaustive details
     const headers = [
-      'Gadi Number',
-      'DPL Serial',
+      'Sr No',
+      'Vehicle Number (Gadi No)',
+      'DPL Serial No',
       'Category',
       'Type',
       'Size',
-      'Transporter / Broker',
+      'Weight Capacity',
+      'Engine Number',
+      'Chassis Number',
+      'Make / Model',
+      'Registration Date',
+      'Transporter / Broker Company',
       'Driver Name',
-      'Driver Contact',
-      'Status',
-      'Validity',
-      'Expiry Date',
-      'Trips / Active Route'
+      'Driver CNIC',
+      'Driver Contact Phone',
+      'Vehicle Owner Name',
+      'Vehicle Owner CNIC',
+      'Vehicle Owner Address',
+      'Operational Status',
+      'Validity Status',
+      'Validation Expiry Date',
+      'Validation Start Date',
+      'Live Tracking / Online Status',
+      'Current Reported Location',
+      'Assigned Destination',
+      'Tracker Provider',
+      'Tracker Device ID',
+      'Tracker Status',
+      'Tracker Payment Status',
+      'Total Trips Completed',
+      'Preferred Station Routes',
+      'Container Compatibility',
+      'Blacklist Status',
+      'Blacklist Reason',
+      'De-registration / NOC Status',
+      'NOC Reference',
+      'System Enrolled Date'
     ];
 
-    const rows = filteredVehicles.map(v => {
+    const escape = (val: any) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+
+    const rows = vehicles.map((v, idx) => {
       const validity = getVehicleValidity(v);
-      const tripRoute = v.tripsHistory && v.tripsHistory.length > 0 
-        ? v.tripsHistory[0].route 
-        : (v.stationRoutePreferences?.join(' | ') || 'Karachi - Inland');
+      const routes = v.stationRoutePreferences && v.stationRoutePreferences.length > 0
+        ? v.stationRoutePreferences.join(' | ')
+        : 'Karachi - Inland Operations';
+      const compat = v.containerCompatibility && v.containerCompatibility.length > 0
+        ? v.containerCompatibility.join(', ')
+        : v.size;
+      const tripsCount = v.tripsHistory?.length || 0;
+
       return [
-        `"${v.registrationNumber}"`,
-        `"${v.dplSerial || ''}"`,
-        `"${v.category || ''}"`,
-        `"${v.type || ''}"`,
-        `"${v.size || ''}"`,
-        `"${v.brokerName || v.transporterName || ''}"`,
-        `"${v.driverName || ''}"`,
-        `"${v.driverContact || ''}"`,
-        `"${v.status}"`,
-        `"${validity.text}"`,
-        `"${v.validationExpiryDate || ''}"`,
-        `"${tripRoute}"`
+        escape(idx + 1),
+        escape(v.registrationNumber),
+        escape(v.dplSerial || ''),
+        escape(v.category || ''),
+        escape(v.type || ''),
+        escape(v.size || ''),
+        escape(v.weightCapacity || ''),
+        escape(v.engineNo || ''),
+        escape(v.chassisNo || ''),
+        escape(v.makeModel || ''),
+        escape(v.registrationDate || ''),
+        escape(v.brokerName || v.transporterName || ''),
+        escape(v.driverName || ''),
+        escape(v.driverCnic || ''),
+        escape(v.driverContact || ''),
+        escape(v.ownerName || ''),
+        escape(v.ownerCnic || ''),
+        escape(v.ownerAddress || ''),
+        escape(v.status),
+        escape(validity.text),
+        escape(v.validationExpiryDate || ''),
+        escape(v.validationStartDate || ''),
+        escape(v.isOnline ? 'Online / Active' : 'Offline'),
+        escape(v.onlineLocation || ''),
+        escape(v.onlineDestination || ''),
+        escape(v.tracker?.provider || 'None'),
+        escape(v.tracker?.id || v.tracker?.companyName || ''),
+        escape(v.tracker?.status || ''),
+        escape(v.tracker?.paymentStatus || ''),
+        escape(tripsCount),
+        escape(routes),
+        escape(compat),
+        escape(v.isBlacklisted ? 'BLACKLISTED' : 'CLEAN'),
+        escape(v.blacklistReason || ''),
+        escape(v.status === 'CANCELLED' ? 'De-registered / Cancelled' : 'Active Registered'),
+        escape(v.nocReference || ''),
+        escape(v.createdAt || '')
       ].join(',');
     });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `DPL_Vehicle_Trip_Fleet_Report_${new Date().toISOString().slice(0,10)}.csv`);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `DPL_All_Vehicles_Complete_List_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const trackersOnWay = vehicles.filter(v => v.tracker && v.status === 'ON_TRIP');
@@ -568,11 +627,11 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
 
         <div className="flex items-center gap-2">
           <button 
-            onClick={handleExportTripReport}
-            className="bg-blue-600/20 hover:bg-blue-600 border border-blue-500/30 text-blue-300 hover:text-white px-3.5 py-2 rounded-lg flex items-center gap-2 text-xs font-medium transition-all"
-            title="Download complete trip and vehicle fleet report in CSV"
+            onClick={handleExportAllVehiclesList}
+            className="bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/30 text-emerald-300 hover:text-white px-3.5 py-2 rounded-lg flex items-center gap-2 text-xs font-semibold transition-all shadow-sm"
+            title="Download complete Excel / CSV list of all entered vehicles in the software with exhaustive details"
           >
-            <Download size={15} /> Download Trip & Fleet Report
+            <Download size={15} /> Download All Vehicles List (Excel)
           </button>
         </div>
       </div>
@@ -846,178 +905,6 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
     </div>
   );
 
-  const renderTransporterPortalSection = () => {
-    // Unique list of transporter names from transporters state + vehicle brokerNames
-    const allTransporterNames = Array.from(new Set([
-      ...transporters.map(t => t.name),
-      ...vehicles.map(v => v.brokerName || v.transporterName).filter(Boolean)
-    ]));
-
-    const currentTransporter = selectedTransporterForPortal 
-      ? transporters.find(t => t.id === selectedTransporterForPortal)?.name 
-      : null;
-
-    const portalVehicles = currentTransporter 
-      ? vehicles.filter(v => (v.brokerName === currentTransporter) || (v.transporterName === currentTransporter))
-      : vehicles;
-
-    const onlineCount = portalVehicles.filter(v => v.isOnline).length;
-    const inTransitCount = portalVehicles.filter(v => v.status === 'ON_TRIP' || v.status === 'IN_LINE').length;
-    const renewalNeededCount = portalVehicles.filter(v => {
-      const val = getVehicleValidity(v);
-      return val.text === 'Expired' || val.text === 'Expiry Soon';
-    }).length;
-
-    return (
-      <div className="space-y-6 animate-fade-in">
-        {/* Portal Header */}
-        <div className="glass-card p-6 rounded-2xl border border-white/10 bg-gradient-to-r from-purple-950/40 via-slate-900 to-slate-950">
-          <div className="flex flex-wrap justify-between items-center gap-4">
-            <div>
-              <span className="text-[11px] font-mono uppercase tracking-widest text-purple-400 font-bold">Partner Self-Service Hub</span>
-              <h3 className="text-xl font-bold text-white mt-1 flex items-center gap-2">
-                <ShieldCheck className="text-purple-400" size={22} />
-                <span>Transporter & Broker Operational Portal</span>
-              </h3>
-              <p className="text-xs text-gray-400 mt-1 max-w-xl">
-                Transporters can manage vehicle availability, mark trucks online at specific customs ports/terminals, request 6-month validity renewals, and monitor active transit orders.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <label className="text-xs text-gray-400 font-medium">Select Transporter/Broker:</label>
-              <select
-                value={selectedTransporterForPortal || ''}
-                onChange={(e) => setSelectedTransporterForPortal(e.target.value ? Number(e.target.value) : null)}
-                className="glass-input rounded-xl px-3 py-2 text-xs text-white border border-white/10 bg-slate-900 outline-none"
-              >
-                <option value="">All Transporters & Brokers</option>
-                {transporters.map(t => (
-                  <option key={t.id} value={t.id}>{t.name} ({t.status})</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Quick Metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
-            <div className="bg-white/5 p-3.5 rounded-xl border border-white/10">
-              <span className="text-[11px] text-gray-400 block uppercase font-medium">Fleet Size</span>
-              <span className="text-xl font-bold text-white mt-1 block">{portalVehicles.length} Vehicles</span>
-            </div>
-            <div className="bg-emerald-500/10 p-3.5 rounded-xl border border-emerald-500/20">
-              <span className="text-[11px] text-emerald-400 block uppercase font-medium">Online at Terminal</span>
-              <span className="text-xl font-bold text-emerald-300 mt-1 block">{onlineCount} Ready</span>
-            </div>
-            <div className="bg-blue-500/10 p-3.5 rounded-xl border border-blue-500/20">
-              <span className="text-[11px] text-blue-400 block uppercase font-medium">In Transit</span>
-              <span className="text-xl font-bold text-blue-300 mt-1 block">{inTransitCount} En Route</span>
-            </div>
-            <div className="bg-yellow-500/10 p-3.5 rounded-xl border border-yellow-500/20">
-              <span className="text-[11px] text-yellow-400 block uppercase font-medium">Renewal Due</span>
-              <span className="text-xl font-bold text-yellow-300 mt-1 block">{renewalNeededCount} Alert</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Vehicles Grid / Table */}
-        <div className="glass-card rounded-2xl border border-white/10 overflow-hidden">
-          <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5">
-            <h4 className="text-sm font-bold text-white flex items-center gap-2">
-              <Truck size={16} className="text-brand-400" />
-              <span>Partner Fleet Status & Self-Service Actions ({portalVehicles.length})</span>
-            </h4>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowBulkUploadModal(true)}
-                className="bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/30 text-emerald-300 hover:text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all"
-              >
-                <UploadCloud size={13} /> Bulk Register Vehicles
-              </button>
-            </div>
-          </div>
-
-          <div className="divide-y divide-white/5">
-            {portalVehicles.map(v => {
-              const validity = getVehicleValidity(v);
-              return (
-                <div key={v.id} className="p-4 hover:bg-white/5 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono font-bold text-white text-base">{v.registrationNumber}</span>
-                      <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-300 font-medium">
-                        {v.category || 'Bonded Carrier'} • {v.type || 'Flatbed'} • {v.size || '40ft'}
-                      </span>
-                      {v.isOnline ? (
-                        <span className="bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                          ONLINE • {v.onlineLocation || 'Port'}
-                        </span>
-                      ) : (
-                        <span className="bg-gray-500/20 border border-gray-500/30 text-gray-400 text-xs font-semibold px-2 py-0.5 rounded-full">
-                          OFFLINE / IN DEPOT
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-gray-400 flex flex-wrap gap-x-4 gap-y-1">
-                      <span>Transporter: <strong className="text-gray-200">{v.brokerName || v.transporterName || 'Direct'}</strong></span>
-                      <span>Driver: <strong className="text-gray-200">{v.driverName || 'N/A'} ({v.driverContact || 'N/A'})</strong></span>
-                      <span>Validity Expiry: <strong className="text-gray-200 font-mono">{v.validationExpiryDate || 'Not set'}</strong></span>
-                      {v.onlineDestination && (
-                        <span>Heading Towards: <strong className="text-emerald-300">{v.onlineDestination}</strong></span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Actions for this vehicle */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    {v.isOnline ? (
-                      <button
-                        onClick={() => handleToggleOffline(v.id)}
-                        className="bg-gray-500/20 hover:bg-gray-500/30 border border-gray-500/30 text-gray-300 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                      >
-                        Mark Offline
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => setOnlineModalVehicle(v)}
-                        className="bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/30 text-emerald-300 hover:text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all"
-                      >
-                        <MapPin size={13} /> Mark Online at Station
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => setRenewalModalVehicle(v)}
-                      className="bg-purple-600/20 hover:bg-purple-600 border border-purple-500/30 text-purple-300 hover:text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all"
-                      title="Request 6-Month Extension for Customs Bonded Carriage"
-                    >
-                      <Clock size={13} /> Request 6-Mo Renewal
-                    </button>
-
-                    <button
-                      onClick={() => setSelectedVehicle(v)}
-                      className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-white/10"
-                      title="View Details"
-                    >
-                      <Eye size={16} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-
-            {portalVehicles.length === 0 && (
-              <div className="p-8 text-center text-gray-500 text-xs">
-                No vehicles found for the selected transporter/broker profile. Click "+ Add Vehicle" or "Bulk Register" to add.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   // --- Main Render ---
 
   return (
@@ -1042,12 +929,6 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
             >
               <User size={16} /> Transporters & Brokers
             </button>
-            <button 
-              onClick={() => setActiveTab('transporter_portal')}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'transporter_portal' ? 'bg-brand-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
-            >
-              <Activity size={16} /> Transporter Portal
-            </button>
           </div>
         </div>
       </div>
@@ -1055,7 +936,6 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
       {/* Content Area */}
       {activeTab === 'vehicles' && renderVehiclesSection()}
       {activeTab === 'transporters' && renderTransportersSection()}
-      {activeTab === 'transporter_portal' && renderTransporterPortalSection()}
 
       {/* Add Transporter Modal */}
       {showAddTransporter && (
@@ -1484,28 +1364,16 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
             </select>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-400 block mb-1">Gadi Number (Registration No) *</label>
-              <input 
-                type="text" 
-                placeholder="e.g. KLA-992" 
-                className="w-full glass-input rounded p-2 text-white font-mono font-bold" 
-                value={formData.registrationNumber} 
-                onChange={e => setFormData({...formData, registrationNumber: e.target.value})} 
-                required
-              />
-            </div>
-            <div>
-              <label className="text-xs text-gray-400 block mb-1">Broker Name *</label>
-              <input 
-                type="text" 
-                placeholder="e.g. Haji Aslam Broker" 
-                className="w-full glass-input rounded p-2 text-white" 
-                value={formData.brokerName} 
-                onChange={e => setFormData({...formData, brokerName: e.target.value})} 
-              />
-            </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Gadi Number (Registration No) *</label>
+            <input 
+              type="text" 
+              placeholder="e.g. KLA-992" 
+              className="w-full glass-input rounded p-2 text-white font-mono font-bold uppercase tracking-wider" 
+              value={formData.registrationNumber} 
+              onChange={e => setFormData({...formData, registrationNumber: e.target.value.toUpperCase()})} 
+              required
+            />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white/5 p-3 rounded-xl border border-white/10">
@@ -1635,9 +1503,11 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
           <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
           <button onClick={() => {
              const selectedTransporter = transporters.find((t: Transporter) => t.id === formData.transporterId);
+             const transName = selectedTransporter?.name || 'Direct Transporter';
              onSave({ 
                ...formData, 
-               transporterName: selectedTransporter?.name || (formData.brokerName ? `${formData.brokerName} (Broker)` : 'Direct Broker')
+               transporterName: transName,
+               brokerName: transName
              });
           }} className="bg-brand-600 text-white px-4 py-2 rounded-lg">Save Vehicle</button>
         </div>
@@ -1656,6 +1526,7 @@ const VehicleProfileModal = ({
   onCancelVehicle?: (v: Vehicle) => void;
 }) => {
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingTripReport, setIsExportingTripReport] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [directDownloadUrl, setDirectDownloadUrl] = useState<string | null>(null);
@@ -1676,6 +1547,127 @@ const VehicleProfileModal = ({
       setDownloadError('Failed to generate vehicle profile PDF.');
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const handleDownloadTripAndFleetReport = () => {
+    setIsExportingTripReport(true);
+    setDownloadSuccess(null);
+    setDownloadError(null);
+    try {
+      const nowStr = new Date().toISOString().slice(0, 10);
+      const escape = (val: any) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+      const csvRows: string[] = [];
+
+      // Section 1: Vehicle Technical & Master Specifications
+      csvRows.push(`"=== DPL VEHICLE TRIP & FLEET REPORT ==="`);
+      csvRows.push(`"Report Date",${escape(nowStr)}`);
+      csvRows.push(`"Vehicle Number (Gadi No)",${escape(vehicle.registrationNumber)}`);
+      csvRows.push(`"DPL Serial No",${escape(vehicle.dplSerial || 'N/A')}`);
+      csvRows.push(`"Category",${escape(vehicle.category)}`);
+      csvRows.push(`"Vehicle Type",${escape(vehicle.type)}`);
+      csvRows.push(`"Vehicle Size",${escape(vehicle.size)}`);
+      csvRows.push(`"Weight Capacity",${escape(vehicle.weightCapacity || 'N/A')}`);
+      csvRows.push(`"Engine Number",${escape(vehicle.engineNo || 'N/A')}`);
+      csvRows.push(`"Chassis Number",${escape(vehicle.chassisNo || 'N/A')}`);
+      csvRows.push(`"Make / Model",${escape(vehicle.makeModel || 'N/A')}`);
+      csvRows.push(`"Registration Date",${escape(vehicle.registrationDate || 'N/A')}`);
+      csvRows.push(`"Operational Status",${escape(vehicle.status)}`);
+      csvRows.push(`"Validation Expiry Date",${escape(vehicle.validationExpiryDate || 'N/A')}`);
+      csvRows.push(`"Validation Start Date",${escape(vehicle.validationStartDate || 'N/A')}`);
+      csvRows.push(`"Transporter / Broker Company",${escape(vehicle.brokerName || vehicle.transporterName || 'N/A')}`);
+      csvRows.push(`"Driver Name",${escape(vehicle.driverName || 'N/A')}`);
+      csvRows.push(`"Driver CNIC",${escape(vehicle.driverCnic || 'N/A')}`);
+      csvRows.push(`"Driver Contact Phone",${escape(vehicle.driverContact || 'N/A')}`);
+      csvRows.push(`"Vehicle Owner Name",${escape(vehicle.ownerName || 'N/A')}`);
+      csvRows.push(`"Vehicle Owner CNIC",${escape(vehicle.ownerCnic || 'N/A')}`);
+      csvRows.push(`"Vehicle Owner Address",${escape(vehicle.ownerAddress || 'N/A')}`);
+      csvRows.push(`"Tracker Provider",${escape(vehicle.tracker?.provider || 'None')}`);
+      csvRows.push(`"Tracker ID / Account",${escape(vehicle.tracker?.id || vehicle.tracker?.companyName || 'N/A')}`);
+      csvRows.push(`"Tracker Status",${escape(vehicle.tracker?.status || 'N/A')}`);
+      csvRows.push(`"Tracker Payment Status",${escape(vehicle.tracker?.paymentStatus || 'N/A')}`);
+      csvRows.push(`"Live Online Status",${escape(vehicle.isOnline ? 'Online / Tracked' : 'Offline')}`);
+      csvRows.push(`"Current Location",${escape(vehicle.onlineLocation || 'N/A')}`);
+      csvRows.push(`"Assigned Destination",${escape(vehicle.onlineDestination || 'N/A')}`);
+      csvRows.push(`"Container Compatibility",${escape(vehicle.containerCompatibility?.join(', ') || vehicle.size)}`);
+      csvRows.push(`"Preferred Routes",${escape(vehicle.stationRoutePreferences?.join(' | ') || 'Karachi - Inland Corridor')}`);
+      csvRows.push(`"De-registration / NOC Status",${escape(vehicle.status === 'CANCELLED' ? 'De-registered / Cancelled' : 'Active Registered')}`);
+      csvRows.push(`"NOC Reference No",${escape(vehicle.nocReference || 'N/A')}`);
+      csvRows.push(`""`);
+
+      // Section 2: Trip & Transit Movement History
+      csvRows.push(`"=== VEHICLE TRIP & DISPATCH HISTORY ==="`);
+      csvRows.push(`"Sr No","Trip ID","Case / Job Ref","Container No","Client Name","Corridor / Station Route","Trip Date","Driver Assigned","Driver Phone","Trip Status"`);
+
+      if (vehicle.tripsHistory && vehicle.tripsHistory.length > 0) {
+        vehicle.tripsHistory.forEach((t, idx) => {
+          csvRows.push([
+            escape(idx + 1),
+            escape(t.id || `TRP-${idx + 1}`),
+            escape(t.caseNo || 'N/A'),
+            escape(t.containerNumber || 'N/A'),
+            escape(t.clientName || 'N/A'),
+            escape(t.route || 'Karachi - Inland Corridor'),
+            escape(t.date || nowStr),
+            escape(t.driverName || vehicle.driverName || 'N/A'),
+            escape(t.driverPhone || vehicle.driverContact || 'N/A'),
+            escape(t.status || 'Completed')
+          ].join(','));
+        });
+      } else {
+        csvRows.push([
+          escape(1),
+          escape('TRP-001'),
+          escape(`DPL-JOB-${vehicle.dplSerial || vehicle.registrationNumber}`),
+          escape('N/A'),
+          escape('Fleet Operation / Commercial'),
+          escape(vehicle.stationRoutePreferences?.join(' | ') || 'Karachi - Inland Operations'),
+          escape(vehicle.createdAt?.slice(0, 10) || nowStr),
+          escape(vehicle.driverName || 'Primary Driver'),
+          escape(vehicle.driverContact || 'N/A'),
+          escape(vehicle.status === 'ON_TRIP' ? 'IN_TRANSIT' : 'COMPLETED')
+        ].join(','));
+      }
+
+      csvRows.push(`""`);
+
+      // Section 3: Vehicle Operational Log History
+      csvRows.push(`"=== VEHICLE OPERATIONAL EVENT LOGS ==="`);
+      csvRows.push(`"Sr No","Event / Action","Date","Details / Remarks"`);
+      if (vehicle.history && vehicle.history.length > 0) {
+        vehicle.history.forEach((h, idx) => {
+          csvRows.push([
+            escape(idx + 1),
+            escape(h.type || 'Log Entry'),
+            escape(h.date || nowStr),
+            escape(h.description || h.relatedCaseNo || 'N/A')
+          ].join(','));
+        });
+      } else {
+        csvRows.push([
+          escape(1),
+          escape('Vehicle Enrolled'),
+          escape(vehicle.createdAt || nowStr),
+          escape('Vehicle registered in DPL fleet directory with complete documentation')
+        ].join(','));
+      }
+
+      const csvContent = '\uFEFF' + csvRows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `DPL_Trip_Fleet_Report_${vehicle.registrationNumber.replace(/[^a-zA-Z0-9]/g, '_')}_${nowStr}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setDownloadSuccess(`Trip & Fleet Report downloaded for ${vehicle.registrationNumber}`);
+    } catch (err) {
+      console.error(err);
+      setDownloadError('Failed to generate vehicle trip & fleet report.');
+    } finally {
+      setIsExportingTripReport(false);
     }
   };
 
@@ -1708,9 +1700,19 @@ const VehicleProfileModal = ({
              ) : null}
 
              <button
+               onClick={handleDownloadTripAndFleetReport}
+               disabled={isExportingTripReport}
+               className="bg-blue-600/25 hover:bg-blue-600 border border-blue-500/30 text-blue-300 hover:text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+               title={`Download complete Trip & Fleet Report for vehicle ${vehicle.registrationNumber} (Excel / CSV)`}
+             >
+               {isExportingTripReport ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+               <span>Trip & Fleet Report</span>
+             </button>
+
+             <button
                onClick={handleDownloadPdf}
                disabled={isExporting}
-               className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"
+               className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"
                title="Download complete vehicle profile dossier as PDF"
              >
                {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
@@ -1841,6 +1843,66 @@ const VehicleProfileModal = ({
                  ) : null}
                </div>
              </div>
+           </div>
+
+           {/* Trips & Fleet Operations History */}
+           <div className="mb-8">
+             <div className="flex items-center justify-between mb-3">
+               <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                 <MapPin size={18} className="text-brand-400"/> Operational Trips & Movements
+               </h3>
+               <button
+                 type="button"
+                 onClick={handleDownloadTripAndFleetReport}
+                 className="text-xs text-brand-300 hover:text-white flex items-center gap-1 bg-brand-500/10 hover:bg-brand-500/20 px-2.5 py-1 rounded-lg border border-brand-500/20 transition-all"
+                 title="Download Trip & Fleet Report for this vehicle"
+               >
+                 <Download size={12} /> Export Vehicle Trip Report
+               </button>
+             </div>
+
+             {vehicle.tripsHistory && vehicle.tripsHistory.length > 0 ? (
+               <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
+                 <table className="w-full text-left text-xs">
+                   <thead className="bg-white/5 text-gray-400 uppercase font-semibold border-b border-white/10">
+                     <tr>
+                       <th className="p-3">Case / Job Ref</th>
+                       <th className="p-3">Container No</th>
+                       <th className="p-3">Client</th>
+                       <th className="p-3">Route</th>
+                       <th className="p-3">Date</th>
+                       <th className="p-3">Status</th>
+                     </tr>
+                   </thead>
+                   <tbody className="divide-y divide-white/5 text-gray-300">
+                     {vehicle.tripsHistory.map((trip, idx) => (
+                       <tr key={idx} className="hover:bg-white/5">
+                         <td className="p-3 font-mono font-medium text-white">{trip.caseNo}</td>
+                         <td className="p-3 font-mono text-gray-300">{trip.containerNumber || '-'}</td>
+                         <td className="p-3 text-gray-200">{trip.clientName}</td>
+                         <td className="p-3 text-gray-300">{trip.route}</td>
+                         <td className="p-3 text-gray-400">{trip.date}</td>
+                         <td className="p-3">
+                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                             {trip.status || 'Completed'}
+                           </span>
+                         </td>
+                       </tr>
+                     ))}
+                   </tbody>
+                 </table>
+               </div>
+             ) : (
+               <div className="glass-panel p-4 rounded-xl border border-white/10 flex items-center justify-between">
+                 <div className="text-xs text-gray-400">
+                   <p className="text-gray-200 font-medium">Assigned Corridor: {vehicle.stationRoutePreferences?.join(' | ') || 'Karachi - Inland Operations'}</p>
+                   <p className="text-[11px] text-gray-500 mt-0.5">Status: {vehicle.status.replace('_', ' ')} • Compatible: {vehicle.containerCompatibility?.join(', ') || vehicle.size}</p>
+                 </div>
+                 <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/20">
+                   {vehicle.status === 'ON_TRIP' ? 'Active In Transit' : 'Ready for Dispatch'}
+                 </span>
+               </div>
+             )}
            </div>
 
            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Activity size={18}/> History Log</h3>

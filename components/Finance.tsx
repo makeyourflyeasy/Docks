@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Wallet, FileText, ArrowUpRight, ArrowDownLeft, Plus, 
   Search, Filter, Download, CreditCard, Banknote, Briefcase, X, Save, Calendar, Camera,
-  BookOpen, ChevronDown, CheckCircle2, User, Layers, RefreshCw, AlertCircle, ArrowRight,
-  Eye, Loader2, Share2, Upload, Zap, Trash2, Building, Truck, Clock, ShieldCheck, ArrowLeft
+  BookOpen, ChevronDown, ChevronUp, CheckCircle2, User, Layers, RefreshCw, AlertCircle, ArrowRight,
+  Eye, Loader2, Share2, Upload, Zap, Trash2, Building, Truck, Clock, ShieldCheck, ArrowLeft,
+  ArrowLeftRight
 } from 'lucide-react';
 import Logo from './Logo';
 import { PdfViewerModal } from './PdfViewerModal';
@@ -166,6 +167,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const [receivePaymentMethod, setReceivePaymentMethod] = useState<'CASH' | 'BANK'>('BANK');
   const [receivePaymentBank, setReceivePaymentBank] = useState<string>('HBL Corporate');
   const [receivePaymentTrx, setReceivePaymentTrx] = useState<string>('');
+  const [expandedReceivableClient, setExpandedReceivableClient] = useState<string | null>(null);
 
   // Recurring Template Modal State
   const [newRecurringTemplate, setNewRecurringTemplate] = useState<{
@@ -250,12 +252,112 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: '', documentUrl: '', documentName: ''
   });
 
-  const banks = [
+  const DEFAULT_BANKS = [
     { id: '1', name: 'HBL Corporate' },
     { id: '2', name: 'Meezan Bank' },
     { id: '3', name: 'Bank Al Habib' },
     { id: '4', name: 'MCB Islamic' }
   ];
+
+  const [customBanks, setCustomBanks] = useState<{ id: string; name: string }[]>(() => {
+    return safeAppStorage.getJSON<{ id: string; name: string }[]>('dpl_custom_banks', []);
+  });
+
+  const banks = useMemo(() => {
+    const map = new Map<string, { id: string; name: string }>();
+    DEFAULT_BANKS.forEach(b => map.set(b.name.trim().toLowerCase(), b));
+    customBanks.forEach(b => map.set(b.name.trim().toLowerCase(), b));
+    financeData.forEach(entry => {
+      if (entry.paymentMethod === 'BANK' && entry.bankName && entry.bankName.trim()) {
+        const trimmed = entry.bankName.trim();
+        if (!map.has(trimmed.toLowerCase())) {
+          map.set(trimmed.toLowerCase(), { id: `auto_${trimmed}`, name: trimmed });
+        }
+      }
+    });
+    return Array.from(map.values());
+  }, [customBanks, financeData]);
+
+  // Internal Transfer & Account Management State
+  const [showInternalTransferModal, setShowInternalTransferModal] = useState(false);
+  const [showAddBankModal, setShowAddBankModal] = useState(false);
+  const [transferSource, setTransferSource] = useState<string>('DRAWER');
+  const [transferDestination, setTransferDestination] = useState<string>('HBL Corporate');
+  const [transferAmount, setTransferAmount] = useState<string>('');
+  const [transferDescription, setTransferDescription] = useState<string>('');
+  const [newBankNameInput, setNewBankNameInput] = useState<string>('');
+
+  const handleExecuteInternalTransfer = async () => {
+    const amt = Number(transferAmount) || 0;
+    if (amt <= 0) {
+      alert('Please enter a valid transfer amount.');
+      return;
+    }
+    if (transferSource === transferDestination) {
+      alert('Source and destination accounts cannot be the same.');
+      return;
+    }
+
+    const now = new Date().toISOString().split('T')[0];
+    const sourceLabel = transferSource === 'DRAWER' ? 'Cash in Drawer' : transferSource;
+    const destLabel = transferDestination === 'DRAWER' ? 'Cash in Drawer' : transferDestination;
+    const desc = transferDescription.trim() || `Internal Cash Transfer: ${sourceLabel} -> ${destLabel}`;
+    const timestamp = Date.now();
+
+    // 1. Outflow from source
+    const outflowEntry: FinanceEntry = {
+      id: timestamp,
+      date: now,
+      description: `${desc} (Debit/Outflow)`,
+      amount: amt,
+      type: 'EXPENSE',
+      status: 'PAID',
+      party: destLabel,
+      category: 'Internal Transfer',
+      reference: `TRF-OUT-${timestamp.toString().slice(-6)}`,
+      paymentMethod: transferSource === 'DRAWER' ? 'CASH' : 'BANK',
+      bankName: transferSource === 'DRAWER' ? undefined : transferSource
+    };
+
+    // 2. Inflow into destination
+    const inflowEntry: FinanceEntry = {
+      id: timestamp + 1,
+      date: now,
+      description: `${desc} (Credit/Inflow)`,
+      amount: amt,
+      type: 'INCOME',
+      status: 'PAID',
+      party: sourceLabel,
+      category: 'Internal Transfer',
+      reference: `TRF-IN-${timestamp.toString().slice(-6)}`,
+      paymentMethod: transferDestination === 'DRAWER' ? 'CASH' : 'BANK',
+      bankName: transferDestination === 'DRAWER' ? undefined : transferDestination
+    };
+
+    setFinanceData(prev => [inflowEntry, outflowEntry, ...prev]);
+    await saveFinanceToFirestore(outflowEntry).catch(() => {});
+    await saveFinanceToFirestore(inflowEntry).catch(() => {});
+    logActivity(`Internal Transfer: PKR ${amt.toLocaleString()} from ${sourceLabel} to ${destLabel}`, 'FINANCE');
+
+    setTransferAmount('');
+    setTransferDescription('');
+    setShowInternalTransferModal(false);
+  };
+
+  const handleAddCustomBank = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (banks.some(b => b.name.toLowerCase() === trimmed.toLowerCase())) {
+      alert('This bank account already exists.');
+      return;
+    }
+    const newBank = { id: `custom_${Date.now()}`, name: trimmed };
+    const updated = [...customBanks, newBank];
+    setCustomBanks(updated);
+    safeAppStorage.setJSON('dpl_custom_banks', updated);
+    setNewBankNameInput('');
+    setShowAddBankModal(false);
+  };
 
   // 1. Synchronize finances with Firestore
   useEffect(() => {
@@ -507,6 +609,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     if (initialFilter) {
       if (initialFilter.tab) setActiveTab(initialFilter.tab);
       if (initialFilter.notificationId) setActiveNotificationId(initialFilter.notificationId);
+      if (initialFilter.openModal) setStatBreakdownModal(initialFilter.openModal);
     }
   }, [initialFilter]);
 
@@ -829,13 +932,110 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     return settledInvoices;
   }, [cases, receivables, financeData]);
 
+  // Unified Client-Level Receivables: Single row per client showing Ledger Current Balance
+  const clientReceivablesSummaries = useMemo(() => {
+    const clientMap = new Map<string, {
+      party: string;
+      totalInvoiced: number;
+      totalPaid: number;
+      currentBalance: number;
+      invoices: (FinanceEntry & { isCaseInvoice?: boolean })[];
+      casesSet: Set<string>;
+      containerCount: number;
+      lastDate: string;
+    }>();
+
+    // 1. Accumulate all invoices/charges for each client
+    calculatedReceivables.forEach((inv) => {
+      const partyName = inv.party?.trim() || 'General Client';
+      const key = partyName.toLowerCase();
+      if (!clientMap.has(key)) {
+        clientMap.set(key, {
+          party: partyName,
+          totalInvoiced: 0,
+          totalPaid: 0,
+          currentBalance: 0,
+          invoices: [],
+          casesSet: new Set(),
+          containerCount: 0,
+          lastDate: inv.date || ''
+        });
+      }
+      const client = clientMap.get(key)!;
+      client.totalInvoiced += (Number(inv.amount) || 0);
+      client.invoices.push(inv);
+      if (inv.caseNo) client.casesSet.add(inv.caseNo);
+      if (inv.date && (!client.lastDate || inv.date > client.lastDate)) {
+        client.lastDate = inv.date;
+      }
+    });
+
+    // 2. Accumulate all income payments received from this client
+    financeData.forEach((f) => {
+      if (f.type === 'INCOME' && f.party) {
+        const partyName = f.party.trim();
+        const key = partyName.toLowerCase();
+        if (!clientMap.has(key)) {
+          clientMap.set(key, {
+            party: partyName,
+            totalInvoiced: 0,
+            totalPaid: 0,
+            currentBalance: 0,
+            invoices: [],
+            casesSet: new Set(),
+            containerCount: 0,
+            lastDate: f.date || ''
+          });
+        }
+        const client = clientMap.get(key)!;
+        client.totalPaid += (Number(f.amount) || 0);
+        if (f.date && (!client.lastDate || f.date > client.lastDate)) {
+          client.lastDate = f.date;
+        }
+      }
+    });
+
+    const results = Array.from(clientMap.values()).map((client) => {
+      const key = client.party.toLowerCase();
+      const clientCases = cases.filter(c => c.clientName?.trim().toLowerCase() === key);
+      const totalContainers = clientCases.reduce((sum, c) => sum + (c.containers?.length || 1), 0);
+      const currentBalance = client.totalInvoiced - client.totalPaid;
+
+      let status: 'PAID' | 'PARTIAL' | 'PENDING' | 'ADVANCE' = 'PENDING';
+      if (currentBalance <= 0) {
+        status = currentBalance < 0 ? 'ADVANCE' : 'PAID';
+      } else if (client.totalPaid > 0) {
+        status = 'PARTIAL';
+      } else {
+        status = 'PENDING';
+      }
+
+      return {
+        party: client.party,
+        totalInvoiced: client.totalInvoiced,
+        totalPaid: client.totalPaid,
+        currentBalance,
+        invoices: client.invoices,
+        casesCount: client.casesSet.size,
+        containerCount: totalContainers || client.casesSet.size,
+        invoicesCount: client.invoices.length,
+        lastDate: client.lastDate,
+        status
+      };
+    });
+
+    // Sort: clients with outstanding dues first (descending balance), then cleared
+    results.sort((a, b) => b.currentBalance - a.currentBalance);
+    return results;
+  }, [calculatedReceivables, financeData, cases]);
+
   // Receivables Summary
   const receivablesSummary = useMemo(() => {
-    const totalInvoiced = calculatedReceivables.reduce((sum, r) => sum + r.amount, 0);
-    const totalPaid = calculatedReceivables.reduce((sum, r) => sum + (r.paidAmount || 0), 0);
-    const totalOutstanding = calculatedReceivables.reduce((sum, r) => sum + (r.remainingAmount !== undefined ? r.remainingAmount : (r.status === 'PAID' ? 0 : r.amount)), 0);
-    const clearedCount = calculatedReceivables.filter(r => r.status === 'PAID').length;
-    const pendingCount = calculatedReceivables.filter(r => r.status !== 'PAID').length;
+    const totalInvoiced = clientReceivablesSummaries.reduce((sum, r) => sum + r.totalInvoiced, 0);
+    const totalPaid = clientReceivablesSummaries.reduce((sum, r) => sum + r.totalPaid, 0);
+    const totalOutstanding = clientReceivablesSummaries.reduce((sum, r) => sum + Math.max(0, r.currentBalance), 0);
+    const clearedCount = clientReceivablesSummaries.filter(r => r.currentBalance <= 0).length;
+    const pendingCount = clientReceivablesSummaries.filter(r => r.currentBalance > 0).length;
 
     return {
       totalInvoiced,
@@ -844,7 +1044,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       clearedCount,
       pendingCount
     };
-  }, [calculatedReceivables]);
+  }, [clientReceivablesSummaries]);
 
   // Payables Summary
   const payablesSummary = useMemo(() => {
@@ -874,6 +1074,76 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       netCashBalance
     };
   }, [financeData]);
+
+  // Real-time Liquidity & Treasury Breakdown: Drawer Cash + Individual Bank Accounts (HBL, Meezan, etc.)
+  const treasuryBreakdown = useMemo(() => {
+    // 1. Drawer Cash (Physical Cash in Office Drawer / Counter)
+    const drawerEntries = financeData.filter(e => e.paymentMethod !== 'BANK');
+    const drawerInflow = drawerEntries.filter(e => e.type === 'INCOME').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const drawerOutflow = drawerEntries.filter(e => e.type === 'EXPENSE').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const drawerNet = drawerInflow - drawerOutflow;
+
+    // 2. Bank Accounts Breakdown
+    const bankCards = banks.map(bank => {
+      const bNameLower = bank.name.trim().toLowerCase();
+      const bankEntries = financeData.filter(e => 
+        e.paymentMethod === 'BANK' && 
+        (
+          (e.bankName && e.bankName.trim().toLowerCase() === bNameLower) ||
+          (e.bankId && String(e.bankId) === String(bank.id))
+        )
+      );
+      const inflow = bankEntries.filter(e => e.type === 'INCOME').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const outflow = bankEntries.filter(e => e.type === 'EXPENSE').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const net = inflow - outflow;
+      return {
+        id: bank.id,
+        name: bank.name,
+        inflow,
+        outflow,
+        net,
+        count: bankEntries.length
+      };
+    });
+
+    const registeredBankNames = new Set(banks.map(b => b.name.trim().toLowerCase()));
+    const unassignedBankEntries = financeData.filter(e => 
+      e.paymentMethod === 'BANK' && 
+      (!e.bankName || !registeredBankNames.has(e.bankName.trim().toLowerCase()))
+    );
+
+    if (unassignedBankEntries.length > 0) {
+      const uInflow = unassignedBankEntries.filter(e => e.type === 'INCOME').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const uOutflow = unassignedBankEntries.filter(e => e.type === 'EXPENSE').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      bankCards.push({
+        id: 'other_bank',
+        name: 'Other Bank Vouchers',
+        inflow: uInflow,
+        outflow: uOutflow,
+        net: uInflow - uOutflow,
+        count: unassignedBankEntries.length
+      });
+    }
+
+    const totalBanksNet = bankCards.reduce((s, b) => s + b.net, 0);
+    const totalBanksInflow = bankCards.reduce((s, b) => s + b.inflow, 0);
+    const totalBanksOutflow = bankCards.reduce((s, b) => s + b.outflow, 0);
+    const totalRemainingAmount = drawerNet + totalBanksNet;
+
+    return {
+      drawer: {
+        inflow: drawerInflow,
+        outflow: drawerOutflow,
+        net: drawerNet,
+        count: drawerEntries.length
+      },
+      banks: bankCards,
+      totalBanksNet,
+      totalBanksInflow,
+      totalBanksOutflow,
+      totalRemainingAmount
+    };
+  }, [banks, financeData]);
 
   // Total Received Amount Summary: All payments received from 1st of current month to today
   const currentMonthReceivedSummary = useMemo(() => {
@@ -1207,7 +1477,10 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   // QUICK RECEIVE PAYMENT MODAL TRIGGER FROM RECEIVABLES TABLE
   const handleOpenQuickReceiveModal = (invoice: any) => {
     setInvoiceForReceive(invoice);
-    setReceivePaymentAmount(String(invoice.remainingAmount !== undefined ? invoice.remainingAmount : invoice.amount));
+    const balance = invoice.currentBalance !== undefined 
+      ? invoice.currentBalance 
+      : (invoice.remainingAmount !== undefined ? invoice.remainingAmount : invoice.amount);
+    setReceivePaymentAmount(String(Math.max(0, balance || 0)));
     setReceivePaymentMethod('BANK');
     setReceivePaymentBank('HBL Corporate');
     setReceivePaymentTrx(`TRX-${Date.now().toString().slice(-6)}`);
@@ -1224,10 +1497,13 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     }
 
     const paidDate = new Date().toISOString().split('T')[0];
+    const isSummary = Boolean(invoiceForReceive.isClientSummary);
     const incomeEntry: FinanceEntry = {
       id: Date.now(),
       date: paidDate,
-      description: `Payment Received against ${invoiceForReceive.reference || 'Invoice'} (${invoiceForReceive.party})`,
+      description: isSummary
+        ? `Ledger Settlement Received from ${invoiceForReceive.party}`
+        : `Payment Received against ${invoiceForReceive.reference || 'Invoice'} (${invoiceForReceive.party})`,
       party: invoiceForReceive.party,
       amount: amt,
       type: 'INCOME',
@@ -1245,7 +1521,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     await saveFinanceToFirestore(incomeEntry);
 
     // If it's a direct receivable entry in Firestore, update it
-    if (!invoiceForReceive.isCaseInvoice) {
+    if (!invoiceForReceive.isCaseInvoice && !isSummary && invoiceForReceive.id) {
       const updatedRecv: FinanceEntry = {
         ...invoiceForReceive,
         status: amt >= invoiceForReceive.amount ? 'PAID' : 'PARTIAL',
@@ -1747,15 +2023,20 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     let content: React.ReactNode = null;
 
     if (statBreakdownModal === 'cash_in_hand') {
-      modalTitle = 'Cash in Hand - Balance Breakdown';
-      modalSubtitle = 'Real-time cash and bank vouchers contributing to the available cash in hand';
-      modalBadge = 'Cash & Bank';
+      modalTitle = 'Cash in Hand & Treasury Status (خزانہ و نقد بیلنس)';
+      modalSubtitle = 'Real-time status of Total Remaining Balance: Cash in Drawer & Individual Bank Balances';
+      modalBadge = 'Live Treasury';
 
       const filtered = financeData.filter(entry => {
         if (statFilterSubtab === 'INCOME' && entry.type !== 'INCOME') return false;
         if (statFilterSubtab === 'EXPENSE' && entry.type !== 'EXPENSE') return false;
         if (statFilterSubtab === 'CASH' && entry.paymentMethod === 'BANK') return false;
         if (statFilterSubtab === 'BANK' && entry.paymentMethod !== 'BANK') return false;
+        if (statFilterSubtab.startsWith('BANK_')) {
+          const targetBank = statFilterSubtab.replace('BANK_', '').toLowerCase();
+          if (entry.paymentMethod !== 'BANK') return false;
+          if (!entry.bankName || entry.bankName.trim().toLowerCase() !== targetBank) return false;
+        }
         if (statSearchQuery) {
           const q = statSearchQuery.toLowerCase();
           return (
@@ -1775,39 +2056,409 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         return curr.type === 'INCOME' ? acc + (Number(curr.amount) || 0) : acc - (Number(curr.amount) || 0);
       }, 0);
 
+      const totalPositivePool = Math.max(0, treasuryBreakdown.drawer.net) + treasuryBreakdown.banks.reduce((s, b) => s + Math.max(0, b.net), 0);
+      const drawerPercent = totalPositivePool > 0 ? Math.round((Math.max(0, treasuryBreakdown.drawer.net) / totalPositivePool) * 100) : 0;
+      const banksPercent = 100 - drawerPercent;
+
       content = (
-        <div className="space-y-4">
-          {/* Top Metric Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
-              <span className="text-[10px] uppercase text-emerald-400 font-semibold block">Total Inflow (Income)</span>
-              <span className="text-base font-bold font-mono text-emerald-300">
-                + PKR {cashbookSummary.totalIncome.toLocaleString()}
-              </span>
+        <div className="space-y-5">
+          {/* 1. Master Status Banner: Total Amount Kitni Bachi Hai */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/40 border border-emerald-500/30 shadow-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+            
+            <div className="flex flex-wrap items-start justify-between gap-4 relative z-10">
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+                    MASTER TREASURY STATUS &bull; اسٹیٹس
+                  </span>
+                  {treasuryBreakdown.totalRemainingAmount >= 0 ? (
+                    <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      فنڈز دستیاب ہیں (Sufficient Liquidity)
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[11px] font-semibold text-red-300 bg-red-500/15 px-2.5 py-0.5 rounded-full border border-red-500/30">
+                      <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+                      اخراجات زائد ہیں (Deficit Alert)
+                    </span>
+                  )}
+                </div>
+                <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
+                  Total Amount Kitni Bachi Hai (کل بچی ہوئی رقم)
+                </h2>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white drop-shadow">
+                    PKR {treasuryBreakdown.totalRemainingAmount.toLocaleString()}
+                  </span>
+                  <span className="text-xs text-gray-400 font-medium">Net Liquid Capital</span>
+                </div>
+              </div>
+
+              {/* Quick Actions: Internal Transfer & Add Bank */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => {
+                    setShowInternalTransferModal(!showInternalTransferModal);
+                    setShowAddBankModal(false);
+                  }}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm"
+                  title="Transfer cash between Drawer and Bank accounts"
+                >
+                  <ArrowLeftRight size={14} />
+                  <span>Internal Transfer (Drawer ⇄ Bank)</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAddBankModal(!showAddBankModal);
+                    setShowInternalTransferModal(false);
+                  }}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 flex items-center gap-1.5 transition-all"
+                  title="Add a new bank account"
+                >
+                  <Plus size={14} />
+                  <span>+ Add Bank</span>
+                </button>
+              </div>
             </div>
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
-              <span className="text-[10px] uppercase text-red-400 font-semibold block">Total Outflow (Expense)</span>
-              <span className="text-base font-bold font-mono text-red-300">
-                - PKR {cashbookSummary.totalExpense.toLocaleString()}
-              </span>
+
+            {/* Split Metrics Summary Row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4 pt-4 border-t border-white/10 relative z-10">
+              <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                <span className="text-[10px] uppercase font-bold text-amber-400 block tracking-wider">Drawer Mein Cash</span>
+                <span className="text-base font-bold font-mono text-amber-300">
+                  PKR {treasuryBreakdown.drawer.net.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-gray-400 block mt-0.5">Physical Counter</span>
+              </div>
+              <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                <span className="text-[10px] uppercase font-bold text-blue-400 block tracking-wider">Banks Mein Total</span>
+                <span className="text-base font-bold font-mono text-blue-300">
+                  PKR {treasuryBreakdown.totalBanksNet.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-gray-400 block mt-0.5">{treasuryBreakdown.banks.length} Bank Accounts</span>
+              </div>
+              <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                <span className="text-[10px] uppercase font-bold text-emerald-400 block tracking-wider">Total Inflow (آمدن)</span>
+                <span className="text-base font-bold font-mono text-emerald-300">
+                  + PKR {cashbookSummary.totalIncome.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-gray-400 block mt-0.5">All Income Vouchers</span>
+              </div>
+              <div className="p-2.5 bg-red-500/10 border border-red-500/20 rounded-xl">
+                <span className="text-[10px] uppercase font-bold text-red-400 block tracking-wider">Total Outflow (اخراجات)</span>
+                <span className="text-base font-bold font-mono text-red-300">
+                  - PKR {cashbookSummary.totalExpense.toLocaleString()}
+                </span>
+                <span className="text-[10px] text-gray-400 block mt-0.5">All Expense Vouchers</span>
+              </div>
             </div>
-            <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl">
-              <span className="text-[10px] uppercase text-purple-400 font-semibold block">Net Cash in Hand</span>
-              <span className={`text-base font-bold font-mono ${cashbookSummary.netCashBalance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                PKR {cashbookSummary.netCashBalance.toLocaleString()}
-              </span>
+
+            {/* Visual Distribution Bar */}
+            {totalPositivePool > 0 && (
+              <div className="mt-3 relative z-10">
+                <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1">
+                  <span>Balance Distribution: <strong>Drawer ({drawerPercent}%)</strong></span>
+                  <span><strong>Banks ({banksPercent}%)</strong></span>
+                </div>
+                <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden flex">
+                  <div 
+                    style={{ width: `${drawerPercent}%` }} 
+                    className="bg-amber-400 h-full transition-all duration-300"
+                    title={`Cash Drawer: ${drawerPercent}%`}
+                  />
+                  <div 
+                    style={{ width: `${banksPercent}%` }} 
+                    className="bg-blue-500 h-full transition-all duration-300"
+                    title={`Bank Accounts: ${banksPercent}%`}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 2. Interactive Internal Cash Transfer Form (Drawer ⇄ Bank) */}
+          {showInternalTransferModal && (
+            <div className="p-4 bg-slate-950/90 border border-emerald-500/40 rounded-2xl shadow-xl space-y-3 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <div className="flex items-center gap-2">
+                  <ArrowLeftRight size={16} className="text-emerald-400" />
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Internal Cash Transfer (دراز اور بینک کے درمیان رقم منتقلی)
+                  </h4>
+                </div>
+                <button 
+                  onClick={() => setShowInternalTransferModal(false)}
+                  className="text-gray-400 hover:text-white text-xs"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs">
+                <div>
+                  <label className="text-gray-400 block mb-1">From Account (رقم نکلوانے والا)</label>
+                  <select
+                    value={transferSource}
+                    onChange={(e) => setTransferSource(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/15 rounded-xl p-2 text-white outline-none focus:border-emerald-500"
+                  >
+                    <option value="DRAWER">💵 Cash in Drawer (دراز کیش)</option>
+                    {banks.map(b => (
+                      <option key={`src_${b.id}`} value={b.name}>🏦 {b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-gray-400 block mb-1">To Account (رقم جمع ہونے والا)</label>
+                  <select
+                    value={transferDestination}
+                    onChange={(e) => setTransferDestination(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/15 rounded-xl p-2 text-white outline-none focus:border-emerald-500"
+                  >
+                    <option value="DRAWER">💵 Cash in Drawer (دراز کیش)</option>
+                    {banks.map(b => (
+                      <option key={`dst_${b.id}`} value={b.name}>🏦 {b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-gray-400 block mb-1">Transfer Amount (PKR)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="e.g. 50000"
+                    value={transferAmount}
+                    onChange={(e) => setTransferAmount(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/15 rounded-xl p-2 text-white font-mono outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-gray-400 block mb-1">Description / Notes</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Bank deposit or drawer cash refill"
+                    value={transferDescription}
+                    onChange={(e) => setTransferDescription(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/15 rounded-xl p-2 text-white outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowInternalTransferModal(false)}
+                  className="px-3 py-1.5 rounded-xl text-xs bg-white/5 hover:bg-white/10 text-gray-300 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteInternalTransfer}
+                  className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-md flex items-center gap-1.5"
+                >
+                  <CheckCircle2 size={13} />
+                  <span>Execute Transfer (منتقلی درج کریں)</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 3. Inline Add New Bank Form */}
+          {showAddBankModal && (
+            <div className="p-4 bg-slate-950/90 border border-blue-500/40 rounded-2xl shadow-xl space-y-3 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <div className="flex items-center gap-2">
+                  <Building size={16} className="text-blue-400" />
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Add New Bank Account (نیا بینک اکاؤنٹ درج کریں)
+                  </h4>
+                </div>
+                <button 
+                  onClick={() => setShowAddBankModal(false)}
+                  className="text-gray-400 hover:text-white text-xs"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Enter bank name (e.g. Askari Bank, Allied Bank, Faysal Bank, etc.)"
+                  value={newBankNameInput}
+                  onChange={(e) => setNewBankNameInput(e.target.value)}
+                  className="flex-1 min-w-[240px] bg-slate-900 border border-white/15 rounded-xl p-2 text-xs text-white outline-none focus:border-blue-500"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddCustomBank(newBankNameInput);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAddCustomBank(newBankNameInput)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-md flex items-center gap-1"
+                >
+                  <Plus size={13} />
+                  <span>Save Bank</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddBankModal(false)}
+                  className="px-3 py-2 rounded-xl text-xs bg-white/5 hover:bg-white/10 text-gray-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 4. Accounts Breakdown Grid: Drawer + Every Bank (HBL, Meezan, Bank Al Habib, MCB Islamic, etc.) */}
+          <div>
+            <div className="flex items-center justify-between mb-2.5">
+              <div>
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <span>Accounts Liquidity Breakdown</span>
+                  <span className="text-gray-400 normal-case font-normal">(دراز اور تمام بینکوں کا بیلنس)</span>
+                </h3>
+                <p className="text-[11px] text-gray-400">
+                  Click on any card to filter its vouchers directly in the table below.
+                </p>
+              </div>
+              {statFilterSubtab !== 'ALL' && (
+                <button
+                  onClick={() => setStatFilterSubtab('ALL')}
+                  className="text-[11px] text-purple-400 hover:underline flex items-center gap-1"
+                >
+                  <RefreshCw size={11} /> Reset Filter (Show All)
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {/* Card 1: Drawer Mein Cash */}
+              <div 
+                onClick={() => setStatFilterSubtab(statFilterSubtab === 'CASH' ? 'ALL' : 'CASH')}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+                  statFilterSubtab === 'CASH'
+                    ? 'bg-amber-500/20 border-amber-500 ring-2 ring-amber-500/30 shadow-lg'
+                    : 'bg-slate-900/90 border-amber-500/30 hover:bg-amber-500/10 hover:border-amber-500/60'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center border border-amber-500/30 group-hover:scale-110 transition-transform">
+                      <Wallet size={16} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white">Drawer Mein Cash</h4>
+                      <span className="text-[10px] text-amber-300/90 font-medium">دراز میں نقد کیش</span>
+                    </div>
+                  </div>
+                  <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold uppercase">
+                    Physical Cash
+                  </span>
+                </div>
+
+                <div className="mt-2">
+                  <div className="text-[10px] text-gray-400 uppercase font-semibold">Bachi Hui Rakam (Balance)</div>
+                  <div className={`text-xl font-bold font-mono ${treasuryBreakdown.drawer.net >= 0 ? 'text-amber-300' : 'text-red-400'}`}>
+                    PKR {treasuryBreakdown.drawer.net.toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-white/10 text-[10px]">
+                  <div>
+                    <span className="text-gray-400 block">Inflow (آمدن):</span>
+                    <span className="text-emerald-400 font-mono font-bold">+PKR {treasuryBreakdown.drawer.inflow.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 block">Outflow (اخراجات):</span>
+                    <span className="text-red-400 font-mono font-bold">-PKR {treasuryBreakdown.drawer.outflow.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                <div className="mt-2 text-[10px] text-gray-400 flex items-center justify-between">
+                  <span>{treasuryBreakdown.drawer.count} cash vouchers</span>
+                  <span className={`font-semibold ${statFilterSubtab === 'CASH' ? 'text-amber-300' : 'text-gray-400 group-hover:text-white'}`}>
+                    {statFilterSubtab === 'CASH' ? 'Active Filter ✓' : 'Click to Filter →'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Cards for each Bank: HBL, Meezan, Bank Al Habib, MCB Islamic, etc. */}
+              {treasuryBreakdown.banks.map(bank => {
+                const isSelected = statFilterSubtab === `BANK_${bank.name}`;
+                return (
+                  <div
+                    key={bank.id}
+                    onClick={() => setStatFilterSubtab(isSelected ? 'ALL' : `BANK_${bank.name}`)}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
+                      isSelected
+                        ? 'bg-blue-500/20 border-blue-500 ring-2 ring-blue-500/30 shadow-lg'
+                        : 'bg-slate-900/90 border-blue-500/25 hover:bg-blue-500/10 hover:border-blue-500/60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-300 flex items-center justify-center border border-blue-500/30 group-hover:scale-110 transition-transform">
+                          <Building size={16} />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white truncate max-w-[140px]">{bank.name}</h4>
+                          <span className="text-[10px] text-blue-300/90 font-medium">بینک اکاؤنٹ</span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold uppercase">
+                        Bank
+                      </span>
+                    </div>
+
+                    <div className="mt-2">
+                      <div className="text-[10px] text-gray-400 uppercase font-semibold">Bachi Hui Rakam (Balance)</div>
+                      <div className={`text-xl font-bold font-mono ${bank.net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        PKR {bank.net.toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-white/10 text-[10px]">
+                      <div>
+                        <span className="text-gray-400 block">Deposits (جمع):</span>
+                        <span className="text-emerald-400 font-mono font-bold">+PKR {bank.inflow.toLocaleString()}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400 block">Withdrawals (ادائیگی):</span>
+                        <span className="text-red-400 font-mono font-bold">-PKR {bank.outflow.toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 text-[10px] text-gray-400 flex items-center justify-between">
+                      <span>{bank.count} transactions</span>
+                      <span className={`font-semibold ${isSelected ? 'text-blue-300' : 'text-gray-400 group-hover:text-white'}`}>
+                        {isSelected ? 'Active Filter ✓' : 'Click to Filter →'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          {/* Sub-tabs & Search */}
+          {/* 5. Sub-tabs & Search Filter */}
           <div className="flex flex-wrap items-center justify-between gap-3 bg-white/5 p-3 rounded-xl border border-white/5">
             <div className="flex flex-wrap items-center gap-1.5">
               {[
-                { id: 'ALL', label: 'All Vouchers' },
-                { id: 'INCOME', label: 'Inflows Only' },
-                { id: 'EXPENSE', label: 'Outflows Only' },
-                { id: 'CASH', label: 'Cash Accounts' },
-                { id: 'BANK', label: 'Bank Accounts' }
+                { id: 'ALL', label: `All Accounts (${financeData.length})` },
+                { id: 'CASH', label: `Drawer Cash (${treasuryBreakdown.drawer.count})` },
+                ...treasuryBreakdown.banks.map(b => ({
+                  id: `BANK_${b.name}`,
+                  label: `${b.name} (${b.count})`
+                })),
+                { id: 'INCOME', label: 'Inflows Only (+)' },
+                { id: 'EXPENSE', label: 'Outflows Only (-)' }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -1826,7 +2477,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
               <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search party, voucher, bank..."
+                placeholder="Search party, voucher, bank, ref..."
                 value={statSearchQuery}
                 onChange={(e) => setStatSearchQuery(e.target.value)}
                 className="w-full pl-8 pr-3 py-1.5 text-xs bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-purple-500"
@@ -1834,15 +2485,15 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
             </div>
           </div>
 
-          {/* List Table */}
+          {/* 6. Vouchers Table */}
           <div className="overflow-x-auto rounded-xl border border-white/10 max-h-[380px] overflow-y-auto">
             <table className="w-full text-left text-xs text-gray-300">
-              <thead className="bg-slate-900 sticky top-0 uppercase text-[10px] text-gray-400 border-b border-white/10 font-semibold">
+              <thead className="bg-slate-900 sticky top-0 uppercase text-[10px] text-gray-400 border-b border-white/10 font-semibold z-10">
                 <tr>
                   <th className="p-3">Date / Ref</th>
                   <th className="p-3">Party / Account</th>
                   <th className="p-3">Category & Details</th>
-                  <th className="p-3">Payment Mode</th>
+                  <th className="p-3">Account Location</th>
                   <th className="p-3 text-right">Inflow / Outflow</th>
                   <th className="p-3 text-center">Action</th>
                 </tr>
@@ -1860,9 +2511,16 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                       <span className="text-[10px] text-purple-300">{entry.category || 'General'}</span>
                     </td>
                     <td className="p-3">
-                      <span className="px-2 py-0.5 rounded text-[10px] bg-white/5 border border-white/10 text-gray-300">
-                        {entry.paymentMethod === 'BANK' ? `${entry.bankName || 'Bank'}` : 'Cash in Hand'}
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${
+                        entry.paymentMethod === 'BANK'
+                          ? 'bg-blue-500/15 border-blue-500/30 text-blue-300'
+                          : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                      }`}>
+                        {entry.paymentMethod === 'BANK' ? (entry.bankName || 'Bank') : '💵 Cash in Drawer'}
                       </span>
+                      {entry.transactionId && (
+                        <span className="text-[9px] text-gray-400 font-mono block mt-0.5">Trx #{entry.transactionId}</span>
+                      )}
                     </td>
                     <td className="p-3 text-right font-mono font-bold">
                       <span className={entry.type === 'INCOME' ? 'text-emerald-400' : 'text-red-400'}>
@@ -2363,7 +3021,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     return (
       <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
-        <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className={`bg-slate-900 border border-white/10 rounded-2xl w-full ${statBreakdownModal === 'cash_in_hand' ? 'max-w-5xl' : 'max-w-4xl'} max-h-[90vh] flex flex-col shadow-2xl overflow-hidden`}>
           {/* Modal Header */}
           <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-950/60">
             <div>
@@ -2417,14 +3075,19 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const renderTableContent = () => {
     switch (activeTab) {
       case 'receivables': {
-        const filteredReceivables = calculatedReceivables.filter(entry => 
-          !searchTerm || 
-          entry.party.toLowerCase().includes(searchTerm.toLowerCase()) || 
-          entry.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (entry.reference && entry.reference.toLowerCase().includes(searchTerm.toLowerCase())) ||
-          (entry.caseNo && entry.caseNo.toLowerCase().includes(searchTerm.toLowerCase())) ||
-          (entry.containerNumber && entry.containerNumber.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
+        const filteredClientReceivables = clientReceivablesSummaries.filter(client => {
+          if (!searchTerm) return true;
+          const q = searchTerm.toLowerCase();
+          return (
+            client.party.toLowerCase().includes(q) ||
+            client.invoices.some(inv => 
+              (inv.reference && inv.reference.toLowerCase().includes(q)) ||
+              (inv.caseNo && inv.caseNo.toLowerCase().includes(q)) ||
+              (inv.containerNumber && inv.containerNumber.toLowerCase().includes(q)) ||
+              (inv.description && inv.description.toLowerCase().includes(q))
+            )
+          );
+        });
 
         return (
           <>
@@ -2442,183 +3105,365 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 </div>
                 <div className="h-6 w-px bg-white/10 hidden sm:block" />
                 <div>
-                  <span className="text-amber-400 block text-[10px] uppercase">Outstanding Balance</span>
+                  <span className="text-amber-400 block text-[10px] uppercase">Total Ledger Outstanding</span>
                   <span className="text-amber-300 font-mono font-bold text-sm">PKR {receivablesSummary.totalOutstanding.toLocaleString()}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] text-gray-400 bg-white/5 px-2.5 py-1 rounded-lg border border-white/10">
-                  {receivablesSummary.clearedCount} Cleared • {receivablesSummary.pendingCount} Pending
+                  {receivablesSummary.clearedCount} Clients Cleared • {receivablesSummary.pendingCount} Clients Pending Dues
                 </span>
+                <button
+                  onClick={() => setShowAllInvoicesModal(true)}
+                  className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition border border-white/10"
+                  title="View complete invoices registry"
+                >
+                  <Layers size={13} />
+                  <span>All Invoices Registry</span>
+                </button>
               </div>
             </div>
 
-            {/* Mobile View: Compact, Zero-Horizontal Scroll, Smooth Touch Pan-Y */}
+            {/* Mobile View: Compact, Single-Row per Client Card */}
             <div className="block sm:hidden divide-y divide-white/10 touch-pan-y">
-              {filteredReceivables.length === 0 ? (
-                <div className="p-8 text-center text-gray-400 text-xs">No receivables found.</div>
+              {filteredClientReceivables.length === 0 ? (
+                <div className="p-8 text-center text-gray-400 text-xs">No client ledger accounts found.</div>
               ) : (
-                filteredReceivables.map((entry) => (
-                  <div key={entry.id} className="p-3 hover:bg-white/5 transition-colors space-y-1.5">
-                    {/* Top Row: Date, Party, Status */}
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-[11px] font-mono text-gray-400 shrink-0">{entry.date}</span>
-                        <span className="text-xs font-bold text-white truncate">{entry.party}</span>
-                      </div>
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
-                        entry.status === 'PAID' ? 'bg-green-500/20 text-green-400' : 
-                        entry.status === 'PARTIAL' ? 'bg-amber-500/20 text-amber-300' : 'bg-blue-500/20 text-blue-400'
-                      }`}>
-                        {entry.status}
-                      </span>
-                    </div>
-
-                    {/* Middle: Description, Case & Container Info */}
-                    <p className="text-[11px] text-gray-300 leading-snug line-clamp-2">
-                      {entry.description}
-                    </p>
-                    <div className="text-[10px] text-gray-400 flex flex-wrap gap-2">
-                      <span className="bg-white/5 px-1.5 py-0.5 rounded text-gray-300">Inv: {entry.reference}</span>
-                      {entry.caseNo && <span className="bg-white/5 px-1.5 py-0.5 rounded text-brand-300">Case: {entry.caseNo}</span>}
-                      {entry.containerNumber && entry.containerNumber !== 'N/A' && (
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded text-gray-300">Cntr: {entry.containerNumber}</span>
-                      )}
-                    </div>
-
-                    {/* Settlement Details */}
-                    <div className="flex items-center justify-between text-[11px] pt-1 border-t border-white/5">
-                      <div className="space-y-0.5">
-                        <span className="text-gray-400 block text-[10px]">Total: PKR {entry.amount.toLocaleString()}</span>
-                        {entry.paidAmount ? (
-                          <span className="text-emerald-400 block text-[10px]">Paid: PKR {entry.paidAmount.toLocaleString()}</span>
-                        ) : null}
-                      </div>
-                      <div className="text-right">
-                        <span className="text-xs font-bold font-mono text-amber-300">
-                          Due: PKR {(entry.remainingAmount !== undefined ? entry.remainingAmount : (entry.status === 'PAID' ? 0 : entry.amount)).toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center justify-end gap-1.5 pt-1">
-                      <button 
-                        onClick={() => handleOpenInvoice(entry)}
-                        className="text-brand-400 hover:text-white text-[11px] font-semibold px-2 py-0.5 rounded bg-brand-600/20 border border-brand-500/30 flex items-center gap-1"
-                        title="View Official Invoice"
-                      >
-                        <Eye size={11} />
-                        <span>Invoice</span>
-                      </button>
-                      <button 
-                        onClick={() => handleDirectDownloadInvoice(entry)}
-                        className="text-emerald-400 hover:text-white p-1 rounded bg-emerald-600/20 border border-emerald-500/30"
-                        title="Direct Download Invoice PDF"
-                      >
-                        <Download size={11} />
-                      </button>
-                      {entry.status !== 'PAID' && (
-                        <button 
-                          onClick={() => handleOpenQuickReceiveModal(entry)}
-                          className="text-amber-300 hover:text-white text-[11px] font-semibold px-2.5 py-0.5 rounded bg-amber-600/20 border border-amber-500/30 flex items-center gap-1"
-                        >
-                          <Banknote size={11} />
-                          <span>Receive</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Desktop Table: Full View */}
-            <div className="hidden sm:block overflow-x-auto touch-pan-y">
-              <table className="w-full text-left text-sm text-gray-300 print:table print:text-black">
-                <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/5 print:text-black print:border-black">
-                  <tr>
-                    <th className="p-4">Date</th>
-                    <th className="p-4">Client / Party</th>
-                    <th className="p-4">Invoice / Case / Cntr</th>
-                    <th className="p-4">Description</th>
-                    <th className="p-4 text-right">Invoiced</th>
-                    <th className="p-4 text-right">Paid</th>
-                    <th className="p-4 text-right">Balance Due</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4 text-center no-print">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5 print:divide-gray-300">
-                  {filteredReceivables.map((entry) => (
-                    <tr key={entry.id} className="hover:bg-white/5 transition-colors">
-                      <td className="p-4 text-xs font-mono text-gray-400">{entry.date}</td>
-                      <td className="p-4 font-semibold text-white print:text-black">{entry.party}</td>
-                      <td className="p-4 text-xs space-y-0.5">
-                        <span className="font-mono text-brand-300 font-bold block">{entry.reference}</span>
-                        {entry.caseNo && <span className="text-gray-400 block">Case: {entry.caseNo}</span>}
-                        {entry.containerNumber && entry.containerNumber !== 'N/A' && (
-                          <span className="text-gray-500 block truncate max-w-[180px]">Cntr: {entry.containerNumber}</span>
-                        )}
-                      </td>
-                      <td className="p-4 text-xs text-gray-300 max-w-xs">{entry.description}</td>
-                      <td className="p-4 text-right font-mono text-white print:text-black font-semibold">
-                        PKR {entry.amount.toLocaleString()}
-                      </td>
-                      <td className="p-4 text-right font-mono text-emerald-400 print:text-black">
-                        PKR {(entry.paidAmount || 0).toLocaleString()}
-                      </td>
-                      <td className="p-4 text-right font-mono text-amber-300 print:text-black font-bold">
-                        PKR {(entry.remainingAmount !== undefined ? entry.remainingAmount : (entry.status === 'PAID' ? 0 : entry.amount)).toLocaleString()}
-                      </td>
-                      <td className="p-4">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${
-                          entry.status === 'PAID' ? 'bg-green-500/20 text-green-400 print:border print:border-black print:text-black' : 
-                          entry.status === 'PARTIAL' ? 'bg-amber-500/20 text-amber-300 print:border print:border-black print:text-black' :
-                          'bg-blue-500/20 text-blue-400 print:border print:border-black print:text-black'
+                filteredClientReceivables.map((client) => {
+                  const isExpanded = expandedReceivableClient === client.party;
+                  return (
+                    <div key={client.party} className="p-3 hover:bg-white/5 transition-colors space-y-2">
+                      {/* Top Row: Client Name, Volumes, Status */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-white block truncate">{client.party}</span>
+                          <span className="text-[10px] text-gray-400">
+                            {client.invoicesCount} Invoices • {client.casesCount} Cases • {client.containerCount} Cntrs
+                          </span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
+                          client.status === 'PAID' ? 'bg-green-500/20 text-green-300 border border-green-500/30' : 
+                          client.status === 'PARTIAL' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                          client.status === 'ADVANCE' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                          'bg-red-500/20 text-red-300 border border-red-500/30'
                         }`}>
-                          {entry.status}
+                          {client.status === 'PAID' ? 'SETTLED' : client.status === 'ADVANCE' ? 'ADVANCE' : `${client.status} DUE`}
                         </span>
-                      </td>
-                      <td className="p-4 text-center no-print">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button 
-                            onClick={() => handleOpenInvoice(entry)}
-                            className="text-brand-400 hover:text-white transition-colors text-xs font-semibold px-2 py-1 rounded bg-brand-600/20 border border-brand-500/30 flex items-center gap-1"
-                            title="View Official Invoice"
+                      </div>
+
+                      {/* Amounts Grid */}
+                      <div className="grid grid-cols-3 gap-2 bg-white/5 p-2 rounded-lg border border-white/5 text-[11px]">
+                        <div>
+                          <span className="text-gray-400 block text-[9px] uppercase">Billed</span>
+                          <span className="font-mono text-gray-200 font-semibold text-[10px]">PKR {client.totalInvoiced.toLocaleString()}</span>
+                        </div>
+                        <div>
+                          <span className="text-emerald-400 block text-[9px] uppercase">Received</span>
+                          <span className="font-mono text-emerald-400 font-semibold text-[10px]">PKR {client.totalPaid.toLocaleString()}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-amber-400 block text-[9px] uppercase">Ledger Balance</span>
+                          <span className={`font-mono font-bold text-xs ${
+                            client.currentBalance > 0 ? 'text-amber-300' : client.currentBalance === 0 ? 'text-emerald-400' : 'text-blue-300'
+                          }`}>
+                            PKR {Math.abs(client.currentBalance).toLocaleString()} {client.currentBalance < 0 ? '(Adv)' : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center justify-between gap-1.5 pt-1">
+                        <button
+                          onClick={() => setExpandedReceivableClient(isExpanded ? null : client.party)}
+                          className="text-gray-400 hover:text-white text-[11px] font-medium flex items-center gap-1 px-2 py-1 rounded bg-white/5"
+                        >
+                          <span>{client.invoicesCount} Invoices</span>
+                          {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => {
+                              setSelectedLedgerClient(client.party);
+                              setActiveTab('client_ledger');
+                            }}
+                            className="text-brand-300 hover:text-white text-[11px] font-semibold px-2 py-1 rounded bg-brand-600/20 border border-brand-500/30 flex items-center gap-1"
+                            title="Open detailed Client Ledger"
                           >
-                            <Eye size={12} />
-                            <span>Invoice</span>
+                            <BookOpen size={11} />
+                            <span>Ledger</span>
                           </button>
-                          <button 
-                            onClick={() => handleDirectDownloadInvoice(entry)}
-                            className="text-emerald-400 hover:text-white transition-colors text-xs font-semibold p-1.5 rounded bg-emerald-600/20 border border-emerald-500/30"
-                            title="Direct Download Invoice PDF"
-                          >
-                            <Download size={13} />
-                          </button>
-                          {entry.status !== 'PAID' && (
-                            <button 
-                              onClick={() => handleOpenQuickReceiveModal(entry)}
-                              className="text-amber-300 hover:text-white transition-colors text-xs font-semibold px-2 py-1 rounded bg-amber-600/20 border border-amber-500/30 flex items-center gap-1"
-                              title="Receive payment against this invoice"
+                          {client.currentBalance > 0 && (
+                            <button
+                              onClick={() => handleOpenQuickReceiveModal({
+                                party: client.party,
+                                currentBalance: client.currentBalance,
+                                amount: client.currentBalance,
+                                isClientSummary: true,
+                                reference: `LEDGER-${client.party.replace(/[^a-zA-Z0-9]/g, '')}`
+                              })}
+                              className="text-amber-300 hover:text-white text-[11px] font-semibold px-2 py-1 rounded bg-amber-600/20 border border-amber-500/30 flex items-center gap-1"
                             >
-                              <Banknote size={12} />
+                              <Banknote size={11} />
                               <span>Receive</span>
                             </button>
                           )}
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredReceivables.length === 0 && (
+                      </div>
+
+                      {/* Expanded Invoices List */}
+                      {isExpanded && (
+                        <div className="mt-2 pt-2 border-t border-white/10 space-y-2 bg-slate-950/60 p-2 rounded-lg">
+                          <span className="text-[10px] text-gray-400 font-semibold uppercase block">
+                            Billing Breakdown ({client.invoices.length} Invoices)
+                          </span>
+                          <div className="space-y-1.5 max-h-56 overflow-y-auto custom-scrollbar">
+                            {client.invoices.map((inv) => (
+                              <div key={inv.id} className="p-2 bg-white/5 rounded border border-white/5 flex items-center justify-between gap-2 text-xs">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono text-brand-300 font-bold text-[11px]">{inv.reference}</span>
+                                    {inv.caseNo && <span className="text-[10px] text-gray-400">({inv.caseNo})</span>}
+                                  </div>
+                                  <span className="text-[10px] text-gray-400 block truncate">{inv.description}</span>
+                                </div>
+                                <div className="text-right shrink-0 flex items-center gap-2">
+                                  <span className="font-mono font-bold text-white text-xs">PKR {inv.amount.toLocaleString()}</span>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleOpenInvoice(inv)}
+                                      className="p-1 bg-brand-600/20 hover:bg-brand-600 text-brand-300 hover:text-white rounded border border-brand-500/30"
+                                      title="View Invoice"
+                                    >
+                                      <Eye size={11} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDirectDownloadInvoice(inv)}
+                                      className="p-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white rounded border border-emerald-500/30"
+                                      title="Download PDF"
+                                    >
+                                      <Download size={11} />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Desktop Table: One Line Per Client with Ledger Current Balance */}
+            <div className="hidden sm:block overflow-x-auto touch-pan-y">
+              <table className="w-full text-left text-sm text-gray-300 print:table print:text-black">
+                <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/5 print:text-black print:border-black">
+                  <tr>
+                    <th className="p-4">Client / Account Party</th>
+                    <th className="p-4">Billing Volumes</th>
+                    <th className="p-4">Last Activity</th>
+                    <th className="p-4 text-right">Total Invoiced</th>
+                    <th className="p-4 text-right">Total Received</th>
+                    <th className="p-4 text-right">Current Ledger Balance</th>
+                    <th className="p-4 text-center">Status</th>
+                    <th className="p-4 text-center no-print">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5 print:divide-gray-300">
+                  {filteredClientReceivables.map((client) => {
+                    const isExpanded = expandedReceivableClient === client.party;
+                    return (
+                      <React.Fragment key={client.party}>
+                        <tr className="hover:bg-white/5 transition-colors">
+                          <td className="p-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/20 flex items-center justify-center text-brand-400 shrink-0">
+                                <Briefcase size={16} />
+                              </div>
+                              <div>
+                                <span className="font-bold text-white print:text-black block text-sm">{client.party}</span>
+                                <span className="text-xs text-gray-400">Client Ledger Account</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4 text-xs">
+                            <div className="space-y-0.5">
+                              <span className="text-white font-medium block">
+                                {client.invoicesCount} Invoices • {client.casesCount} Cases
+                              </span>
+                              <span className="text-gray-400 block">{client.containerCount} Total Containers</span>
+                            </div>
+                          </td>
+                          <td className="p-4 text-xs font-mono text-gray-400">
+                            {client.lastDate || '-'}
+                          </td>
+                          <td className="p-4 text-right font-mono text-white print:text-black font-semibold">
+                            PKR {client.totalInvoiced.toLocaleString()}
+                          </td>
+                          <td className="p-4 text-right font-mono text-emerald-400 print:text-black font-semibold">
+                            PKR {client.totalPaid.toLocaleString()}
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="space-y-0.5">
+                              <span className={`font-mono font-bold text-base block ${
+                                client.currentBalance > 0 ? 'text-amber-300' : client.currentBalance === 0 ? 'text-emerald-400' : 'text-blue-300'
+                              }`}>
+                                PKR {Math.abs(client.currentBalance).toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-gray-400 block uppercase font-medium">
+                                {client.currentBalance > 0 ? 'Outstanding Due' : client.currentBalance === 0 ? 'Fully Cleared' : 'Advance Credit'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className={`px-2.5 py-1 rounded text-xs font-semibold inline-block ${
+                              client.status === 'PAID' ? 'bg-green-500/20 text-green-300 border border-green-500/30 print:border print:border-black print:text-black' : 
+                              client.status === 'PARTIAL' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 print:border print:border-black print:text-black' :
+                              client.status === 'ADVANCE' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30 print:border print:border-black print:text-black' :
+                              'bg-red-500/20 text-red-300 border border-red-500/30 print:border print:border-black print:text-black'
+                            }`}>
+                              {client.status === 'PAID' ? 'CLEARED' : client.status === 'ADVANCE' ? 'ADVANCE' : `${client.status} DUE`}
+                            </span>
+                          </td>
+                          <td className="p-4 text-center no-print">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setSelectedLedgerClient(client.party);
+                                  setActiveTab('client_ledger');
+                                }}
+                                className="text-brand-300 hover:text-white transition-colors text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600/20 border border-brand-500/30 flex items-center gap-1.5 shadow-sm"
+                                title="Open Full Client Ledger"
+                              >
+                                <BookOpen size={13} />
+                                <span>Open Ledger</span>
+                              </button>
+
+                              {client.currentBalance > 0 && (
+                                <button
+                                  onClick={() => handleOpenQuickReceiveModal({
+                                    party: client.party,
+                                    currentBalance: client.currentBalance,
+                                    amount: client.currentBalance,
+                                    isClientSummary: true,
+                                    reference: `LEDGER-${client.party.replace(/[^a-zA-Z0-9]/g, '')}`
+                                  })}
+                                  className="text-amber-300 hover:text-white transition-colors text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-600/20 border border-amber-500/30 flex items-center gap-1.5 shadow-sm"
+                                  title="Receive settlement against client ledger balance"
+                                >
+                                  <Banknote size={13} />
+                                  <span>Receive</span>
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => setExpandedReceivableClient(isExpanded ? null : client.party)}
+                                className={`text-xs font-semibold px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1 border ${
+                                  isExpanded
+                                    ? 'bg-white/20 text-white border-white/30'
+                                    : 'bg-white/5 hover:bg-white/10 text-gray-300 border-white/10'
+                                }`}
+                                title="Toggle Invoices Breakdown"
+                              >
+                                <span>Invoices ({client.invoicesCount})</span>
+                                {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* Expandable Breakdown of Invoices for this Client */}
+                        {isExpanded && (
+                          <tr className="bg-slate-950/80">
+                            <td colSpan={8} className="p-4 border-t border-b border-white/10">
+                              <div className="bg-slate-900/90 rounded-xl p-4 border border-white/10 space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <FileText size={16} className="text-brand-400" />
+                                    <span className="text-xs font-bold text-white uppercase tracking-wide">
+                                      Billing Invoices Registry for {client.party}
+                                    </span>
+                                  </div>
+                                  <span className="text-xs text-gray-400 font-mono">
+                                    {client.invoices.length} Registered Bills / Charges
+                                  </span>
+                                </div>
+
+                                <table className="w-full text-left text-xs text-gray-300">
+                                  <thead className="bg-white/5 uppercase font-semibold text-gray-400 border-b border-white/10">
+                                    <tr>
+                                      <th className="p-2.5">Date</th>
+                                      <th className="p-2.5">Invoice #</th>
+                                      <th className="p-2.5">Case / Cntr</th>
+                                      <th className="p-2.5">Particulars / Description</th>
+                                      <th className="p-2.5 text-right">Invoiced Amount</th>
+                                      <th className="p-2.5 text-center">Status</th>
+                                      <th className="p-2.5 text-center">Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-white/5">
+                                    {client.invoices.map((inv) => (
+                                      <tr key={inv.id} className="hover:bg-white/5 transition">
+                                        <td className="p-2.5 font-mono text-gray-400">{inv.date}</td>
+                                        <td className="p-2.5 font-mono font-bold text-brand-300">{inv.reference}</td>
+                                        <td className="p-2.5 text-gray-400">
+                                          {inv.caseNo ? `Case: ${inv.caseNo}` : '-'}
+                                          {inv.containerNumber && inv.containerNumber !== 'N/A' && ` [${inv.containerNumber}]`}
+                                        </td>
+                                        <td className="p-2.5 text-gray-300 max-w-sm truncate">{inv.description}</td>
+                                        <td className="p-2.5 text-right font-mono font-bold text-white">
+                                          PKR {inv.amount.toLocaleString()}
+                                        </td>
+                                        <td className="p-2.5 text-center">
+                                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                            inv.status === 'PAID' ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'
+                                          }`}>
+                                            {inv.status}
+                                          </span>
+                                        </td>
+                                        <td className="p-2.5 text-center">
+                                          <div className="flex items-center justify-center gap-1.5">
+                                            <button
+                                              onClick={() => handleOpenInvoice(inv)}
+                                              className="px-2 py-1 rounded bg-brand-600/20 hover:bg-brand-600 text-brand-300 hover:text-white border border-brand-500/30 text-[11px] font-semibold flex items-center gap-1 transition"
+                                              title="View Official Invoice"
+                                            >
+                                              <Eye size={11} />
+                                              <span>View</span>
+                                            </button>
+                                            <button
+                                              onClick={() => handleDirectDownloadInvoice(inv)}
+                                              className="p-1 rounded bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 transition"
+                                              title="Direct Download PDF"
+                                            >
+                                              <Download size={12} />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                  {filteredClientReceivables.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="p-8 text-center text-gray-400">No receivables found.</td>
+                      <td colSpan={8} className="p-8 text-center text-gray-400">No client ledger accounts found.</td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
+          </>
+        );
+      }
           </>
         );
       }
