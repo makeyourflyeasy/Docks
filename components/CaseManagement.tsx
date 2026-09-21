@@ -202,14 +202,6 @@ const PortSearchableInput: React.FC<PortSearchableInputProps> = ({
         <label className="flex items-center gap-1.5 text-xs text-brand-300 font-medium">
           {icon} {label}
         </label>
-        <button
-          type="button"
-          onClick={() => onOpenAddPort(targetField, searchTerm.trim())}
-          className="text-[11px] text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium bg-brand-500/10 hover:bg-brand-500/20 px-2 py-0.5 rounded-md transition-colors"
-          title={`Add new port for ${label}`}
-        >
-          <Plus size={12} /> Add Port
-        </button>
       </div>
 
       <div className="relative">
@@ -615,7 +607,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     setDraftToast(`✓ Client "${clientNameTrimmed}" registered with ${appliedCharges.length} default charges applied!`);
   };
 
-  const handleAddPort = (targetField?: 'pol' | 'pod') => {
+  const handleAddPort = (targetField?: 'pol' | 'pod' | null) => {
     if (!newPortName.trim()) return;
     const trimmed = newPortName.trim();
     const code = newPortCode.trim() || (trimmed.length <= 4 ? trimmed.toUpperCase() : trimmed.substring(0, 4).toUpperCase());
@@ -624,11 +616,19 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     setPorts(updatedPorts);
     safeAppStorage.setJSON('dpl_ports', updatedPorts);
 
-    const fieldToUpdate = targetField || portTargetField;
+    const fieldToUpdate = targetField !== undefined ? targetField : portTargetField;
     if (fieldToUpdate === 'pol') {
-      setFormData(prev => ({ ...prev, pol: trimmed }));
+      setFormData(prev => ({ 
+        ...prev, 
+        pol: trimmed,
+        extractedData: { ...prev.extractedData, pickupDestination: trimmed }
+      }));
     } else if (fieldToUpdate === 'pod') {
-      setFormData(prev => ({ ...prev, pod: trimmed }));
+      setFormData(prev => ({ 
+        ...prev, 
+        pod: trimmed,
+        extractedData: { ...prev.extractedData, dropoffDestination: trimmed }
+      }));
     }
 
     setNewPortName('');
@@ -636,11 +636,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     setNewPortType('Dry Port');
     setShowPortModal(false);
     setPortTargetField(null);
-    setDraftToast(`✓ Port "${trimmed}" added and selected`);
+    setDraftToast(`✓ Port "${trimmed}" added to all port lists!`);
   };
 
-  const handleOpenAddPort = (targetField: 'pol' | 'pod', initialName?: string) => {
-    setPortTargetField(targetField);
+  const handleOpenAddPort = (targetField?: 'pol' | 'pod' | null, initialName?: string) => {
+    setPortTargetField(targetField || null);
     setNewPortName(initialName || '');
     setNewPortCode(initialName ? (initialName.length <= 4 ? initialName.toUpperCase() : initialName.substring(0, 4).toUpperCase()) : '');
     setNewPortType('Dry Port');
@@ -3428,19 +3428,10 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
               <span>Client / Importer / Shipper</span>
               <span className="text-red-400">*</span>
             </label>
-            {isClientUser ? (
+            {isClientUser && (
               <span className="text-xs font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full flex items-center gap-1">
                 <CheckCircle2 size={12} /> Auto-Selected
               </span>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowAddClientModal(true)}
-                className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/25 px-2.5 py-1 rounded-lg transition-colors"
-                title="Add New Client & Set Default Tariff"
-              >
-                <Plus size={13} /> Add Client & Tariff
-              </button>
             )}
           </div>
 
@@ -3495,10 +3486,10 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   type="button"
                   onClick={() => setShowAddClientModal(true)}
                   className="bg-brand-600 hover:bg-brand-500 text-white px-3.5 sm:px-4 py-3.5 sm:py-4 rounded-xl flex items-center gap-1.5 text-xs sm:text-sm font-semibold transition-all shadow-md shadow-brand-600/20 shrink-0"
-                  title="Add New Client & Set Default Charges"
+                  title="Add New Client & Set Default Tariff / Charges"
                 >
                   <Plus size={16} />
-                  <span className="hidden sm:inline">Add Client</span>
+                  <span>Add Client & Tariff</span>
                 </button>
               </div>
 
@@ -3615,8 +3606,9 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                 </label>
                 <button
                   type="button"
-                  onClick={() => handleOpenAddPort('pol')}
-                  className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/25 px-2.5 py-1 rounded-lg transition-colors"
+                  onClick={() => handleOpenAddPort(null)}
+                  className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 font-medium bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/25 px-2.5 py-1 rounded-lg transition-colors shadow-sm"
+                  title="Add new port or terminal to all lists"
                 >
                   <Plus size={13} /> {isPrivateCargo ? 'Add Location' : 'Add Port'}
                 </button>
@@ -7089,11 +7081,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             </div>
 
             <p className="text-xs text-gray-400">
-              {portTargetField === 'pol' 
-                ? 'Add a new Port of Loading. It will be immediately selected.' 
-                : portTargetField === 'pod' 
-                  ? 'Add a new Port of Destination. It will be immediately selected.' 
-                  : 'Add a new Pakistan or International port/terminal.'}
+              Add a new port or terminal to the system. It will immediately be saved to the global port directory and appear in all search suggestions and dropdowns for both POL and POD.
             </p>
 
             <div className="space-y-3.5">
@@ -7103,7 +7091,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                 </label>
                 <input 
                   type="text" 
-                  placeholder="e.g. Gwadar Deep Sea Port / Sialkot Dry Port" 
+                  placeholder="e.g. Gwadar Deep Sea Port / Sialkot Dry Port / Hub Terminal" 
                   value={newPortName}
                   onChange={(e) => setNewPortName(e.target.value)}
                   className="w-full glass-input rounded-xl p-3 outline-none text-white text-sm bg-black/50 border border-white/15 focus:border-brand-400"
@@ -7140,6 +7128,21 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   </select>
                 </div>
               </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-300 block mb-1">
+                  Destination Selection
+                </label>
+                <select
+                  value={portTargetField || 'all'}
+                  onChange={(e) => setPortTargetField(e.target.value === 'all' ? null : (e.target.value as 'pol' | 'pod'))}
+                  className="w-full glass-input rounded-xl p-3 outline-none text-white text-sm bg-black/50 border border-white/15 focus:border-brand-400 cursor-pointer"
+                >
+                  <option value="all" className="bg-slate-900">🌐 Add to All Port Lists (Available in POL & POD)</option>
+                  <option value="pol" className="bg-slate-900">⚓ Add to All Lists & Select as Port of Loading (POL)</option>
+                  <option value="pod" className="bg-slate-900">📍 Add to All Lists & Select as Port of Destination (POD)</option>
+                </select>
+              </div>
             </div>
 
             <div className="flex gap-2.5 pt-2">
@@ -7156,7 +7159,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                 disabled={!newPortName.trim()}
                 className="flex-1 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white py-2.5 rounded-xl font-semibold text-xs sm:text-sm shadow-lg shadow-brand-600/20 transition-all flex items-center justify-center gap-1.5"
               >
-                <Plus size={16} /> Add & Select Port
+                <Plus size={16} /> {portTargetField ? 'Add & Select Port' : 'Save Port to All Lists'}
               </button>
             </div>
           </div>
