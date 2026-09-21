@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Building, User, Phone, Mail, MapPin, FileText, DollarSign, Plus, Trash2, 
   Check, X, Upload, Eye, Search, AlertCircle, Shield, CheckCircle2, ChevronRight, 
-  CreditCard, Sparkles, Key, Lock
+  CreditCard, Sparkles, Key, Lock, FileCheck
 } from 'lucide-react';
 import { Client, ClientDefaultCharge, CaseCharge, UNIVERSAL_CHARGE_TYPES } from '../types';
 import { 
@@ -61,6 +61,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const [contractLetterName, setContractLetterName] = useState('');
   const [nicDocUrl, setNicDocUrl] = useState('');
   const [nicDocName, setNicDocName] = useState('');
+  const [ntnDocUrl, setNtnDocUrl] = useState('');
+  const [ntnDocName, setNtnDocName] = useState('');
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
 
   // Section 2: Default Case Category & Service Arrangements
@@ -103,6 +105,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setBusinessCardUrl(initialClient.businessCardUrl || '');
       setContractLetterUrl(initialClient.contractLetterUrl || '');
       setNicDocUrl(initialClient.nicDocUrl || '');
+      setNtnDocUrl(initialClient.ntnDocUrl || '');
+      setNtnDocName(initialClient.ntnDocName || '');
       
       const cat = initialClient.defaultCaseCategory || defaultCategory;
       setSelectedCategory(cat);
@@ -139,6 +143,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       setContractLetterName('');
       setNicDocUrl('');
       setNicDocName('');
+      setNtnDocUrl('');
+      setNtnDocName('');
 
       const cat = defaultCategory;
       setSelectedCategory(cat);
@@ -227,7 +233,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   }, []);
 
   // Handle file upload
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'card' | 'contract' | 'nic') => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'card' | 'contract' | 'nic' | 'ntn') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -243,6 +249,9 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       } else if (target === 'nic') {
         setNicDocUrl(processed.dataUrl);
         setNicDocName(processed.name);
+      } else if (target === 'ntn') {
+        setNtnDocUrl(processed.dataUrl);
+        setNtnDocName(processed.name);
       }
     } catch (err) {
       console.warn('File upload warning:', err);
@@ -346,6 +355,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       businessCardUrl: businessCardUrl || undefined,
       contractLetterUrl: contractLetterUrl || undefined,
       nicDocUrl: nicDocUrl || undefined,
+      ntnDocUrl: ntnDocUrl || undefined,
+      ntnDocName: ntnDocName || undefined,
       defaultCaseCategory: selectedCategory,
       defaultServiceArrangements: arrangements,
       defaultCharges: validDefaultCharges,
@@ -562,13 +573,13 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
               </div>
             </div>
 
-            {/* Document Uploads: Business Card, Contract Letter, CNIC */}
+            {/* Document Uploads: Business Card, Contract Letter, CNIC, NTN */}
             <div className="pt-3 border-t border-white/10">
               <label className="text-xs font-bold text-gray-300 block mb-2">
-                Attached Documents (Business Card, Contract Letter, CNIC Copy)
+                Attached Documents (Business Card, Contract Letter, CNIC Copy, NTN Certificate)
               </label>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {/* Business Card Upload */}
                 <div className="p-3 bg-black/30 border border-white/10 rounded-xl space-y-2">
                   <div className="flex items-center justify-between">
@@ -658,6 +669,36 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                     </span>
                   </label>
                 </div>
+
+                {/* NTN Certificate Upload */}
+                <div className="p-3 bg-black/30 border border-white/10 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-gray-300 flex items-center gap-1.5">
+                      <FileCheck size={14} className="text-cyan-400" /> NTN Certificate
+                    </span>
+                    {ntnDocUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewDoc({ url: ntnDocUrl, name: ntnDocName || 'NTN Certificate' })}
+                        className="text-[11px] text-brand-400 hover:text-brand-300 flex items-center gap-1"
+                      >
+                        <Eye size={12} /> View
+                      </button>
+                    )}
+                  </div>
+                  <label className="flex flex-col items-center justify-center p-2.5 border border-dashed border-white/20 hover:border-brand-400 rounded-lg cursor-pointer bg-white/5 hover:bg-white/10 transition text-center">
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, 'ntn')}
+                    />
+                    <Upload size={16} className="text-gray-400 mb-1" />
+                    <span className="text-[11px] text-gray-300 font-medium truncate max-w-full">
+                      {uploadingDoc === 'ntn' ? 'Processing...' : ntnDocName || (ntnDocUrl ? 'Replace NTN' : 'Upload NTN')}
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
           </div>
@@ -722,9 +763,6 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                         <span className={`w-2 h-2 rounded-full shrink-0 ${isDpl ? 'bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.8)]' : 'bg-amber-400'}`}></span>
                         <div className="min-w-0">
                           <p className="text-xs font-semibold text-white truncate">{item.label}</p>
-                          <p className="text-[10px] text-gray-400 font-mono">
-                            Standard Rate: PKR {item.amount.toLocaleString()}
-                          </p>
                         </div>
                       </div>
 

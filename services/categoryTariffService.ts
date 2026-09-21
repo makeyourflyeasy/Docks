@@ -22,15 +22,15 @@ export interface ServiceArrangementItem {
  */
 export const CATEGORY_SERVICE_ARRANGEMENTS: Record<string, Record<string, ServiceArrangementItem>> = {
   "Bonded Carrier": {
-    tp_charges: { label: 'TP Charges / Customs Transhipment Permit', arrangedBy: 'DPL', amount: 18000, isDefaultDpl: true },
     loading_charges: { label: 'Loading / Labor Handling Charges', arrangedBy: 'Client', amount: 6000 },
+    do_charges: { label: 'Shipping Line Delivery Order (DO) Charges', arrangedBy: 'Client', amount: 8500 },
+    security_deposit: { label: 'DO Security Deposit / Guarantee', arrangedBy: 'Client', amount: 50000 },
     dryport_do_charges: { label: 'Dry Port Delivery Order (DO) Charges', arrangedBy: 'Client', amount: 8500 },
     unloading_charges: { label: 'Unloading / Offloading Charges', arrangedBy: 'Client', amount: 6000 },
     seal_charges: { label: 'Customs Bullet Seal & E-Seal Tracking Fee', arrangedBy: 'Client', amount: 5000 },
     vehicle_rent: { label: 'Vehicle Rent / Transporter Freight', arrangedBy: 'Client', amount: 120000 },
     vehicle_detention: { label: 'Vehicle Detention / Waiting Surcharge', arrangedBy: 'Client', amount: 10000 },
-    wharfage_charges: { label: 'Wharfage Terminal & Port Dues', arrangedBy: 'Client', amount: 12000 },
-    security_deposit: { label: 'DO Security Deposit / Guarantee', arrangedBy: 'Client', amount: 50000 }
+    wharfage_charges: { label: 'Wharfage Terminal & Port Dues', arrangedBy: 'Client', amount: 12000 }
   },
 
   "Afghan Transit": {

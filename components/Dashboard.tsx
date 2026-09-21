@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { LogEntry, CaseStatus, Case, Vehicle, FinanceEntry } from '../types';
 import { subscribeToCases, subscribeToVehicles, subscribeToFinances } from '../services/dbService';
+import { subscribeToActivityLogs, ActivityLogRecord } from '../services/activityLogService';
 import { safeAppStorage } from '../services/storage';
 import { 
   calculateStationMovements, 
@@ -127,6 +128,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   
   // Activity Log State
   const [logs, setLogs] = useState<LogEntry[]>(INITIAL_LOGS);
+  const [liveLogs, setLiveLogs] = useState<ActivityLogRecord[]>([]);
   const [showAllLogs, setShowAllLogs] = useState(false);
 
   // Live Data from Firestore
@@ -147,11 +149,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       (finances) => setLiveFinances(finances || []),
       (err) => console.warn("Dashboard finance subscription warning:", err)
     );
+    const unsubLogs = subscribeToActivityLogs(
+      (records) => setLiveLogs(records || [])
+    );
 
     return () => {
       unsubCases();
       unsubVehicles();
       unsubFinances();
+      unsubLogs();
     };
   }, []);
 
@@ -1258,24 +1264,64 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 {showAllLogs ? 'Show Less' : 'View All'} {showAllLogs ? '' : <ArrowRight size={12}/>}
             </button>
           </div>
+
+          {liveCases.filter(c => c.approvalStatus === 'PENDING').length > 0 && (
+            <div 
+              onClick={() => onNavigate('cases', {})}
+              className="mb-3 p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-between cursor-pointer hover:bg-amber-500/25 transition-all text-xs text-amber-300"
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+                <span><strong>{liveCases.filter(c => c.approvalStatus === 'PENDING').length}</strong> Client Case(s) awaiting authorization</span>
+              </div>
+              <span className="text-[10px] font-bold bg-amber-500/30 px-2 py-0.5 rounded text-amber-200">Review →</span>
+            </div>
+          )}
           
-          <div className="flex-1 overflow-y-auto custom-scrollbar px-4 space-y-4 max-h-[400px]">
-            {logs.map((log) => (
-              <div key={log.id} className="flex gap-4 items-start border-l-2 border-white/10 pl-4 relative group animate-in fade-in slide-in-from-left-2">
-                <div className={`absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full ring-4 ring-brand-950
-                  ${log.type === 'SUCCESS' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 
-                    log.type === 'ERROR' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]' : 
-                    log.type === 'WARNING' ? 'bg-yellow-500' : 'bg-blue-500'}`} 
-                />
-                <div className="flex-1 -mt-1 group-hover:bg-white/5 p-2 rounded-lg transition-colors">
-                  <p className="text-sm text-gray-200 font-medium leading-snug">{log.action}</p>
-                  <div className="flex justify-between items-center mt-1">
-                    <p className="text-xs text-brand-400">{log.user}</p>
-                    <p className="text-[10px] text-gray-500">{log.timestamp}</p>
+          <div className="flex-1 overflow-y-auto custom-scrollbar px-2 space-y-3 max-h-[400px]">
+            {liveLogs.length > 0 ? (
+              (showAllLogs ? liveLogs : liveLogs.slice(0, 10)).map((item) => (
+                <div key={item.id} className="flex gap-3 items-start border-l-2 border-brand-500/40 pl-3 relative group animate-in fade-in slide-in-from-left-2">
+                  <div className="absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full ring-4 ring-brand-950 bg-brand-400 shadow-[0_0_8px_rgba(59,130,246,0.6)]" />
+                  <div className="flex-1 -mt-1 group-hover:bg-white/5 p-2 rounded-lg transition-colors">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs sm:text-sm text-gray-200 font-semibold leading-snug">{item.title}</p>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold uppercase ${
+                        item.role === 'CLIENT' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                        item.role === 'ADMIN' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                        'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                      }`}>
+                        {item.role}
+                      </span>
+                    </div>
+                    {item.description && (
+                      <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{item.description}</p>
+                    )}
+                    <div className="flex justify-between items-center mt-1 pt-1 border-t border-white/5">
+                      <p className="text-[11px] text-brand-400 font-medium truncate">{item.performedBy || 'System'}</p>
+                      <p className="text-[10px] text-gray-500">{new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              logs.map((log) => (
+                <div key={log.id} className="flex gap-4 items-start border-l-2 border-white/10 pl-4 relative group animate-in fade-in slide-in-from-left-2">
+                  <div className={`absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full ring-4 ring-brand-950
+                    ${log.type === 'SUCCESS' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 
+                      log.type === 'ERROR' ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]' : 
+                      log.type === 'WARNING' ? 'bg-yellow-500' : 'bg-blue-500'}`} 
+                  />
+                  <div className="flex-1 -mt-1 group-hover:bg-white/5 p-2 rounded-lg transition-colors">
+                    <p className="text-sm text-gray-200 font-medium leading-snug">{log.action}</p>
+                    <div className="flex justify-between items-center mt-1">
+                      <p className="text-xs text-brand-400">{log.user}</p>
+                      <p className="text-[10px] text-gray-500">{log.timestamp}</p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

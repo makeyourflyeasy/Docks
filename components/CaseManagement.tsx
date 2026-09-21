@@ -4,7 +4,7 @@ import {
   MapPin, Anchor, Box, User, AlertCircle, Calendar, Camera, X, Truck, Briefcase, 
   Search, Eye, Share2, AlertTriangle, ArrowLeft, Download, Trash2, Edit, Plus, ListFilter, Filter,
   Sparkles, Scan, FileCheck, Globe, Receipt, Scale, Ship, UploadCloud, Play, Clock, ArrowRight, RefreshCw, Layers,
-  Building, Phone, Mail, DollarSign, Tag, Package
+  Building, Phone, Mail, DollarSign, Tag, Package, ShieldCheck
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
@@ -40,6 +40,8 @@ import {
   normalizeCategoryKey
 } from '../services/categoryTariffService';
 import { ClientRegistrationModal } from './ClientRegistrationModal';
+import { SmartCaseSearchModal } from './SmartCaseSearchModal';
+import { logActivity } from '../services/activityLogService';
 
 export interface UploadedDocRecord {
   id: string;
@@ -378,6 +380,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
   const activeLogo = customLogo || branding.customLogo;
   const [view, setView] = useState<'list' | 'register' | 'details'>('list');
   const [activeNotificationId, setActiveNotificationId] = useState<number | null>(null);
+  const [showSmartSearchModal, setShowSmartSearchModal] = useState(false);
   const [cases, setCases] = useState<Case[]>(() => {
     return safeAppStorage.getJSON<Case[]>('dpl_live_cases', INITIAL_CASES);
   });
@@ -1765,16 +1768,51 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
         newStatus = CaseStatus.IN_TRANSIT;
     }
 
-    const updatedCase = { ...target, status: newStatus };
+    const updatedCase = { 
+      ...target, 
+      status: newStatus,
+      approvalStatus: 'APPROVED' as const,
+      approvedBy: effectiveRole,
+      approvedAt: new Date().toISOString()
+    };
     const updatedCases = cases.map(c => c.id === target.id ? updatedCase : c);
     setCases(updatedCases);
     setSelectedCase(updatedCase);
     updateCaseInFirestore(updatedCase).catch((e) => console.warn("Firestore approveCase error:", e));
+    logActivity(
+      `Case Approved: ${target.caseNo}`,
+      `Case ${target.caseNo} (${target.clientName}) was officially approved by ${effectiveRole}. Status advanced to ${newStatus}.`,
+      effectiveRole,
+      'OPERATIONS',
+      { caseNo: target.caseNo, client: target.clientName }
+    );
     
     if (activeNotificationId && onActionComplete) {
         onActionComplete(activeNotificationId);
         setActiveNotificationId(null);
     }
+  };
+
+  const handleRejectCase = () => {
+    const target = isEditingCase ? editedCase : selectedCase;
+    if (!target) return;
+    const updatedCase = {
+      ...target,
+      approvalStatus: 'REJECTED' as const,
+      approvedBy: effectiveRole,
+      approvedAt: new Date().toISOString()
+    };
+    const updatedCases = cases.map(c => c.id === target.id ? updatedCase : c);
+    setCases(updatedCases);
+    setSelectedCase(updatedCase);
+    updateCaseInFirestore(updatedCase).catch((e) => console.warn("Firestore rejectCase error:", e));
+    logActivity(
+      `Case Rejected: ${target.caseNo}`,
+      `Case ${target.caseNo} (${target.clientName}) was rejected by ${effectiveRole}.`,
+      effectiveRole,
+      'OPERATIONS',
+      { caseNo: target.caseNo, client: target.clientName }
+    );
   };
 
   // --- Advanced Report Logic ---
@@ -2067,10 +2105,25 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
              <span>Customs Rules & Act Guide</span>
            </button>
          </div>
-         <div className="flex gap-2 w-full md:w-auto">
+         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <button
+              type="button"
+              onClick={() => setShowSmartSearchModal(true)}
+              className="bg-brand-600 hover:bg-brand-500 text-white px-3.5 py-2.5 rounded-lg flex items-center gap-2 font-medium text-xs sm:text-sm shadow-md shadow-brand-600/20 transition-all active:scale-95 shrink-0"
+              title="Smart Case Search & Advanced Query"
+            >
+              <Search size={16} />
+              <span>Smart Search</span>
+            </button>
             <div className="relative flex-1 md:w-64">
               <Search className="absolute left-3 top-2.5 text-gray-500" size={18} />
-              <input type="text" placeholder="Search Case / BL / Container" className="w-full glass-input rounded-lg pl-10 pr-4 py-2.5 outline-none text-sm text-white" />
+              <input 
+                type="text" 
+                onClick={() => setShowSmartSearchModal(true)}
+                placeholder="Search Importer, BL, Item, Client..." 
+                className="w-full glass-input rounded-lg pl-10 pr-4 py-2.5 outline-none text-sm text-white cursor-pointer placeholder-gray-400" 
+                readOnly
+              />
             </div>
          </div>
        </div>
@@ -2252,11 +2305,18 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                           {c.createdAt}
                      </td>
                      <td className="p-4">
-                        <span className={`px-2 py-1 rounded text-xs font-medium border border-white/10
-                          ${c.status === CaseStatus.COMPLETED ? 'bg-green-500/20 text-green-400' : 
-                            c.status === CaseStatus.IN_TRANSIT ? 'bg-blue-500/20 text-blue-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                           {c.status}
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={`px-2 py-1 rounded text-xs font-medium border border-white/10
+                            ${c.status === CaseStatus.COMPLETED ? 'bg-green-500/20 text-green-400' : 
+                              c.status === CaseStatus.IN_TRANSIT ? 'bg-blue-500/20 text-blue-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                             {c.status}
+                          </span>
+                          {c.approvalStatus === 'PENDING' && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse">
+                              Pending Approval
+                            </span>
+                          )}
+                        </div>
                      </td>
                      <td className="p-4 text-center">
                        <button className="p-2 hover:bg-white/10 rounded-full text-brand-400 transition-colors">
@@ -2658,6 +2718,48 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
            </div>
          )}
   
+          {/* Client Case Approval Banner */}
+          {targetCase?.approvalStatus === 'PENDING' && (
+            <div className="mb-4 p-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-200 shadow-lg no-print">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                  <AlertTriangle size={20} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    Client Case Registration: Approval Pending
+                    <span className="px-2 py-0.5 rounded-md bg-amber-500/30 text-amber-300 text-[10px] uppercase font-bold">
+                      Awaiting Admin / Case Manager
+                    </span>
+                  </h4>
+                  <p className="text-xs text-amber-300/90 mt-0.5">
+                    This case was registered via Client Portal by <strong>{targetCase.clientName}</strong> and requires authorization.
+                  </p>
+                </div>
+              </div>
+              {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.OPERATIONS_MANAGER) && (
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  <button
+                    type="button"
+                    onClick={handleApproveCase}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 transition-all active:scale-95"
+                  >
+                    <CheckCircle size={15} />
+                    <span>Approve Case</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRejectCase}
+                    className="bg-red-600/80 hover:bg-red-600 text-white font-bold text-xs px-3.5 py-2 rounded-xl flex items-center gap-1.5 border border-red-500/30 transition-all active:scale-95"
+                  >
+                    <X size={15} />
+                    <span>Reject</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
          <div id="printable-area" className="glass-card rounded-2xl overflow-hidden border border-white/10 print:border-none print:shadow-none">
             {/* Official Corporate Header for Print (Visible only in Print) */}
             <div className="hidden print:block p-6 pb-4 border-b-2 border-black bg-white">
@@ -2847,19 +2949,26 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   </h3>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewChargeDesc('');
-                      setNewChargeAmount('');
-                      setShowAddChargeModal(true);
-                    }}
-                    className="bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium transition-all hover:scale-105"
-                    title="Add additional charge or fee"
-                  >
-                    <Plus size={14} />
-                    <span>Add Charge</span>
-                  </button>
+                  {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.FINANCE_MANAGER || effectiveRole === UserRole.CEO) ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewChargeDesc('');
+                        setNewChargeAmount('');
+                        setShowAddChargeModal(true);
+                      }}
+                      className="bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 text-xs px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium transition-all hover:scale-105"
+                      title="Add additional charge or fee"
+                    >
+                      <Plus size={14} />
+                      <span>Add Charge</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-gray-400 text-xs">
+                      <ShieldCheck size={14} className="text-amber-400" />
+                      <span>Finance Manager / Admin Managed</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2949,22 +3058,26 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                           )}
                         </td>
                         <td className="p-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const currentCharges = targetCase.charges ? [...targetCase.charges] : [];
-                              const updatedCharges = currentCharges.filter((_, i) => i !== idx);
-                              const updatedCase = { ...targetCase, charges: updatedCharges };
-                              setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
-                              setSelectedCase(updatedCase);
-                              if (isEditingCase) setEditedCase(updatedCase);
-                              updateCaseInFirestore(updatedCase).catch(e => console.warn("Firestore charge delete err:", e));
-                            }}
-                            className="text-gray-500 hover:text-red-400 p-1 rounded transition-colors opacity-0 group-hover:opacity-100"
-                            title="Remove Charge"
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                          {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.FINANCE_MANAGER || effectiveRole === UserRole.CEO) ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const currentCharges = targetCase.charges ? [...targetCase.charges] : [];
+                                const updatedCharges = currentCharges.filter((_, i) => i !== idx);
+                                const updatedCase = { ...targetCase, charges: updatedCharges };
+                                setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
+                                setSelectedCase(updatedCase);
+                                if (isEditingCase) setEditedCase(updatedCase);
+                                updateCaseInFirestore(updatedCase).catch(e => console.warn("Firestore charge delete err:", e));
+                              }}
+                              className="text-gray-500 hover:text-red-400 p-1 rounded transition-colors opacity-0 group-hover:opacity-100"
+                              title="Remove Charge"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          ) : (
+                            <span className="text-gray-600 text-[10px]">—</span>
+                          )}
                         </td>
                       </tr>
                     )))}
@@ -7084,6 +7197,18 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           setOtherClientName('');
           setShowAddClientModal(false);
           setDraftToast(`✓ Client "${client.name}" registered with default tariff and service arrangements applied!`);
+        }}
+      />
+
+      {/* Smart Case Search & Advanced Query Modal */}
+      <SmartCaseSearchModal
+        isOpen={showSmartSearchModal}
+        onClose={() => setShowSmartSearchModal(false)}
+        cases={cases}
+        clients={clientsData}
+        onSelectCase={(caseItem) => {
+          setSelectedCase(caseItem);
+          setView('details');
         }}
       />
 

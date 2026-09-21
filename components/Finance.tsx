@@ -3,11 +3,18 @@ import {
   Wallet, FileText, ArrowUpRight, ArrowDownLeft, Plus, 
   Search, Filter, Download, CreditCard, Banknote, Briefcase, X, Save, Calendar, Camera,
   BookOpen, ChevronDown, CheckCircle2, User, Layers, RefreshCw, AlertCircle, ArrowRight,
-  Eye, Loader2, Share2, Upload, Zap, Trash2, Building, Truck, Clock, ShieldCheck
+  Eye, Loader2, Share2, Upload, Zap, Trash2, Building, Truck, Clock, ShieldCheck, ArrowLeft
 } from 'lucide-react';
 import Logo from './Logo';
 import { PdfViewerModal } from './PdfViewerModal';
-import { FinanceEntry, Case, Client, LedgerEntry, AppUser, RecurringFinanceTemplate, UserRole } from '../types';
+import { FinanceEntry, Case, Client, LedgerEntry, AppUser, RecurringFinanceTemplate, UserRole, Vendor } from '../types';
+import { 
+  getStoredVendors, 
+  saveVendor, 
+  subscribeToVendors, 
+  VENDOR_CATEGORIES 
+} from '../services/vendorService';
+import { logActivity } from '../services/activityLogService';
 import { 
   subscribeToFinances, 
   saveFinanceToFirestore, 
@@ -206,6 +213,39 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const [isOtherClient, setIsOtherClient] = useState(false);
   const [otherClientName, setOtherClientName] = useState('');
 
+  // Vendors & Utilities State
+  const [vendors, setVendors] = useState<Vendor[]>(() => getStoredVendors());
+  const [selectedVendorForLedger, setSelectedVendorForLedger] = useState<Vendor | null>(null);
+  const [vendorCategoryFilter, setVendorCategoryFilter] = useState<string>('ALL');
+  const [vendorSearchQuery, setVendorSearchQuery] = useState('');
+  const [showAddVendorModal, setShowAddVendorModal] = useState(false);
+  const [newVendorForm, setNewVendorForm] = useState<Partial<Vendor>>({
+    name: '',
+    category: 'Drinking Water Charges',
+    companyTitle: '',
+    contactNumber: '',
+    address: '',
+    isRecurring: false
+  });
+
+  // Auto Vendor Detection Prompt when paying a non-staff party
+  const [autoVendorPrompt, setAutoVendorPrompt] = useState<{
+    isOpen: boolean;
+    name: string;
+    category: string;
+    companyTitle: string;
+    contactNumber: string;
+    address: string;
+    pendingEntry?: FinanceEntry;
+  } | null>(null);
+
+  // Date Range Filtering for Ledgers
+  const [ledgerStartDate, setLedgerStartDate] = useState<string>('');
+  const [ledgerEndDate, setLedgerEndDate] = useState<string>('');
+
+  // All Invoices Directory Modal
+  const [showAllInvoicesModal, setShowAllInvoicesModal] = useState(false);
+
   const [newTransaction, setNewTransaction] = useState<Partial<FinanceEntry>>({
     description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: '', documentUrl: '', documentName: ''
   });
@@ -274,6 +314,16 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     });
     return () => unsubscribe();
   }, [cases, financeData, receivables]);
+
+  // 6. Synchronize vendors from Firestore / Storage
+  useEffect(() => {
+    const unsubscribe = subscribeToVendors((vendorsFromDb) => {
+      if (vendorsFromDb && Array.isArray(vendorsFromDb)) {
+        setVendors(vendorsFromDb);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // AUTOMATIC 1ST OF THE MONTH RECURRING & SALARY EXPENSES
   useEffect(() => {
@@ -468,6 +518,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     { id: 'general_ledger', label: 'General Ledger' },
     { id: 'transporter_ledger', label: 'Transporter/Broker Ledger' },
     { id: 'staff_ledger', label: 'Staff Ledger' },
+    { id: 'vendor_ledger', label: 'Vendors & Utilities' },
     { id: 'recurring', label: 'Monthly Fixed & Recurring' },
   ];
 
@@ -590,11 +641,21 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     return entries;
   }, [selectedLedgerClient, cases, receivables, financeData]);
 
+  // Filtered Client Ledger Entries by Date Range
+  const filteredClientLedgerEntries = useMemo(() => {
+    return clientLedgerEntries.filter(entry => {
+      if (ledgerStartDate && entry.date < ledgerStartDate) return false;
+      if (ledgerEndDate && entry.date > ledgerEndDate) return false;
+      return true;
+    });
+  }, [clientLedgerEntries, ledgerStartDate, ledgerEndDate]);
+
   // Client summary metrics
   const clientSummary = useMemo(() => {
-    const totalDebits = clientLedgerEntries.reduce((sum, e) => sum + e.debit, 0);
-    const totalCredits = clientLedgerEntries.reduce((sum, e) => sum + e.credit, 0);
-    const netBalance = totalDebits - totalCredits;
+    const entriesToSummarize = filteredClientLedgerEntries;
+    const totalDebits = entriesToSummarize.reduce((sum, e) => sum + e.debit, 0);
+    const totalCredits = entriesToSummarize.reduce((sum, e) => sum + e.credit, 0);
+    const netBalance = entriesToSummarize.length > 0 ? entriesToSummarize[entriesToSummarize.length - 1].balance : 0;
     const clientCases = cases.filter(c => c.clientName?.trim().toLowerCase() === selectedLedgerClient.trim().toLowerCase());
     const totalContainers = clientCases.reduce((sum, c) => sum + (c.containers?.length || 1), 0);
 
@@ -605,7 +666,80 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       totalCases: clientCases.length,
       totalContainers
     };
-  }, [clientLedgerEntries, cases, selectedLedgerClient]);
+  }, [filteredClientLedgerEntries, cases, selectedLedgerClient]);
+
+  // Dynamic Vendor Ledger Calculations
+  const vendorLedgerEntries = useMemo(() => {
+    if (!selectedVendorForLedger) return [];
+    const target = selectedVendorForLedger.name.trim().toLowerCase();
+    const entries: LedgerEntry[] = [];
+
+    // Opening balance entry
+    entries.push({
+      id: `open_vnd_${selectedVendorForLedger.id}`,
+      date: selectedVendorForLedger.createdAt ? selectedVendorForLedger.createdAt.split('T')[0] : '2026-01-01',
+      reference: 'OPN-BAL',
+      description: `Opening Balance for ${selectedVendorForLedger.name}`,
+      debit: 0,
+      credit: 0,
+      balance: 0,
+      type: 'INFO',
+      party: selectedVendorForLedger.name
+    });
+
+    // Payables (Debit to vendor ledger = bill incurred by DPL)
+    payables.forEach((p) => {
+      if (p.party && p.party.trim().toLowerCase() === target) {
+        entries.push({
+          id: `pay_${p.id}`,
+          date: p.date,
+          reference: p.reference || `BILL-${p.id}`,
+          description: `${p.description} (${p.category})`,
+          debit: p.amount,
+          credit: 0,
+          balance: 0,
+          type: 'DEBIT',
+          party: selectedVendorForLedger.name
+        });
+      }
+    });
+
+    // Cashbook Payments paid to vendor (Credit to vendor ledger = settlement/payment made)
+    financeData.forEach((f) => {
+      if (f.party && f.party.trim().toLowerCase() === target && f.type === 'EXPENSE') {
+        entries.push({
+          id: `exp_${f.id}`,
+          date: f.date,
+          reference: f.reference || `PAY-${f.id}`,
+          description: `Payment Paid: ${f.description} [${f.paymentMethod || 'Cash'}]`,
+          debit: 0,
+          credit: f.amount,
+          balance: 0,
+          type: 'CREDIT',
+          party: selectedVendorForLedger.name
+        });
+      }
+    });
+
+    entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    let running = 0;
+    entries.forEach((e) => {
+      running = running + e.debit - e.credit;
+      e.balance = running;
+    });
+
+    return entries;
+  }, [selectedVendorForLedger, payables, financeData]);
+
+  // Filtered Vendor Ledger Entries
+  const filteredVendorLedgerEntries = useMemo(() => {
+    return vendorLedgerEntries.filter(entry => {
+      if (ledgerStartDate && entry.date < ledgerStartDate) return false;
+      if (ledgerEndDate && entry.date > ledgerEndDate) return false;
+      return true;
+    });
+  }, [vendorLedgerEntries, ledgerStartDate, ledgerEndDate]);
 
   // Unified Receivables with automatic FIFO payment deduction per client
   const calculatedReceivables = useMemo(() => {
@@ -1145,6 +1279,12 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     const isDirectPayment = transactionType === 'INCOME' || transactionType === 'EXPENSE';
 
+    const isStaff = users.some(u => u.name && u.name.trim().toLowerCase() === finalParty.toLowerCase() && u.role !== UserRole.CLIENT);
+    const isVendor = vendors.some(v => v.name && v.name.trim().toLowerCase() === finalParty.toLowerCase());
+    const isClient = clientList.some(c => c && c.trim().toLowerCase() === finalParty.toLowerCase());
+
+    const matchedVendor = vendors.find(v => v.name && v.name.trim().toLowerCase() === finalParty.toLowerCase());
+
     const entry: FinanceEntry = {
       id: Date.now(),
       date: new Date().toISOString().split('T')[0],
@@ -1153,7 +1293,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       type: transactionType,
       status: isDirectPayment ? 'PAID' : 'PENDING',
       party: finalParty,
-      category: transactionType === 'INCOME' ? 'Client Payment' : transactionType === 'EXPENSE' ? 'Operational Expense' : transactionType === 'PAYABLE' ? 'Payable Bill' : 'Receivable Bill',
+      category: matchedVendor ? matchedVendor.category : (transactionType === 'INCOME' ? 'Client Payment' : transactionType === 'EXPENSE' ? 'Operational Expense' : transactionType === 'PAYABLE' ? 'Payable Bill' : 'Receivable Bill'),
       reference: newTransaction.transactionId || (transactionType === 'PAYABLE' ? `PAY-${Math.floor(1000 + Math.random() * 9000)}` : transactionType === 'RECEIVABLE' ? `INV-${Math.floor(1000 + Math.random() * 9000)}` : `REF-${Math.floor(1000 + Math.random() * 9000)}`),
       paymentMethod: isDirectPayment ? (newTransaction.paymentMethod as any || 'CASH') : undefined,
       bankId: isDirectPayment ? newTransaction.bankId : undefined,
@@ -1163,6 +1303,21 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       documentUrl: newTransaction.documentUrl,
       documentName: newTransaction.documentName
     };
+
+    // Auto-Vendor detection prompt when non-staff payee is entered in cashbook/payables
+    if ((transactionType === 'EXPENSE' || transactionType === 'PAYABLE') && !isStaff && !isVendor && !isClient) {
+      setAutoVendorPrompt({
+        isOpen: true,
+        name: finalParty,
+        category: 'Drinking Water Charges',
+        companyTitle: finalParty,
+        contactNumber: '',
+        address: '',
+        pendingEntry: entry
+      });
+      setShowAddModal(false);
+      return;
+    }
 
     if (transactionType === 'PAYABLE') setPayables([entry, ...payables]);
     else if (transactionType === 'RECEIVABLE') setReceivables([entry, ...receivables]);
@@ -1186,6 +1341,78 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     } else if (transactionType === 'INCOME' || transactionType === 'EXPENSE') {
       handleDirectDownloadReceipt(entry);
     }
+  };
+
+  // Confirm Auto Vendor Registration and finalize transaction
+  const handleConfirmAutoVendor = async () => {
+    if (!autoVendorPrompt) return;
+    const { name, category, companyTitle, contactNumber, address, pendingEntry } = autoVendorPrompt;
+    
+    const newVendor: Vendor = {
+      id: Date.now().toString(),
+      name: name.trim(),
+      category: category as any,
+      companyTitle: companyTitle?.trim() || name.trim(),
+      contactNumber: contactNumber?.trim() || '',
+      address: address?.trim() || '',
+      isRecurring: false,
+      createdAt: new Date().toISOString()
+    };
+    await saveVendor(newVendor);
+    setVendors(prev => [...prev.filter(v => v.id !== newVendor.id), newVendor]);
+
+    if (pendingEntry) {
+      const updatedEntry: FinanceEntry = {
+        ...pendingEntry,
+        category: category as any
+      };
+      if (updatedEntry.type === 'PAYABLE') {
+        setPayables(prev => [updatedEntry, ...prev]);
+      } else {
+        setFinanceData(prev => [updatedEntry, ...prev]);
+      }
+      await saveFinanceToFirestore(updatedEntry).catch(() => {});
+      logActivity(`New Vendor registered and payment recorded for ${newVendor.name} under ${newVendor.category}`, 'FINANCE');
+
+      if (updatedEntry.type === 'EXPENSE') {
+        handleDirectDownloadReceipt(updatedEntry);
+      }
+    }
+
+    setAutoVendorPrompt(null);
+    setIsOtherClient(false);
+    setOtherClientName('');
+    setNewTransaction({ description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: '', documentUrl: '', documentName: '' });
+  };
+
+  // Save new vendor manually from UI
+  const handleSaveNewVendor = async () => {
+    if (!newVendorForm.name?.trim()) {
+      alert('Vendor Name is required.');
+      return;
+    }
+    const vendor: Vendor = {
+      id: Date.now().toString(),
+      name: newVendorForm.name.trim(),
+      category: (newVendorForm.category as any) || 'Miscellaneous Payments',
+      companyTitle: newVendorForm.companyTitle?.trim() || newVendorForm.name.trim(),
+      contactNumber: newVendorForm.contactNumber?.trim() || '',
+      address: newVendorForm.address?.trim() || '',
+      isRecurring: !!newVendorForm.isRecurring,
+      createdAt: new Date().toISOString()
+    };
+    await saveVendor(vendor);
+    setVendors(prev => [...prev.filter(v => v.id !== vendor.id), vendor]);
+    logActivity(`Vendor registered: ${vendor.name} (${vendor.category})`, 'FINANCE');
+    setShowAddVendorModal(false);
+    setNewVendorForm({
+      name: '',
+      category: 'Drinking Water Charges',
+      companyTitle: '',
+      contactNumber: '',
+      address: '',
+      isRecurring: false
+    });
   };
 
   // Open Receipt Modal
@@ -1306,19 +1533,23 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
   // Download Client Ledger PDF
   const handleDownloadClientLedger = async () => {
-    if (!selectedLedgerClient || clientLedgerEntries.length === 0) {
-      alert('No transactions to export for this client.');
+    const entriesToExport = filteredClientLedgerEntries;
+    if (!selectedLedgerClient || entriesToExport.length === 0) {
+      alert('No transactions to export for this client in the selected date range.');
       return;
     }
     setIsExportingPdf(true);
     setPdfSuccessMessage(null);
     setPdfErrorMessage(null);
     try {
+      const dateRangeStr = (ledgerStartDate || ledgerEndDate)
+        ? `${ledgerStartDate || 'Start'} to ${ledgerEndDate || 'Today'}`
+        : 'Full History to Date';
       const res = await downloadClientLedgerPdf({
         clientName: selectedLedgerClient,
-        statementDate: new Date().toLocaleDateString(),
+        statementDate: `${new Date().toLocaleDateString()} (Period: ${dateRangeStr})`,
         summary: clientSummary,
-        entries: clientLedgerEntries.map(e => ({
+        entries: entriesToExport.map(e => ({
           date: e.date,
           reference: e.reference || '',
           description: e.description,
@@ -1336,6 +1567,51 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     } catch (err) {
       console.error(err);
       setPdfErrorMessage('Failed to generate client ledger PDF.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  // Download Vendor Ledger PDF
+  const handleDownloadVendorLedger = async () => {
+    if (!selectedVendorForLedger || filteredVendorLedgerEntries.length === 0) {
+      alert('No transactions to export for this vendor.');
+      return;
+    }
+    setIsExportingPdf(true);
+    setPdfSuccessMessage(null);
+    setPdfErrorMessage(null);
+    try {
+      const dateRangeStr = (ledgerStartDate || ledgerEndDate)
+        ? `${ledgerStartDate || 'Start'} to ${ledgerEndDate || 'Today'}`
+        : 'Full History to Date';
+      const res = await downloadClientLedgerPdf({
+        clientName: `${selectedVendorForLedger.name} [${selectedVendorForLedger.category}]`,
+        statementDate: `${new Date().toLocaleDateString()} (Period: ${dateRangeStr})`,
+        summary: {
+          totalDebits: filteredVendorLedgerEntries.reduce((s, e) => s + e.debit, 0),
+          totalCredits: filteredVendorLedgerEntries.reduce((s, e) => s + e.credit, 0),
+          netBalance: filteredVendorLedgerEntries.length > 0 ? filteredVendorLedgerEntries[filteredVendorLedgerEntries.length - 1].balance : 0,
+          totalContainers: 0
+        },
+        entries: filteredVendorLedgerEntries.map(e => ({
+          date: e.date,
+          reference: e.reference || '',
+          description: e.description,
+          debit: e.debit,
+          credit: e.credit,
+          balance: e.balance
+        })),
+        companyName,
+        customLogo: activeLogo,
+        branding
+      });
+      setPdfSuccessMessage(`Vendor Ledger downloaded: ${res.filename}`);
+      setDirectDownloadFilename(res.filename);
+      setDirectDownloadUrl(res.blobUrl);
+    } catch (err) {
+      console.error(err);
+      setPdfErrorMessage('Failed to generate vendor ledger PDF.');
     } finally {
       setIsExportingPdf(false);
     }
@@ -2598,6 +2874,55 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
               </div>
             </div>
 
+            {/* Date Range Selection Bar */}
+            <div className="bg-slate-900/60 p-3.5 rounded-xl border border-white/10 flex flex-wrap items-center justify-between gap-3 no-print">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-gray-400 font-medium flex items-center gap-1">
+                  <Calendar size={14} className="text-brand-400" /> Date Range:
+                </span>
+                <input
+                  type="date"
+                  value={ledgerStartDate}
+                  onChange={(e) => setLedgerStartDate(e.target.value)}
+                  className="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-brand-500"
+                  placeholder="Start Date"
+                />
+                <span className="text-gray-500">to</span>
+                <input
+                  type="date"
+                  value={ledgerEndDate}
+                  onChange={(e) => setLedgerEndDate(e.target.value)}
+                  className="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-brand-500"
+                  placeholder="End Date"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLedgerStartDate('');
+                    setLedgerEndDate(new Date().toISOString().split('T')[0]);
+                  }}
+                  className="px-3 py-1.5 bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 rounded-lg text-xs font-semibold transition"
+                >
+                  From Start to Today
+                </button>
+                {(ledgerStartDate || ledgerEndDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLedgerStartDate('');
+                      setLedgerEndDate('');
+                    }}
+                    className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-gray-400 rounded-lg text-xs"
+                  >
+                    Clear Filter
+                  </button>
+                )}
+              </div>
+              <span className="text-xs text-gray-400 font-mono">
+                Showing {filteredClientLedgerEntries.length} of {clientLedgerEntries.length} records
+              </span>
+            </div>
+
             {/* Client Stats Highlights */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 no-print">
               <div className="glass-panel p-3.5 rounded-xl border border-white/10">
@@ -2656,12 +2981,12 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
             {/* Dynamic Ledger Table */}
             {/* Mobile View: Compact, Zero-Horizontal Scroll, Smooth Touch Pan-Y */}
             <div className="block sm:hidden divide-y divide-white/10 touch-pan-y border-t border-white/10">
-              {clientLedgerEntries.length === 0 ? (
+              {filteredClientLedgerEntries.length === 0 ? (
                 <div className="p-8 text-center text-gray-500 text-xs">
-                  No transactions found for {selectedLedgerClient}.
+                  No transactions found for {selectedLedgerClient} in the selected period.
                 </div>
               ) : (
-                clientLedgerEntries
+                filteredClientLedgerEntries
                   .filter(entry => !searchTerm || entry.description.toLowerCase().includes(searchTerm.toLowerCase()) || (entry.reference || '').toLowerCase().includes(searchTerm.toLowerCase()))
                   .map((entry) => (
                     <div key={entry.id} className="p-3 hover:bg-white/5 transition-colors space-y-1.5">
@@ -2750,7 +3075,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5 print:divide-gray-300">
-                  {clientLedgerEntries
+                  {filteredClientLedgerEntries
                     .filter(entry => !searchTerm || entry.description.toLowerCase().includes(searchTerm.toLowerCase()) || (entry.reference || '').toLowerCase().includes(searchTerm.toLowerCase()))
                     .map((entry) => (
                     <tr key={entry.id} className="hover:bg-white/5 transition-colors">
@@ -3539,6 +3864,503 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         );
       }
 
+      case 'vendor_ledger': {
+        const vendorCategoriesList = [
+          'ALL',
+          'Drinking Water Charges',
+          'Electric Bill',
+          'Gas Cylinder Refill',
+          'Internet Bill',
+          'Office Rent',
+          'Stationery',
+          'Photocopy & Printer Maintenance',
+          'Computer Repair',
+          'Office Maintenance',
+          'Legal Payments',
+          'Miscellaneous Payments'
+        ];
+
+        // If a specific vendor is selected, display their detailed ledger!
+        if (selectedVendorForLedger) {
+          const totalDebits = filteredVendorLedgerEntries.reduce((s, e) => s + e.debit, 0);
+          const totalCredits = filteredVendorLedgerEntries.reduce((s, e) => s + e.credit, 0);
+          const netBalance = filteredVendorLedgerEntries.length > 0 ? filteredVendorLedgerEntries[filteredVendorLedgerEntries.length - 1].balance : 0;
+
+          return (
+            <div className="p-4 space-y-4 animate-fade-in">
+              {/* Back to Vendor Directory & Top Controls */}
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/5 p-4 rounded-xl border border-white/10 no-print">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setSelectedVendorForLedger(null)}
+                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+                  >
+                    <ArrowLeft size={16} />
+                    <span>Back to Vendors List</span>
+                  </button>
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <span>{selectedVendorForLedger.name}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                        {selectedVendorForLedger.category}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-gray-400">
+                      {selectedVendorForLedger.companyTitle || selectedVendorForLedger.name} • {selectedVendorForLedger.contactNumber || 'No Contact'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setTransactionType('EXPENSE');
+                      setNewTransaction({
+                        description: `Payment to ${selectedVendorForLedger.name} for ${selectedVendorForLedger.category}`,
+                        amount: 0,
+                        party: selectedVendorForLedger.name,
+                        paymentMethod: 'CASH',
+                        bankId: '',
+                        transactionId: ''
+                      });
+                      setIsOtherClient(false);
+                      setShowAddModal(true);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20"
+                  >
+                    <Plus size={14} />
+                    <span>Pay Bill / Add Payment</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setTransactionType('PAYABLE');
+                      setNewTransaction({
+                        description: `${selectedVendorForLedger.category} Bill - ${selectedVendorForLedger.name}`,
+                        amount: 0,
+                        party: selectedVendorForLedger.name,
+                        paymentMethod: 'CASH',
+                        bankId: '',
+                        transactionId: ''
+                      });
+                      setIsOtherClient(false);
+                      setShowAddModal(true);
+                    }}
+                    className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-amber-600/20"
+                  >
+                    <Plus size={14} />
+                    <span>Add Payable Bill</span>
+                  </button>
+
+                  <button
+                    onClick={handleDownloadVendorLedger}
+                    disabled={isExportingPdf}
+                    className="bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-brand-600/20"
+                  >
+                    <Download size={14} />
+                    <span>Download PDF Statement</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Date Range Selection Bar */}
+              <div className="bg-slate-900/60 p-3.5 rounded-xl border border-white/10 flex flex-wrap items-center justify-between gap-3 no-print">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-gray-400 font-medium flex items-center gap-1">
+                    <Calendar size={14} className="text-brand-400" /> Date Range:
+                  </span>
+                  <input
+                    type="date"
+                    value={ledgerStartDate}
+                    onChange={(e) => setLedgerStartDate(e.target.value)}
+                    className="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-brand-500"
+                    placeholder="Start Date"
+                  />
+                  <span className="text-gray-500">to</span>
+                  <input
+                    type="date"
+                    value={ledgerEndDate}
+                    onChange={(e) => setLedgerEndDate(e.target.value)}
+                    className="bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-brand-500"
+                    placeholder="End Date"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLedgerStartDate('');
+                      setLedgerEndDate(new Date().toISOString().split('T')[0]);
+                    }}
+                    className="px-3 py-1.5 bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 rounded-lg text-xs font-semibold transition"
+                  >
+                    From Start to Today
+                  </button>
+                  {(ledgerStartDate || ledgerEndDate) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLedgerStartDate('');
+                        setLedgerEndDate('');
+                      }}
+                      className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-gray-400 rounded-lg text-xs"
+                    >
+                      Clear Filter
+                    </button>
+                  )}
+                </div>
+                <span className="text-xs text-gray-400 font-mono">
+                  Showing {filteredVendorLedgerEntries.length} of {vendorLedgerEntries.length} records
+                </span>
+              </div>
+
+              {/* Vendor Stats Highlights */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 no-print">
+                <div className="glass-panel p-3.5 rounded-xl border border-white/10">
+                  <p className="text-[11px] text-gray-400 uppercase font-semibold">Total Incurred / Billed</p>
+                  <p className="text-lg font-bold text-red-400 font-mono mt-1">
+                    PKR {totalDebits.toLocaleString()}
+                  </p>
+                  <p className="text-[10px] text-gray-500">Utility bills & vendor payables</p>
+                </div>
+                <div className="glass-panel p-3.5 rounded-xl border border-white/10">
+                  <p className="text-[11px] text-gray-400 uppercase font-semibold">Total Paid to Vendor</p>
+                  <p className="text-lg font-bold text-green-400 font-mono mt-1">
+                    PKR {totalCredits.toLocaleString()}
+                  </p>
+                  <p className="text-[10px] text-gray-500">Cashbook settled payments</p>
+                </div>
+                <div className="glass-panel p-3.5 rounded-xl border border-white/10 bg-brand-500/5">
+                  <p className="text-[11px] text-brand-300 uppercase font-bold">Net Balance (Payable Due)</p>
+                  <p className={`text-xl font-bold font-mono mt-1 ${netBalance > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    PKR {netBalance.toLocaleString()}
+                  </p>
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold mt-1 ${netBalance > 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                    {netBalance > 0 ? 'Payable Due' : 'Account Settled'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Mobile View */}
+              <div className="block sm:hidden divide-y divide-white/10 touch-pan-y border-t border-white/10">
+                {filteredVendorLedgerEntries.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500 text-xs">
+                    No transactions recorded for this vendor.
+                  </div>
+                ) : (
+                  filteredVendorLedgerEntries.map((entry) => (
+                    <div key={entry.id} className="p-3 hover:bg-white/5 transition-colors space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-[11px] font-mono text-gray-400 shrink-0">{entry.date}</span>
+                          <span className="font-mono text-[10px] text-brand-300 bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/20 truncate">
+                            {entry.reference || '-'}
+                          </span>
+                        </div>
+                        {entry.credit > 0 && (
+                          <button
+                            onClick={() => handleOpenReceipt({
+                              id: entry.id,
+                              date: entry.date,
+                              party: selectedVendorForLedger.name,
+                              type: 'EXPENSE',
+                              amount: entry.credit,
+                              description: entry.description,
+                              reference: entry.reference || 'VND-EXP',
+                              status: 'PAID'
+                            } as any)}
+                            className="text-brand-400 hover:text-white text-[10px] font-semibold px-2 py-0.5 rounded bg-brand-600/20 border border-brand-500/30 flex items-center gap-1 shrink-0"
+                          >
+                            <Eye size={10} /> Voucher
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-gray-200 leading-snug">{entry.description}</p>
+                      <div className="flex items-center justify-between pt-1 border-t border-white/5 text-xs font-mono">
+                        <div className="flex items-center gap-2">
+                          {entry.debit > 0 && <span className="text-red-400">Dr: PKR {entry.debit.toLocaleString()}</span>}
+                          {entry.credit > 0 && <span className="text-green-400">Cr: PKR {entry.credit.toLocaleString()}</span>}
+                        </div>
+                        <div className="font-bold">
+                          <span className={entry.balance > 0 ? 'text-amber-400' : 'text-emerald-400'}>
+                            Bal: PKR {entry.balance.toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Desktop Table */}
+              <div className="hidden sm:block overflow-x-auto touch-pan-y">
+                <table className="w-full text-left text-sm text-gray-300 border-t border-white/10">
+                  <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/5">
+                    <tr>
+                      <th className="p-4 w-28">Date</th>
+                      <th className="p-4 w-36">Voucher / Ref</th>
+                      <th className="p-4">Particulars & Description</th>
+                      <th className="p-4 text-right w-36">Debit (Bill)</th>
+                      <th className="p-4 text-right w-36">Credit (Paid)</th>
+                      <th className="p-4 text-right w-40">Running Balance</th>
+                      <th className="p-4 text-center w-28 no-print">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filteredVendorLedgerEntries.map((entry) => (
+                      <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                        <td className="p-4 whitespace-nowrap text-xs text-gray-400">{entry.date}</td>
+                        <td className="p-4 whitespace-nowrap">
+                          <span className="font-mono text-xs text-brand-300 bg-brand-500/10 px-2 py-0.5 rounded border border-brand-500/20">
+                            {entry.reference || '-'}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <p className="font-medium text-white text-xs sm:text-sm">{entry.description}</p>
+                        </td>
+                        <td className="p-4 text-right text-red-400 font-mono text-xs sm:text-sm">
+                          {entry.debit > 0 ? `PKR ${entry.debit.toLocaleString()}` : '-'}
+                        </td>
+                        <td className="p-4 text-right text-green-400 font-mono text-xs sm:text-sm">
+                          {entry.credit > 0 ? `PKR ${entry.credit.toLocaleString()}` : '-'}
+                        </td>
+                        <td className="p-4 text-right font-bold font-mono text-xs sm:text-sm">
+                          <span className={entry.balance > 0 ? 'text-amber-400' : 'text-emerald-400'}>
+                            PKR {entry.balance.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="p-4 text-center no-print">
+                          {entry.credit > 0 && (
+                            <button
+                              onClick={() => handleOpenReceipt({
+                                id: entry.id,
+                                date: entry.date,
+                                party: selectedVendorForLedger.name,
+                                type: 'EXPENSE',
+                                amount: entry.credit,
+                                description: entry.description,
+                                reference: entry.reference || 'VND-EXP',
+                                status: 'PAID'
+                              } as any)}
+                              className="text-brand-400 hover:text-white text-xs font-semibold px-2 py-1 rounded bg-brand-600/20 border border-brand-500/30 inline-flex items-center gap-1"
+                            >
+                              <Eye size={12} /> Voucher
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredVendorLedgerEntries.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-gray-500">
+                          No ledger records found for this vendor.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        }
+
+        // Otherwise, render All Vendors Directory
+        const filteredVendorsList = vendors.filter(v => {
+          const matchesCat = vendorCategoryFilter === 'ALL' || v.category === vendorCategoryFilter;
+          const matchesSearch = !vendorSearchQuery || 
+            v.name.toLowerCase().includes(vendorSearchQuery.toLowerCase()) || 
+            (v.companyTitle && v.companyTitle.toLowerCase().includes(vendorSearchQuery.toLowerCase())) ||
+            v.category.toLowerCase().includes(vendorSearchQuery.toLowerCase());
+          return matchesCat && matchesSearch;
+        });
+
+        // Compute summary metrics for all vendors
+        const totalVendorPaid = financeData
+          .filter(f => f.type === 'EXPENSE' && vendors.some(v => v.name.toLowerCase() === (f.party || '').toLowerCase()))
+          .reduce((sum, f) => sum + f.amount, 0);
+
+        const totalVendorPending = payables
+          .filter(p => p.status !== 'PAID' && vendors.some(v => v.name.toLowerCase() === (p.party || '').toLowerCase()))
+          .reduce((sum, p) => sum + p.amount, 0);
+
+        return (
+          <div className="p-4 space-y-4 animate-fade-in">
+            {/* Header & Controls */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/5 p-4 rounded-xl border border-white/10">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Building className="text-brand-400" size={20} />
+                  <span>Vendors & Utility Accounts</span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Drinking water, electric bills, gas, internet, office rent, stationery, maintenance, legal & misc vendors
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setShowAddVendorModal(true)}
+                  className="bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl flex items-center gap-1.5 transition-all shadow-md shadow-brand-600/20"
+                >
+                  <Plus size={16} />
+                  <span>Register New Vendor</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Summary Highlights */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="glass-panel p-4 rounded-xl border border-white/10">
+                <p className="text-xs text-gray-400 uppercase font-semibold">Total Registered Vendors</p>
+                <p className="text-2xl font-bold text-white font-mono mt-1">{vendors.length}</p>
+                <p className="text-[10px] text-gray-500">Utilities, maintenance, services</p>
+              </div>
+              <div className="glass-panel p-4 rounded-xl border border-white/10">
+                <p className="text-xs text-gray-400 uppercase font-semibold">Total Bills Settled / Paid</p>
+                <p className="text-2xl font-bold text-emerald-400 font-mono mt-1">PKR {totalVendorPaid.toLocaleString()}</p>
+                <p className="text-[10px] text-gray-500">Paid from cashbook accounts</p>
+              </div>
+              <div className="glass-panel p-4 rounded-xl border border-white/10">
+                <p className="text-xs text-gray-400 uppercase font-semibold">Pending Vendor Bills</p>
+                <p className="text-2xl font-bold text-amber-400 font-mono mt-1">PKR {totalVendorPending.toLocaleString()}</p>
+                <p className="text-[10px] text-gray-500">Awaiting payment voucher</p>
+              </div>
+            </div>
+
+            {/* Category Filter Pills & Search */}
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-white/5">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
+                <Filter size={14} className="text-gray-400 shrink-0 ml-1" />
+                <div className="flex gap-1.5 flex-nowrap">
+                  {vendorCategoriesList.slice(0, 7).map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setVendorCategoryFilter(cat)}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                        vendorCategoryFilter === cat
+                          ? 'bg-brand-600 text-white shadow-sm'
+                          : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {cat === 'ALL' ? 'All Categories' : cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="relative min-w-[220px]">
+                <Search className="absolute left-3 top-2.5 text-gray-500" size={14} />
+                <input
+                  type="text"
+                  placeholder="Search vendor or utility..."
+                  value={vendorSearchQuery}
+                  onChange={(e) => setVendorSearchQuery(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white outline-none focus:border-brand-500"
+                />
+              </div>
+            </div>
+
+            {/* Vendors Table */}
+            <div className="glass-card rounded-xl border border-white/10 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-gray-200">
+                  <thead className="bg-slate-950 uppercase font-semibold text-gray-400 border-b border-white/10">
+                    <tr>
+                      <th className="p-3.5">Vendor Name</th>
+                      <th className="p-3.5">Category</th>
+                      <th className="p-3.5">Company / Title</th>
+                      <th className="p-3.5">Contact & Address</th>
+                      <th className="p-3.5 text-right">Total Paid</th>
+                      <th className="p-3.5 text-right">Pending Bills</th>
+                      <th className="p-3.5 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 bg-slate-900/40">
+                    {filteredVendorsList.map((v) => {
+                      const vPaid = financeData
+                        .filter(f => f.type === 'EXPENSE' && f.party && f.party.toLowerCase() === v.name.toLowerCase())
+                        .reduce((sum, f) => sum + f.amount, 0);
+                      const vPending = payables
+                        .filter(p => p.status !== 'PAID' && p.party && p.party.toLowerCase() === v.name.toLowerCase())
+                        .reduce((sum, p) => sum + p.amount, 0);
+
+                      return (
+                        <tr key={v.id} className="hover:bg-white/5 transition">
+                          <td className="p-3.5">
+                            <span className="font-bold text-white text-sm">{v.name}</span>
+                            {v.isRecurring && (
+                              <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                Monthly Recurring
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3.5">
+                            <span className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-gray-300 font-medium">
+                              {v.category}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-gray-300 font-medium">{v.companyTitle || '-'}</td>
+                          <td className="p-3.5 text-gray-400">
+                            <div>{v.contactNumber || '-'}</div>
+                            <div className="text-[10px] text-gray-500 truncate max-w-xs">{v.address || '-'}</div>
+                          </td>
+                          <td className="p-3.5 text-right font-mono font-bold text-emerald-400">
+                            PKR {vPaid.toLocaleString()}
+                          </td>
+                          <td className="p-3.5 text-right font-mono font-bold text-amber-400">
+                            PKR {vPending.toLocaleString()}
+                          </td>
+                          <td className="p-3.5 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => {
+                                  setSelectedVendorForLedger(v);
+                                  setLedgerStartDate('');
+                                  setLedgerEndDate('');
+                                }}
+                                className="px-2.5 py-1.5 bg-brand-600/20 hover:bg-brand-600 text-brand-300 hover:text-white border border-brand-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                                title="Check detailed ledger for this vendor"
+                              >
+                                <FileText size={12} />
+                                <span>Check Ledger</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setTransactionType('EXPENSE');
+                                  setNewTransaction({
+                                    description: `Payment to ${v.name} for ${v.category}`,
+                                    amount: 0,
+                                    party: v.name,
+                                    paymentMethod: 'CASH',
+                                    bankId: '',
+                                    transactionId: ''
+                                  });
+                                  setIsOtherClient(false);
+                                  setShowAddModal(true);
+                                }}
+                                className="px-2.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 rounded-lg text-xs font-semibold transition"
+                                title="Record payment in Cashbook"
+                              >
+                                Pay Bill
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredVendorsList.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-gray-500 text-xs">
+                          No vendors found matching criteria. Click "+ Register New Vendor" to add one.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       case 'cashbook':
       default: {
         const filteredFinance = financeData.filter(entry => 
@@ -3894,6 +4716,91 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           <CreditCard size={24} className="text-brand-400" />
           <span className="font-medium text-sm">Payment Paid</span>
         </button>
+      </div>
+
+      {/* Quick Action Navigation Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-slate-900/80 border border-white/10 rounded-2xl no-print">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => {
+              setTransactionType('INCOME');
+              setNewTransaction({
+                description: 'Bank Deposit Payment Received',
+                amount: 0,
+                party: activeTab === 'client_ledger' ? selectedLedgerClient : '',
+                paymentMethod: 'BANK',
+                bankId: '',
+                bankName: 'Meezan Bank Ltd',
+                transactionId: '',
+                slipUrl: ''
+              });
+              setIsOtherClient(false);
+              setOtherClientName('');
+              setShowAddModal(true);
+            }}
+            className="px-3.5 py-2 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+          >
+            <Banknote size={15} />
+            <span>Add Payment (Deposit Proof Only)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('client_ledger')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+              activeTab === 'client_ledger'
+                ? 'bg-brand-600 border-brand-500 text-white shadow-sm'
+                : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <Briefcase size={15} />
+            <span>Check Ledger</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('receivables')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+              activeTab === 'receivables'
+                ? 'bg-brand-600 border-brand-500 text-white shadow-sm'
+                : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <FileText size={15} />
+            <span>Check Invoice</span>
+          </button>
+
+          <button
+            onClick={() => setShowAllInvoicesModal(true)}
+            className="px-3.5 py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
+          >
+            <Layers size={15} className="text-amber-400" />
+            <span>All Invoices (Table & Download)</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('vendor_ledger');
+              setSelectedVendorForLedger(null);
+            }}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+              activeTab === 'vendor_ledger'
+                ? 'bg-brand-600 border-brand-500 text-white shadow-sm'
+                : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <Building size={15} className="text-purple-400" />
+            <span>Vendor Details</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddVendorModal(true)}
+            className="px-3 py-2 bg-purple-600/20 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
+          >
+            <Plus size={14} />
+            <span>+ Add Vendor</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Content Area */}
@@ -4710,6 +5617,376 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* Interactive Financial Counter Breakdown Modal */}
       {renderStatBreakdownModal()}
+
+      {/* AUTOMATIC VENDOR REGISTRATION POPUP PROMPT */}
+      {autoVendorPrompt && autoVendorPrompt.isOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="glass-card w-full max-w-lg rounded-2xl border border-brand-500/40 shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-gradient-to-r from-brand-950/80 to-slate-900">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-brand-500/20 text-brand-300 rounded-xl border border-brand-500/30">
+                  <Building size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Automatic Vendor Registration</h3>
+                  <p className="text-xs text-brand-300">Office policy: Non-staff payee auto-registration</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAutoVendorPrompt(null)}
+                className="text-gray-400 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs text-gray-200 max-h-[75vh] overflow-y-auto">
+              <div className="p-3 bg-brand-500/10 border border-brand-500/30 rounded-xl text-brand-200 text-xs">
+                <strong>Payee "{autoVendorPrompt.name}"</strong> is not found in the office staff list. As per system rules, this party is being registered as a vendor so all future payments automatically consolidate into their personal ledger.
+              </div>
+
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Vendor / Payee Name *</label>
+                <input
+                  type="text"
+                  value={autoVendorPrompt.name}
+                  onChange={(e) => setAutoVendorPrompt(prev => prev ? ({ ...prev, name: e.target.value }) : null)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500 text-sm font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Vendor / Utility Category *</label>
+                <select
+                  value={autoVendorPrompt.category}
+                  onChange={(e) => setAutoVendorPrompt(prev => prev ? ({ ...prev, category: e.target.value }) : null)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500 text-sm font-medium"
+                >
+                  <option value="Drinking Water Charges">Drinking Water Charges</option>
+                  <option value="Electric Bill">Electric Bill</option>
+                  <option value="Gas Cylinder Refill">Gas Cylinder Refill</option>
+                  <option value="Internet Bill">Internet Bill</option>
+                  <option value="Office Rent">Office Rent</option>
+                  <option value="Stationery">Stationery</option>
+                  <option value="Photocopy & Printer Maintenance">Photocopy & Printer Maintenance</option>
+                  <option value="Computer Repair">Computer Repair</option>
+                  <option value="Office Maintenance">Office Maintenance</option>
+                  <option value="Legal Payments">Legal Payments</option>
+                  <option value="Miscellaneous Payments">Miscellaneous Payments</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-400 font-semibold mb-1">Company / Business Title</label>
+                  <input
+                    type="text"
+                    value={autoVendorPrompt.companyTitle}
+                    onChange={(e) => setAutoVendorPrompt(prev => prev ? ({ ...prev, companyTitle: e.target.value }) : null)}
+                    placeholder="e.g. Al-Madina Water Supplies"
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-400 font-semibold mb-1">Contact Number</label>
+                  <input
+                    type="text"
+                    value={autoVendorPrompt.contactNumber}
+                    onChange={(e) => setAutoVendorPrompt(prev => prev ? ({ ...prev, contactNumber: e.target.value }) : null)}
+                    placeholder="0300-1234567"
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Address / Location</label>
+                <input
+                  type="text"
+                  value={autoVendorPrompt.address}
+                  onChange={(e) => setAutoVendorPrompt(prev => prev ? ({ ...prev, address: e.target.value }) : null)}
+                  placeholder="Shop / Office address"
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
+                />
+              </div>
+
+              {autoVendorPrompt.pendingEntry && (
+                <div className="p-3 bg-white/5 rounded-xl border border-white/10 flex justify-between items-center text-xs">
+                  <span className="text-gray-400">Payment to be recorded:</span>
+                  <span className="text-emerald-400 font-bold font-mono text-sm">
+                    PKR {autoVendorPrompt.pendingEntry.amount.toLocaleString()}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-slate-950/80 border-t border-white/10 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAutoVendorPrompt(null)}
+                className="px-4 py-2 text-xs text-gray-400 hover:text-white"
+              >
+                Cancel Entry
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAutoVendor}
+                className="px-5 py-2.5 bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-lg shadow-brand-600/30 transition-all"
+              >
+                <CheckCircle2 size={16} />
+                <span>Register Vendor & Save Entry</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MANUAL REGISTER VENDOR MODAL */}
+      {showAddVendorModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="glass-card w-full max-w-lg rounded-2xl border border-purple-500/30 shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-900">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-purple-500/20 text-purple-300 rounded-xl border border-purple-500/30">
+                  <Building size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Register New Vendor / Utility</h3>
+                  <p className="text-xs text-gray-400">Add service vendor for ledger and cashbook billing</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddVendorModal(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs max-h-[75vh] overflow-y-auto">
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Vendor / Contact Person Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Muhammad Aslam (Water Supplier)"
+                  value={newVendorForm.name || ''}
+                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500 text-sm font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Vendor / Utility Category *</label>
+                <select
+                  value={newVendorForm.category}
+                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, category: e.target.value as any }))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500 text-sm font-medium"
+                >
+                  <option value="Drinking Water Charges">Drinking Water Charges</option>
+                  <option value="Electric Bill">Electric Bill</option>
+                  <option value="Gas Cylinder Refill">Gas Cylinder Refill</option>
+                  <option value="Internet Bill">Internet Bill</option>
+                  <option value="Office Rent">Office Rent</option>
+                  <option value="Stationery">Stationery</option>
+                  <option value="Photocopy & Printer Maintenance">Photocopy & Printer Maintenance</option>
+                  <option value="Computer Repair">Computer Repair</option>
+                  <option value="Office Maintenance">Office Maintenance</option>
+                  <option value="Legal Payments">Legal Payments</option>
+                  <option value="Miscellaneous Payments">Miscellaneous Payments</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-400 font-semibold mb-1">Company / Store Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Aquafresh Water Supplies"
+                    value={newVendorForm.companyTitle || ''}
+                    onChange={(e) => setNewVendorForm(prev => ({ ...prev, companyTitle: e.target.value }))}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-400 font-semibold mb-1">Contact Phone</label>
+                  <input
+                    type="text"
+                    placeholder="0300-0000000"
+                    value={newVendorForm.contactNumber || ''}
+                    onChange={(e) => setNewVendorForm(prev => ({ ...prev, contactNumber: e.target.value }))}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-400 font-semibold mb-1">Office / Shop Address</label>
+                <input
+                  type="text"
+                  placeholder="Street / Plaza address"
+                  value={newVendorForm.address || ''}
+                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, address: e.target.value }))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="p-3 bg-white/5 rounded-xl border border-white/10 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="chkIsRecurring"
+                  checked={!!newVendorForm.isRecurring}
+                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, isRecurring: e.target.checked }))}
+                  className="rounded text-purple-600 focus:ring-purple-500"
+                />
+                <label htmlFor="chkIsRecurring" className="text-xs text-gray-300 font-medium cursor-pointer">
+                  Mark as regular monthly recurring expense (e.g. rent, internet, water)
+                </label>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950/80 border-t border-white/10 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAddVendorModal(false)}
+                className="px-4 py-2 text-xs text-gray-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveNewVendor}
+                className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-lg shadow-purple-600/30 transition-all"
+              >
+                <Save size={14} />
+                <span>Save Vendor</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ALL INVOICES MODAL (TABLE VIEW & INSTANT DOWNLOAD) */}
+      {showAllInvoicesModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="glass-card w-full max-w-5xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-900">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500/20 text-amber-300 rounded-xl border border-amber-500/30">
+                  <Layers size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">All Commercial Invoices</h3>
+                  <p className="text-xs text-gray-400">Complete registry of billing invoices, status & downloadable statements</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllInvoicesModal(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 bg-slate-950/60 border-b border-white/10">
+              <div className="p-3 bg-white/5 rounded-xl border border-white/10">
+                <span className="text-[10px] text-gray-400 uppercase font-semibold block">Total Invoices</span>
+                <span className="text-xl font-bold text-white font-mono">{calculatedReceivables.length}</span>
+              </div>
+              <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                <span className="text-[10px] text-emerald-400 uppercase font-semibold block">Settled / Collected</span>
+                <span className="text-xl font-bold text-emerald-300 font-mono">
+                  PKR {calculatedReceivables.filter(r => r.status === 'PAID').reduce((s, r) => s + r.amount, 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20">
+                <span className="text-[10px] text-amber-400 uppercase font-semibold block">Outstanding Receivables</span>
+                <span className="text-xl font-bold text-amber-300 font-mono">
+                  PKR {calculatedReceivables.filter(r => r.status !== 'PAID').reduce((s, r) => s + r.amount, 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Invoice Table */}
+            <div className="p-4 overflow-y-auto flex-1">
+              <table className="w-full text-left text-xs text-gray-200">
+                <thead className="bg-slate-950 uppercase font-semibold text-gray-400 border-b border-white/10 sticky top-0">
+                  <tr>
+                    <th className="p-3">Invoice #</th>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Client</th>
+                    <th className="p-3">Particulars</th>
+                    <th className="p-3 text-right">Amount</th>
+                    <th className="p-3 text-center">Status</th>
+                    <th className="p-3 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {calculatedReceivables.map((inv) => (
+                    <tr key={inv.id} className="hover:bg-white/5 transition">
+                      <td className="p-3 font-mono font-bold text-brand-300">
+                        {inv.reference || `INV-${inv.id}`}
+                      </td>
+                      <td className="p-3 text-gray-400 whitespace-nowrap">{inv.date}</td>
+                      <td className="p-3 font-medium text-white">{inv.party}</td>
+                      <td className="p-3 text-gray-300 max-w-xs truncate">{inv.description}</td>
+                      <td className="p-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
+                        PKR {inv.amount.toLocaleString()}
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                          inv.status === 'PAID' ? 'bg-green-500/20 text-green-300' : 'bg-yellow-500/20 text-yellow-300'
+                        }`}>
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => handleOpenInvoice(inv)}
+                            className="px-2 py-1 rounded bg-brand-600/20 hover:bg-brand-600 text-brand-300 hover:text-white border border-brand-500/30 text-xs font-semibold flex items-center gap-1 transition"
+                            title="View Invoice"
+                          >
+                            <Eye size={12} />
+                            <span>View</span>
+                          </button>
+                          <button
+                            onClick={() => handleDirectDownloadInvoice(inv)}
+                            className="p-1 rounded bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 transition"
+                            title="Download PDF Invoice"
+                          >
+                            <Download size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {calculatedReceivables.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-gray-500">
+                        No invoices on record.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-4 bg-slate-950 border-t border-white/10 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowAllInvoicesModal(false)}
+                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-300 rounded-xl text-xs font-medium"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* In-App PDF Viewer Modal for Receipts & Invoices */}
       <PdfViewerModal

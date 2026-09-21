@@ -85,19 +85,19 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
   const activeStepIdx = useMemo(() => getWorkflowStepIndex(targetCase.category, targetCase.status as string), [targetCase.category, targetCase.status]);
   const canEditStep = useMemo(() => {
     if (targetCase.status === CaseStatus.COMPLETED) return false;
-    // Admin, Operations Manager (Case Manager), and CEO have unrestricted workflow rights
-    if (userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER || userRole === UserRole.CEO) {
+    // Admin and CEO have unrestricted workflow rights
+    if (userRole === UserRole.ADMIN || userRole === UserRole.CEO) {
       return true;
     }
     // Client is strictly read-only
     if (userRole === UserRole.CLIENT) return false;
 
-    const stepStr = String(stepStatus).toLowerCase();
-
-    // Documentation Officer (documentmanager): TP filing, GD, Shipping Line DO, Customs declaration, Excise
-    if (userRole === UserRole.DOCUMENTATION_OFFICER) {
-      return stepIndex <= 3 || stepStr.includes('do') || stepStr.includes('tp') || stepStr.includes('customs') || stepStr.includes('excise') || stepStr.includes('doc') || stepStr.includes('shipping');
+    // Case Manager (Operations Manager) and Documentation Officer can update up to Step 5 (stepIndex <= 4)
+    if (userRole === UserRole.OPERATIONS_MANAGER || userRole === UserRole.DOCUMENTATION_OFFICER) {
+      return stepIndex <= 4;
     }
+
+    const stepStr = String(stepStatus).toLowerCase();
 
     // Loading Port Staff (loading01): Terminal Wharfage, Port dispatch, Stuffing, Sealing, Weighbridge
     if (userRole === UserRole.LOADING_PORT_STAFF) {
@@ -106,7 +106,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
 
     // Unloading Port Staff / Destination Officers (Lahore, Peshawar): Unloading, Gate-in, Gate-out, Terminal DO, Empty Return
     if (userRole === UserRole.UNLOADING_PORT_STAFF) {
-      return stepIndex >= 4 || stepStr.includes('destination') || stepStr.includes('unload') || stepStr.includes('arrival') || stepStr.includes('gate') || stepStr.includes('return') || stepStr.includes('empty') || stepStr.includes('delivery');
+      return stepIndex >= 5 || stepStr.includes('destination') || stepStr.includes('unload') || stepStr.includes('arrival') || stepStr.includes('gate') || stepStr.includes('return') || stepStr.includes('empty') || stepStr.includes('delivery');
     }
 
     return true;
@@ -2102,15 +2102,22 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
         <div className="p-4 border-t border-white/10 bg-slate-950/70 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
           <div>
             {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
-              <button
-                type="button"
-                onClick={() => downloadCustomsDeliveryOrderPdf({ targetCase })}
-                className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-amber-600/30 flex items-center gap-1.5 active:scale-95"
-                title="Print Official Terminal / Customs Delivery Order"
-              >
-                <FileText size={15} />
-                <span>Print Delivery Order (DO)</span>
-              </button>
+              formData.vehicleGateOutToggled || existingDetail.vehicleGateOutToggled || targetCase.status === CaseStatus.COMPLETED ? (
+                <button
+                  type="button"
+                  onClick={() => downloadCustomsDeliveryOrderPdf({ targetCase })}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 active:scale-95"
+                  title="Download Official Customs Delivery Order (DO) PDF"
+                >
+                  <Download size={15} />
+                  <span>Download Bonded Carrier DO (PDF)</span>
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px]">
+                  <Clock size={13} className="shrink-0" />
+                  <span>DO generates after vehicle gate-out & offloading</span>
+                </div>
+              )
             )}
           </div>
           <div className="flex items-center gap-2.5">

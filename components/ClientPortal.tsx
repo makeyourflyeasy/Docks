@@ -4,16 +4,18 @@ import {
   Truck, ArrowRight, CheckCircle2, Clock, AlertCircle, FileText, 
   Camera, Upload, X, Eye, ChevronRight, ShieldCheck, 
   MapPin, Anchor, Box, ArrowUpRight, ArrowDownLeft, CreditCard,
-  Building, RefreshCw, FileCheck, Layers, ExternalLink, User, Download, Loader2, LogOut
+  Building, RefreshCw, FileCheck, Layers, ExternalLink, User, Download, Loader2, LogOut, UserPlus
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
 import { downloadContainerInvoicePdf, downloadCasePdf, downloadClientLedgerPdf } from '../services/pdfExportService';
-import { Case, CaseStatus, Container, FinanceEntry, ExtractedData, MockDocument, UserRole } from '../types';
+import { Case, CaseStatus, Container, FinanceEntry, ExtractedData, MockDocument, UserRole, Client, CaseCharge } from '../types';
 import { compressAndPrepareFile } from '../services/fileUtils';
 import TopModeSwitcher, { ModeOption } from './TopModeSwitcher';
 import GoldenAmountWidget from './GoldenAmountWidget';
 import { safeAppStorage } from '../services/storage';
+import { logActivity } from '../services/activityLogService';
+import { ClientRegistrationModal } from './ClientRegistrationModal';
 import { 
   subscribeToCases, 
   saveCaseToFirestore, 
@@ -77,10 +79,18 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
   // Navigation: 'cases' or 'finance'
   const [activeTab, setActiveTab] = useState<'cases' | 'finance'>('cases');
   const [casesSubView, setCasesSubView] = useState<'overview' | 'all_cases' | 'register'>('overview');
+  const [isClientRegModalOpen, setIsClientRegModalOpen] = useState(false);
   
   // Data States
   const [casesList, setCasesList] = useState<Case[]>(INITIAL_CLIENT_CASES);
   const [paymentsList, setPaymentsList] = useState<ClientPaymentEntry[]>(INITIAL_CLIENT_PAYMENTS);
+
+  const handleClientSaved = (savedClient: Client, appliedCharges: CaseCharge[]) => {
+    setIsClientRegModalOpen(false);
+    safeAppStorage.setItem('dpl_client_name', savedClient.name);
+    logActivity(`Client registered: ${savedClient.name} (${savedClient.defaultCaseCategory})`, 'CLIENT');
+    alert(`Client profile for "${savedClient.name}" has been registered successfully! Default case category set to "${savedClient.defaultCaseCategory}".`);
+  };
 
   // Synchronize Client Portal with live Firestore data
   useEffect(() => {
@@ -403,11 +413,20 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
         totalWeight: parseFloat(newCaseWeight) || 28000,
         itemName: newCaseItem || 'General Cargo',
         consigneeName: activeClient
-      }
+      },
+      approvalStatus: 'PENDING',
+      registeredByRole: 'CLIENT'
     };
 
     setCasesList([newCase, ...casesList]);
     saveCaseToFirestore(newCase);
+    logActivity(
+      `New Case Registration Submitted: ${autoCaseNo}`,
+      `Client "${activeClient}" submitted case ${autoCaseNo} for approval (Category: ${newCaseCategory}, Route: ${newCasePol} -> ${newCasePod})`,
+      'CLIENT',
+      activeClient,
+      { caseNo: autoCaseNo, client: activeClient }
+    );
     setCasesSubView('overview');
     alert(`Case registration submitted successfully!\nCase No: ${autoCaseNo}\nStatus: Submitted for admin approval.`);
   };
@@ -472,6 +491,17 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
             onOpenFinance={() => setActiveTab('finance')}
           />
 
+          {/* Client Profile & Registration Button */}
+          <button
+            type="button"
+            onClick={() => setIsClientRegModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600 border border-purple-500/30 hover:border-purple-500 text-purple-300 hover:text-white text-xs font-semibold transition-all shadow-md active:scale-95"
+            title="Register / Update Client Profile & Universal Rate Matrix"
+          >
+            <UserPlus size={15} />
+            <span className="hidden sm:inline">Client Profile</span>
+          </button>
+
           {/* Small Squircle (rounded-square) Sign Out Button with LogOut Logo */}
           <button
             type="button"
@@ -521,7 +551,14 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
               </button>
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <button
+                onClick={() => setIsClientRegModalOpen(true)}
+                className="w-full sm:w-auto bg-purple-600/20 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 px-4 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-2 shadow-sm transition-all"
+              >
+                <Building size={16} />
+                <span>+ Register Client Profile</span>
+              </button>
               <button
                 onClick={() => setCasesSubView('register')}
                 className="w-full sm:w-auto bg-brand-600 hover:bg-brand-500 text-white px-5 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-105"
@@ -2281,6 +2318,14 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
           />
         </div>
       )}
+
+      {/* Client Registration Modal */}
+      <ClientRegistrationModal
+        isOpen={isClientRegModalOpen}
+        onClose={() => setIsClientRegModalOpen(false)}
+        onSave={handleClientSaved}
+        defaultCategory="Bonded Carrier"
+      />
 
     </div>
   );
