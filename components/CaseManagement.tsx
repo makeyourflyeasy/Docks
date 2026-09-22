@@ -4190,7 +4190,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
-                <User size={15} /> Cargo Owner (Malik-e-Maal)
+                <User size={15} /> Cargo Owner / Consignor
               </h4>
               <span className="text-[10px] text-gray-400">Shipper / Owner</span>
             </div>
@@ -4242,11 +4242,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             </div>
           </div>
 
-          {/* Card 3: Bilty (Builty) & Consignment Details */}
+          {/* Card 3: Consignment Note & Waybill Details */}
           <div className="glass-panel p-5 rounded-xl border border-white/10 space-y-4">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <h4 className="text-amber-400 text-sm font-bold uppercase flex items-center gap-1.5">
-                <FileText size={15} /> Builty (Bilty) Information
+                <FileText size={15} /> Consignment Waybill Information
               </h4>
               <span className="text-[10px] text-gray-400">Waybill & Terms</span>
             </div>
@@ -4254,7 +4254,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-gray-300 font-medium block mb-1">
-                  Builty (Bilty) Number <span className="text-red-400">*</span>
+                  Waybill / Consignment Note Number <span className="text-red-400">*</span>
                 </label>
                 <input 
                   type="text"

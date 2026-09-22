@@ -516,7 +516,7 @@ export const StaffLedgerModal: React.FC<StaffLedgerModalProps> = ({
                     </>
                   ) : (
                     <>
-                      <option value="Petty Cash Advance">Petty Cash Advance (Kharcha)</option>
+                      <option value="Petty Cash Advance">Petty Cash Advance</option>
                       <option value="Staff Meals / Chai">Staff Meals / Tea / Ration</option>
                       <option value="Stationery / Office Supply">Stationery / Office Supply</option>
                       <option value="Vehicle Fuel / Errand">Vehicle Fuel / Travel Errand</option>

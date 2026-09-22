@@ -397,7 +397,7 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
                     </a>
                   </li>
                   <li>
-                    Go to the <strong>"Settings"</strong> tab and scroll down to the <strong>"Authorized domains"</strong> (مجاز ڈومینز) section.
+                    Go to the <strong>"Settings"</strong> tab and scroll down to the <strong>"Authorized domains"</strong> section.
                   </li>
                   <li>
                     Click <strong>"Add domain"</strong> and enter:

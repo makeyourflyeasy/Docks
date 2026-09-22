@@ -4,11 +4,12 @@ import {
   Search, Filter, Download, CreditCard, Banknote, Briefcase, X, Save, Calendar, Camera,
   BookOpen, ChevronDown, ChevronUp, CheckCircle2, User, Layers, RefreshCw, AlertCircle, ArrowRight,
   Eye, Loader2, Share2, Upload, Zap, Trash2, Building, Truck, Clock, ShieldCheck, ArrowLeft,
-  ArrowLeftRight
+  ArrowLeftRight, FileSpreadsheet
 } from 'lucide-react';
 import Logo from './Logo';
 import { PdfViewerModal } from './PdfViewerModal';
 import { FinanceEntry, Case, Client, LedgerEntry, AppUser, RecurringFinanceTemplate, UserRole, Vendor } from '../types';
+import { exportGeneralLedgerToExcel, exportClientLedgerToExcel } from '../services/excelExportService';
 import { 
   getStoredVendors, 
   saveVendor, 
@@ -1934,6 +1935,12 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     }
   };
 
+  // Export Client Ledger to Excel (.xlsx)
+  const handleExportClientLedgerExcel = () => {
+    if (!selectedLedgerClient || filteredClientLedgerEntries.length === 0) return;
+    exportClientLedgerToExcel(selectedLedgerClient, filteredClientLedgerEntries, clientSummary);
+  };
+
   // Export Client Ledger to CSV
   const handleExportClientLedgerCSV = () => {
     if (!selectedLedgerClient || clientLedgerEntries.length === 0) return;
@@ -1949,6 +1956,12 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     ]);
     const filename = `Client_Ledger_${selectedLedgerClient.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}`;
     exportCSVFile(filename, headers, rows);
+  };
+
+  // Export General Ledger to native Excel (.xlsx)
+  const handleExportGeneralLedgerExcel = () => {
+    if (generalLedgerEntries.length === 0) return;
+    exportGeneralLedgerToExcel(generalLedgerEntries, glSummary, glAccountFilter);
   };
 
   // Export General Ledger to CSV
@@ -2023,7 +2036,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     let content: React.ReactNode = null;
 
     if (statBreakdownModal === 'cash_in_hand') {
-      modalTitle = 'Cash in Hand & Treasury Status (خزانہ و نقد بیلنس)';
+      modalTitle = 'Cash in Hand & Treasury Status';
       modalSubtitle = 'Real-time status of Total Remaining Balance: Cash in Drawer & Individual Bank Balances';
       modalBadge = 'Live Treasury';
 
@@ -2062,7 +2075,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       content = (
         <div className="space-y-5">
-          {/* 1. Master Status Banner: Total Amount Kitni Bachi Hai */}
+          {/* 1. Master Status Banner: Total Net Available Balance */}
           <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/40 border border-emerald-500/30 shadow-xl relative overflow-hidden">
             <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
             
@@ -2070,22 +2083,22 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
               <div>
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-                    MASTER TREASURY STATUS &bull; اسٹیٹس
+                    MASTER TREASURY STATUS &bull; OVERVIEW
                   </span>
                   {treasuryBreakdown.totalRemainingAmount >= 0 ? (
                     <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
                       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      فنڈز دستیاب ہیں (Sufficient Liquidity)
+                      Sufficient Liquidity Available
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-[11px] font-semibold text-red-300 bg-red-500/15 px-2.5 py-0.5 rounded-full border border-red-500/30">
                       <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
-                      اخراجات زائد ہیں (Deficit Alert)
+                      Deficit Warning / Liquidity Alert
                     </span>
                   )}
                 </div>
                 <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
-                  Total Amount Kitni Bachi Hai (کل بچی ہوئی رقم)
+                  Total Net Treasury Balance Available
                 </h2>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white drop-shadow">
@@ -2125,28 +2138,28 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
             {/* Split Metrics Summary Row */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4 pt-4 border-t border-white/10 relative z-10">
               <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl">
-                <span className="text-[10px] uppercase font-bold text-amber-400 block tracking-wider">Drawer Mein Cash</span>
+                <span className="text-[10px] uppercase font-bold text-amber-400 block tracking-wider">Cash in Drawer</span>
                 <span className="text-base font-bold font-mono text-amber-300">
                   PKR {treasuryBreakdown.drawer.net.toLocaleString()}
                 </span>
                 <span className="text-[10px] text-gray-400 block mt-0.5">Physical Counter</span>
               </div>
               <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                <span className="text-[10px] uppercase font-bold text-blue-400 block tracking-wider">Banks Mein Total</span>
+                <span className="text-[10px] uppercase font-bold text-blue-400 block tracking-wider">Total in Bank Accounts</span>
                 <span className="text-base font-bold font-mono text-blue-300">
                   PKR {treasuryBreakdown.totalBanksNet.toLocaleString()}
                 </span>
                 <span className="text-[10px] text-gray-400 block mt-0.5">{treasuryBreakdown.banks.length} Bank Accounts</span>
               </div>
               <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
-                <span className="text-[10px] uppercase font-bold text-emerald-400 block tracking-wider">Total Inflow (آمدن)</span>
+                <span className="text-[10px] uppercase font-bold text-emerald-400 block tracking-wider">Total Inflow</span>
                 <span className="text-base font-bold font-mono text-emerald-300">
                   + PKR {cashbookSummary.totalIncome.toLocaleString()}
                 </span>
                 <span className="text-[10px] text-gray-400 block mt-0.5">All Income Vouchers</span>
               </div>
               <div className="p-2.5 bg-red-500/10 border border-red-500/20 rounded-xl">
-                <span className="text-[10px] uppercase font-bold text-red-400 block tracking-wider">Total Outflow (اخراجات)</span>
+                <span className="text-[10px] uppercase font-bold text-red-400 block tracking-wider">Total Outflow</span>
                 <span className="text-base font-bold font-mono text-red-300">
                   - PKR {cashbookSummary.totalExpense.toLocaleString()}
                 </span>
@@ -2184,7 +2197,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 <div className="flex items-center gap-2">
                   <ArrowLeftRight size={16} className="text-emerald-400" />
                   <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                    Internal Cash Transfer (دراز اور بینک کے درمیان رقم منتقلی)
+                    Internal Cash Transfer (Drawer & Bank Accounts)
                   </h4>
                 </div>
                 <button 
@@ -2197,13 +2210,13 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs">
                 <div>
-                  <label className="text-gray-400 block mb-1">From Account (رقم نکلوانے والا)</label>
+                  <label className="text-gray-400 block mb-1">Source Account (From)</label>
                   <select
                     value={transferSource}
                     onChange={(e) => setTransferSource(e.target.value)}
                     className="w-full bg-slate-900 border border-white/15 rounded-xl p-2 text-white outline-none focus:border-emerald-500"
                   >
-                    <option value="DRAWER">💵 Cash in Drawer (دراز کیش)</option>
+                    <option value="DRAWER">💵 Cash in Drawer (Physical Cash)</option>
                     {banks.map(b => (
                       <option key={`src_${b.id}`} value={b.name}>🏦 {b.name}</option>
                     ))}
@@ -2211,13 +2224,13 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 </div>
 
                 <div>
-                  <label className="text-gray-400 block mb-1">To Account (رقم جمع ہونے والا)</label>
+                  <label className="text-gray-400 block mb-1">Destination Account (To)</label>
                   <select
                     value={transferDestination}
                     onChange={(e) => setTransferDestination(e.target.value)}
                     className="w-full bg-slate-900 border border-white/15 rounded-xl p-2 text-white outline-none focus:border-emerald-500"
                   >
-                    <option value="DRAWER">💵 Cash in Drawer (دراز کیش)</option>
+                    <option value="DRAWER">💵 Cash in Drawer (Physical Cash)</option>
                     {banks.map(b => (
                       <option key={`dst_${b.id}`} value={b.name}>🏦 {b.name}</option>
                     ))}
@@ -2262,7 +2275,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                   className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-md flex items-center gap-1.5"
                 >
                   <CheckCircle2 size={13} />
-                  <span>Execute Transfer (منتقلی درج کریں)</span>
+                  <span>Execute Transfer</span>
                 </button>
               </div>
             </div>
@@ -2275,7 +2288,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 <div className="flex items-center gap-2">
                   <Building size={16} className="text-blue-400" />
                   <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                    Add New Bank Account (نیا بینک اکاؤنٹ درج کریں)
+                    Add New Bank Account
                   </h4>
                 </div>
                 <button 
@@ -2322,7 +2335,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
               <div>
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
                   <span>Accounts Liquidity Breakdown</span>
-                  <span className="text-gray-400 normal-case font-normal">(دراز اور تمام بینکوں کا بیلنس)</span>
+                  <span className="text-gray-400 normal-case font-normal">(Drawer Cash & Bank Balances)</span>
                 </h3>
                 <p className="text-[11px] text-gray-400">
                   Click on any card to filter its vouchers directly in the table below.
@@ -2339,7 +2352,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {/* Card 1: Drawer Mein Cash */}
+              {/* Card 1: Cash in Drawer */}
               <div 
                 onClick={() => setStatFilterSubtab(statFilterSubtab === 'CASH' ? 'ALL' : 'CASH')}
                 className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group ${
@@ -2354,8 +2367,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                       <Wallet size={16} />
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-white">Drawer Mein Cash</h4>
-                      <span className="text-[10px] text-amber-300/90 font-medium">دراز میں نقد کیش</span>
+                      <h4 className="text-xs font-bold text-white">Cash in Drawer</h4>
+                      <span className="text-[10px] text-amber-300/90 font-medium">Physical Cash Reserve</span>
                     </div>
                   </div>
                   <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold uppercase">
@@ -2364,7 +2377,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 </div>
 
                 <div className="mt-2">
-                  <div className="text-[10px] text-gray-400 uppercase font-semibold">Bachi Hui Rakam (Balance)</div>
+                  <div className="text-[10px] text-gray-400 uppercase font-semibold">Net Available Balance</div>
                   <div className={`text-xl font-bold font-mono ${treasuryBreakdown.drawer.net >= 0 ? 'text-amber-300' : 'text-red-400'}`}>
                     PKR {treasuryBreakdown.drawer.net.toLocaleString()}
                   </div>
@@ -2372,11 +2385,11 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
                 <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-white/10 text-[10px]">
                   <div>
-                    <span className="text-gray-400 block">Inflow (آمدن):</span>
+                    <span className="text-gray-400 block">Total Inflow:</span>
                     <span className="text-emerald-400 font-mono font-bold">+PKR {treasuryBreakdown.drawer.inflow.toLocaleString()}</span>
                   </div>
                   <div>
-                    <span className="text-gray-400 block">Outflow (اخراجات):</span>
+                    <span className="text-gray-400 block">Total Outflow:</span>
                     <span className="text-red-400 font-mono font-bold">-PKR {treasuryBreakdown.drawer.outflow.toLocaleString()}</span>
                   </div>
                 </div>
@@ -2409,7 +2422,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                         </div>
                         <div>
                           <h4 className="text-xs font-bold text-white truncate max-w-[140px]">{bank.name}</h4>
-                          <span className="text-[10px] text-blue-300/90 font-medium">بینک اکاؤنٹ</span>
+                          <span className="text-[10px] text-blue-300/90 font-medium">Bank Account</span>
                         </div>
                       </div>
                       <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold uppercase">
@@ -2418,7 +2431,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                     </div>
 
                     <div className="mt-2">
-                      <div className="text-[10px] text-gray-400 uppercase font-semibold">Bachi Hui Rakam (Balance)</div>
+                      <div className="text-[10px] text-gray-400 uppercase font-semibold">Net Available Balance</div>
                       <div className={`text-xl font-bold font-mono ${bank.net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         PKR {bank.net.toLocaleString()}
                       </div>
@@ -2426,11 +2439,11 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
                     <div className="grid grid-cols-2 gap-2 mt-3 pt-2.5 border-t border-white/10 text-[10px]">
                       <div>
-                        <span className="text-gray-400 block">Deposits (جمع):</span>
+                        <span className="text-gray-400 block">Total Deposits:</span>
                         <span className="text-emerald-400 font-mono font-bold">+PKR {bank.inflow.toLocaleString()}</span>
                       </div>
                       <div>
-                        <span className="text-gray-400 block">Withdrawals (ادائیگی):</span>
+                        <span className="text-gray-400 block">Total Withdrawals:</span>
                         <span className="text-red-400 font-mono font-bold">-PKR {bank.outflow.toLocaleString()}</span>
                       </div>
                     </div>
@@ -3706,12 +3719,20 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                   <span>Download PDF Statement</span>
                 </button>
                 <button 
+                  onClick={handleExportClientLedgerExcel}
+                  className="px-3.5 py-2 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+                  title="Download Client Statement as formatted Excel (.xlsx) workbook"
+                >
+                  <FileSpreadsheet size={14} className="text-emerald-400 group-hover:text-white" />
+                  <span>Export Excel (.xlsx)</span>
+                </button>
+                <button 
                   onClick={handleExportClientLedgerCSV}
-                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all"
+                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all"
                   title="Download CSV spreadsheet"
                 >
-                  <Download size={14} className="text-emerald-400" />
-                  <span>Export CSV</span>
+                  <Download size={14} className="text-gray-400" />
+                  <span>CSV</span>
                 </button>
               </div>
             </div>
@@ -4038,12 +4059,20 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                   <span>Download GL PDF</span>
                 </button>
                 <button 
-                  onClick={handleExportGeneralLedgerCSV}
-                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all"
-                  title="Download GL CSV spreadsheet"
+                  onClick={handleExportGeneralLedgerExcel}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-emerald-600/20"
+                  title="Download General Ledger formatted Excel (.xlsx) workbook without data loss warnings"
                 >
-                  <Download size={14} className="text-emerald-400" />
-                  <span>Export GL (CSV)</span>
+                  <FileSpreadsheet size={14} className="text-white" />
+                  <span>Export GL (Excel .xlsx)</span>
+                </button>
+                <button 
+                  onClick={handleExportGeneralLedgerCSV}
+                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all"
+                  title="Download legacy CSV spreadsheet"
+                >
+                  <Download size={14} className="text-gray-400" />
+                  <span>CSV</span>
                 </button>
               </div>
             </div>

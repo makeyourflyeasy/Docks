@@ -421,8 +421,8 @@ export const ImportExportSteps: React.FC<CategoryStepRendererProps> = ({
           </div>
 
           <WorkflowMultiUploader
-            label="Inland Trucking Bilty / Consignment Waybill"
-            sublabel="Upload signed driver transport agreement, bilty slip, or trailer dispatch gate pass"
+            label="Inland Trucking Consignment Note / Waybill"
+            sublabel="Upload signed driver transport agreement, consignment waybill slip, or trailer dispatch gate pass"
             urlField="truckingWaybillUrl"
             nameField="truckingWaybillName"
             formData={formData}

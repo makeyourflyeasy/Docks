@@ -942,14 +942,21 @@ export interface Vehicle {
   engineNo: string;
   chassisNo: string;
   makeModel?: string;
+  maker?: string; // e.g. HINO, NISSAN, VOLVO, FUSO, JAC
+  model?: string; // e.g. 1993, 2004, 2018, 2026
+  mra?: string; // Motor Registering Authority (e.g. LASBELA, KARACHI, LAHORE, PESHAWAR, HARIPUR)
+  tareWeight?: string; // Tare weight of vehicle (e.g. 5100 KG, 15000 KG)
   registrationDate?: string;
   
   // Owner Details (from Vehicle List)
   ownerName?: string;
+  ownerFatherName?: string; // For legal lease agreement (e.g. S/O BARKHURDAR)
   ownerCnic?: string;
   ownerAddress?: string;
   ownerIdCardUrl?: string; // Owner CNIC / ID Card image or doc
   ownerIdCardName?: string;
+  leaseStartDate?: string;
+  leaseEndDate?: string;
   
   // Driver & Transporter / Broker
   driverName: string;

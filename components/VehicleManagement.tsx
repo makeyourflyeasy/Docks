@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Truck, Plus, Search, FileText, User, Settings, Save, MapPin, Calendar, Clock, AlertTriangle, Trash2, CheckCircle, X, ChevronRight, Eye, Activity, CreditCard, Filter, AlertCircle, Download, Loader2, Ban, FileCheck, ShieldCheck, UploadCloud } from 'lucide-react';
+import { Truck, Plus, Search, FileText, User, Settings, Save, MapPin, Calendar, Clock, AlertTriangle, Trash2, CheckCircle, X, ChevronRight, Eye, Activity, CreditCard, Filter, AlertCircle, Download, Loader2, Ban, FileCheck, ShieldCheck, UploadCloud, CheckSquare, Square, Layers } from 'lucide-react';
 import { Vehicle, Transporter, VehicleCategory, VehicleType, TrackerInfo, VehicleHistory } from '../types';
 import { autoFillVehicleData } from '../services/geminiService';
 import { safeAppStorage } from '../services/storage';
@@ -16,6 +16,14 @@ import {
   VehicleOnlineModal, 
   VehicleRenewalModal 
 } from './VehicleManagementModals';
+import { exportVehiclesToExcel } from '../services/excelExportService';
+import { parseVehicleFile, isCorruptedVehicleRecord } from '../services/documentParserService';
+import { OfficialDocumentsModal, DocumentType } from './OfficialDocumentsModal';
+import { 
+  generateLeaseTerminationAgreementDocx, 
+  generateCancellationLetterLetterheadDocx, 
+  downloadDocxBlob 
+} from '../services/vehicleDocxService';
 
 // --- Clean Live Data ---
 
@@ -68,7 +76,8 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
     return safeAppStorage.getJSON<Transporter[]>('dpl_live_transporters', INITIAL_TRANSPORTERS);
   });
   const [vehicles, setVehicles] = useState<Vehicle[]>(() => {
-    return safeAppStorage.getJSON<Vehicle[]>('dpl_live_vehicles', INITIAL_VEHICLES);
+    const stored = safeAppStorage.getJSON<Vehicle[]>('dpl_live_vehicles', INITIAL_VEHICLES);
+    return Array.isArray(stored) ? stored.filter(v => !isCorruptedVehicleRecord(v)) : INITIAL_VEHICLES;
   });
 
   // Real-time synchronization with Firestore
@@ -76,8 +85,9 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
     const unsub = subscribeToVehicles(
       (firestoreVehicles) => {
         if (firestoreVehicles) {
-          setVehicles(firestoreVehicles);
-          safeAppStorage.setJSON('dpl_live_vehicles', firestoreVehicles);
+          const cleanVehicles = firestoreVehicles.filter(v => !isCorruptedVehicleRecord(v));
+          setVehicles(cleanVehicles);
+          safeAppStorage.setJSON('dpl_live_vehicles', cleanVehicles);
         }
       },
       (err) => console.warn('Vehicle subscription warning:', err)
@@ -104,8 +114,13 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
   const [vehicleToCancel, setVehicleToCancel] = useState<Vehicle | null>(null);
   const [cancellationReason, setCancellationReason] = useState('Contract Concluded & Operational De-Registration');
   const [isCancellingVehicle, setIsCancellingVehicle] = useState(false);
-  const [nocSuccessNotice, setNocSuccessNotice] = useState<{ vehicleNo: string; nocRef: string; downloadUrl?: string; filename?: string } | null>(null);
+  const [nocSuccessNotice, setNocSuccessNotice] = useState<{ vehicleNo: string; nocRef: string; downloadUrl?: string; filename?: string; cancelledVehicle?: Vehicle } | null>(null);
   const [isNocViewerOpen, setIsNocViewerOpen] = useState(false);
+
+  // Official Customs & Legal Documents (.docx) state
+  const [showDocsModal, setShowDocsModal] = useState(false);
+  const [docsModalType, setDocsModalType] = useState<DocumentType>('REG_LETTER');
+  const [selectedVehicleIds, setSelectedVehicleIds] = useState<number[]>([]);
 
   // --- Helper Functions ---
 
@@ -154,7 +169,8 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
         vehicleNo: vehicleToCancel.registrationNumber,
         nocRef,
         downloadUrl: res.blobUrl,
-        filename: res.filename
+        filename: res.filename,
+        cancelledVehicle
       });
     } catch (err) {
       console.error('Error generating vehicle NOC:', err);
@@ -265,111 +281,58 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
     });
   }, [vehicles, searchQuery, vehicleStatusFilter]);
 
+  const isAllFilteredSelected = filteredVehicles.length > 0 && filteredVehicles.every(v => selectedVehicleIds.includes(v.id));
+
+  const toggleSelectAllFiltered = () => {
+    if (isAllFilteredSelected) {
+      const filteredIdSet = new Set(filteredVehicles.map(v => v.id));
+      setSelectedVehicleIds(prev => prev.filter(id => !filteredIdSet.has(id)));
+    } else {
+      const filteredIds = filteredVehicles.map(v => v.id);
+      setSelectedVehicleIds(prev => Array.from(new Set([...prev, ...filteredIds])));
+    }
+  };
+
+  const toggleSelectVehicle = (id: number) => {
+    setSelectedVehicleIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllExpiredVehicles = () => {
+    const expiredIds = vehicles.filter(v => v.status === 'EXPIRED' || getVehicleValidity(v).text === 'Expired').map(v => v.id);
+    setSelectedVehicleIds(expiredIds.length > 0 ? expiredIds : vehicles.slice(0, 10).map(v => v.id));
+    setDocsModalType('REG_LETTER');
+    setShowDocsModal(true);
+  };
+
+  const handleDownloadStampPaperTerminationDocx = async (v: Vehicle) => {
+    try {
+      const doc = await generateLeaseTerminationAgreementDocx(v, {
+        terminationDate: new Date(),
+        leaveStampPaperSpace: true
+      });
+      await downloadDocxBlob(doc, `Lease_Termination_${v.registrationNumber}_Stamp_Paper.docx`);
+    } catch (err) {
+      console.error('Failed to generate termination docx:', err);
+    }
+  };
+
+  const handleDownloadLetterheadCancellationDocx = async (v: Vehicle) => {
+    try {
+      const doc = await generateCancellationLetterLetterheadDocx(v, {
+        letterDate: new Date(),
+        leaveLetterheadSpace: true
+      });
+      await downloadDocxBlob(doc, `Customs_Panel_Cancellation_${v.registrationNumber}_Letterhead.docx`);
+    } catch (err) {
+      console.error('Failed to generate cancellation letter docx:', err);
+    }
+  };
+
   const handleExportAllVehiclesList = () => {
-    // Complete export of all vehicles entered in the software with exhaustive details
-    const headers = [
-      'Sr No',
-      'Vehicle Number (Gadi No)',
-      'DPL Serial No',
-      'Category',
-      'Type',
-      'Size',
-      'Weight Capacity',
-      'Engine Number',
-      'Chassis Number',
-      'Make / Model',
-      'Registration Date',
-      'Transporter / Broker Company',
-      'Driver Name',
-      'Driver CNIC',
-      'Driver Contact Phone',
-      'Vehicle Owner Name',
-      'Vehicle Owner CNIC',
-      'Vehicle Owner Address',
-      'Operational Status',
-      'Validity Status',
-      'Validation Expiry Date',
-      'Validation Start Date',
-      'Live Tracking / Online Status',
-      'Current Reported Location',
-      'Assigned Destination',
-      'Tracker Provider',
-      'Tracker Device ID',
-      'Tracker Status',
-      'Tracker Payment Status',
-      'Total Trips Completed',
-      'Preferred Station Routes',
-      'Container Compatibility',
-      'Blacklist Status',
-      'Blacklist Reason',
-      'De-registration / NOC Status',
-      'NOC Reference',
-      'System Enrolled Date'
-    ];
-
-    const escape = (val: any) => `"${String(val ?? '').replace(/"/g, '""')}"`;
-
-    const rows = vehicles.map((v, idx) => {
-      const validity = getVehicleValidity(v);
-      const routes = v.stationRoutePreferences && v.stationRoutePreferences.length > 0
-        ? v.stationRoutePreferences.join(' | ')
-        : 'Karachi - Inland Operations';
-      const compat = v.containerCompatibility && v.containerCompatibility.length > 0
-        ? v.containerCompatibility.join(', ')
-        : v.size;
-      const tripsCount = v.tripsHistory?.length || 0;
-
-      return [
-        escape(idx + 1),
-        escape(v.registrationNumber),
-        escape(v.dplSerial || ''),
-        escape(v.category || ''),
-        escape(v.type || ''),
-        escape(v.size || ''),
-        escape(v.weightCapacity || ''),
-        escape(v.engineNo || ''),
-        escape(v.chassisNo || ''),
-        escape(v.makeModel || ''),
-        escape(v.registrationDate || ''),
-        escape(v.brokerName || v.transporterName || ''),
-        escape(v.driverName || ''),
-        escape(v.driverCnic || ''),
-        escape(v.driverContact || ''),
-        escape(v.ownerName || ''),
-        escape(v.ownerCnic || ''),
-        escape(v.ownerAddress || ''),
-        escape(v.status),
-        escape(validity.text),
-        escape(v.validationExpiryDate || ''),
-        escape(v.validationStartDate || ''),
-        escape(v.isOnline ? 'Online / Active' : 'Offline'),
-        escape(v.onlineLocation || ''),
-        escape(v.onlineDestination || ''),
-        escape(v.tracker?.provider || 'None'),
-        escape(v.tracker?.id || v.tracker?.companyName || ''),
-        escape(v.tracker?.status || ''),
-        escape(v.tracker?.paymentStatus || ''),
-        escape(tripsCount),
-        escape(routes),
-        escape(compat),
-        escape(v.isBlacklisted ? 'BLACKLISTED' : 'CLEAN'),
-        escape(v.blacklistReason || ''),
-        escape(v.status === 'CANCELLED' ? 'De-registered / Cancelled' : 'Active Registered'),
-        escape(v.nocReference || ''),
-        escape(v.createdAt || '')
-      ].join(',');
-    });
-
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `DPL_All_Vehicles_Complete_List_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // Complete formatted export of all vehicles into professional Excel workbook (.xlsx)
+    exportVehiclesToExcel(vehicles);
   };
 
   const trackersOnWay = vehicles.filter(v => v.tracker && v.status === 'ON_TRIP');
@@ -436,7 +399,8 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
   };
 
   const handleImportParsedVehicles = (parsedList: Partial<Vehicle>[]) => {
-    const newVehicles: Vehicle[] = parsedList.map((item, idx) => ({
+    const cleanList = parsedList.filter(item => !isCorruptedVehicleRecord(item));
+    const newVehicles: Vehicle[] = cleanList.map((item, idx) => ({
       id: Date.now() + idx,
       registrationNumber: item.registrationNumber || `REG-${Date.now() + idx}`,
       category: (item.category as VehicleCategory) || VehicleCategory.BONDED_CARRIER,
@@ -620,18 +584,29 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
           <button 
             onClick={() => setShowBulkUploadModal(true)}
             className="bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/30 text-emerald-300 hover:text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-all"
+            title="Import multiple vehicles using Excel (.xlsx), Word (.docx), or CSV files"
           >
-            <UploadCloud size={16} /> Bulk Excel / CSV Upload
+            <UploadCloud size={16} /> Bulk Upload (.xlsx, .docx, .csv)
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button 
+            onClick={() => {
+              setDocsModalType('REG_LETTER');
+              setShowDocsModal(true);
+            }}
+            className="bg-blue-600/20 hover:bg-blue-600 border border-blue-500/30 text-blue-300 hover:text-white px-3.5 py-2 rounded-lg flex items-center gap-2 text-xs font-semibold transition-all shadow-sm"
+            title="Generate official Customs Application Letters, Permits & Lease Agreements in Word (.docx)"
+          >
+            <FileText size={15} /> Customs & Legal Docs (.docx)
+          </button>
           <button 
             onClick={handleExportAllVehiclesList}
             className="bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/30 text-emerald-300 hover:text-white px-3.5 py-2 rounded-lg flex items-center gap-2 text-xs font-semibold transition-all shadow-sm"
-            title="Download complete Excel / CSV list of all entered vehicles in the software with exhaustive details"
+            title="Download formatted Excel (.xlsx) workbook of all entered commercial vehicles"
           >
-            <Download size={15} /> Download All Vehicles List (Excel)
+            <Download size={15} /> Download Fleet (.xlsx)
           </button>
         </div>
       </div>
@@ -706,7 +681,19 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
             </div>
             <AlertTriangle className="text-red-400" size={24} />
           </div>
-          <button onClick={() => setVehicleStatusFilter('EXPIRED')} className="text-xs text-red-400 mt-3 hover:underline">Filter Expired</button>
+          <div className="flex items-center gap-2 mt-3">
+            <button onClick={() => setVehicleStatusFilter('EXPIRED')} className="text-xs text-red-400 hover:underline">
+              Filter Expired
+            </button>
+            <span className="text-gray-600 text-xs">•</span>
+            <button 
+              onClick={handleSelectAllExpiredVehicles} 
+              className="text-xs text-blue-400 hover:underline flex items-center gap-1 font-medium"
+              title="Select all expired vehicles and open Registration/Renewal Letter generator"
+            >
+              <FileText size={12} /> Renewal Letter (.docx)
+            </button>
+          </div>
         </div>
 
         <div className="glass-card p-4 rounded-xl border-l-4 border-brand-500 bg-gradient-to-br from-brand-500/10 to-transparent flex flex-col justify-center items-center cursor-pointer hover:bg-brand-500/20 transition-colors" onClick={() => setVehicleStatusFilter('ALL')}>
@@ -736,44 +723,162 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
              <button onClick={() => setVehicleStatusFilter('ALL')} className="p-1.5 bg-white/5 rounded hover:bg-white/10 text-gray-400" title="Clear Filters"><Filter size={16}/></button>
           </div>
         </div>
-        {/* Mobile View (Cards) - Showing Gadi Number, Broker Name, and Validity Status */}
+
+        {/* Bulk Selection Action Bar */}
+        {selectedVehicleIds.length > 0 && (
+          <div className="bg-gradient-to-r from-blue-950/90 via-slate-900 to-indigo-950/90 border-b border-blue-500/30 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-inner animate-in fade-in duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-300 flex items-center justify-center font-bold text-xs border border-blue-500/40">
+                {selectedVehicleIds.length}
+              </div>
+              <div>
+                <span className="text-xs font-bold text-white block">
+                  {selectedVehicleIds.length} Vehicle{selectedVehicleIds.length > 1 ? 's' : ''} Selected
+                </span>
+                <span className="text-[11px] text-blue-200/80">
+                  Generate official Word (.docx) renewal letters, customs permits, or lease agreements
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  setDocsModalType('REG_LETTER');
+                  setShowDocsModal(true);
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-md shadow-blue-600/30 transition-all hover:scale-102"
+                title="Application Letter for Custom House (Company Letterhead)"
+              >
+                <FileText size={14} /> Reg. Letter (.docx)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDocsModalType('CUSTOMS_PERMIT');
+                  setShowDocsModal(true);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all hover:scale-102"
+                title="Customs Permit Format (Print for Custom Officer signature)"
+              >
+                <ShieldCheck size={14} /> Customs Permit (.docx)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDocsModalType('LEASE_AGREEMENT');
+                  setShowDocsModal(true);
+                }}
+                className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-md shadow-amber-600/30 transition-all hover:scale-102"
+                title="Vehicle Lease Agreement on Legal Stamp Paper"
+              >
+                <FileCheck size={14} /> Lease Agreement (.docx)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowDocsModal(true)}
+                className="bg-white/10 hover:bg-white/20 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
+              >
+                <Layers size={14} /> All Documents
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedVehicleIds([])}
+                className="text-gray-400 hover:text-white text-xs px-2.5 py-1.5 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        )}
+        {/* Mobile View (Cards) - Showing Vehicle Registration No, Broker Name, and Validity Status */}
         <div className="block sm:hidden divide-y divide-white/5 touch-pan-y">
           {filteredVehicles.map(v => {
             const validity = getVehicleValidity(v);
             return (
               <div key={v.id} className="p-4 space-y-2.5 hover:bg-white/5 transition-colors">
                 <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <span className="font-mono font-bold text-white text-base block">{v.registrationNumber}</span>
-                    <span className="text-xs text-gray-400 font-medium">Broker: <strong className="text-gray-200 font-semibold">{v.brokerName || v.transporterName || 'Direct Broker'}</strong></span>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleSelectVehicle(v.id)}
+                      className="text-gray-400 hover:text-white p-1"
+                      title={selectedVehicleIds.includes(v.id) ? "Deselect vehicle" : "Select vehicle"}
+                    >
+                      {selectedVehicleIds.includes(v.id) ? (
+                        <CheckSquare size={18} className="text-blue-400" />
+                      ) : (
+                        <Square size={18} className="text-gray-600 hover:text-gray-400" />
+                      )}
+                    </button>
+                    <div>
+                      <span className="font-mono font-bold text-white text-base block">{v.registrationNumber}</span>
+                      <span className="text-xs text-gray-400 font-medium">Broker: <strong className="text-gray-200 font-semibold">{v.brokerName || v.transporterName || 'Direct Broker'}</strong></span>
+                    </div>
                   </div>
                   <span className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${validity.badgeClass}`}>
                     {validity.text}
                   </span>
                 </div>
 
-                <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-white/5">
+                <div className="flex flex-wrap items-center justify-end gap-1.5 pt-2 border-t border-white/5">
                   {v.status === 'CANCELLED' ? (
-                    <button
-                      onClick={() => handleDirectDownloadNoc(v)}
-                      className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all"
-                      title="Download De-registration NOC PDF"
-                    >
-                      <FileCheck size={13} />
-                      <span>NOC PDF</span>
-                    </button>
+                    <>
+                      <button
+                        onClick={() => handleDirectDownloadNoc(v)}
+                        className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all"
+                        title="Download De-registration NOC PDF"
+                      >
+                        <FileCheck size={13} />
+                        <span>NOC PDF</span>
+                      </button>
+                      <button
+                        onClick={() => handleDownloadStampPaperTerminationDocx(v)}
+                        className="bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+                        title="Download Lease Termination Stamp Paper (.docx)"
+                      >
+                        <FileText size={13} />
+                        <span>Term. (.docx)</span>
+                      </button>
+                      <button
+                        onClick={() => handleDownloadLetterheadCancellationDocx(v)}
+                        className="bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+                        title="Download Customs Cancellation Notice (.docx)"
+                      >
+                        <FileText size={13} />
+                        <span>Customs (.docx)</span>
+                      </button>
+                    </>
                   ) : (
-                    <button
-                      onClick={() => {
-                        setVehicleToCancel(v);
-                        setCancellationReason('Operational De-Registration & Contract Release');
-                      }}
-                      className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg text-xs flex items-center gap-1 bg-white/5 border border-white/5"
-                      title="Cancel / De-register Vehicle & Generate NOC"
-                    >
-                      <Ban size={14} />
-                      <span className="text-[11px]">Cancel</span>
-                    </button>
+                    <>
+                      <button
+                        onClick={() => {
+                          setSelectedVehicleIds([v.id]);
+                          setShowDocsModal(true);
+                        }}
+                        className="bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 hover:text-white px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1"
+                        title="Generate Legal & Customs Word Docs (.docx)"
+                      >
+                        <FileText size={13} />
+                        <span>Docs (.docx)</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setVehicleToCancel(v);
+                          setCancellationReason('Operational De-Registration & Contract Release');
+                        }}
+                        className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg text-xs flex items-center gap-1 bg-white/5 border border-white/5"
+                        title="Cancel / De-register Vehicle & Generate NOC"
+                      >
+                        <Ban size={14} />
+                        <span className="text-[11px]">Cancel</span>
+                      </button>
+                    </>
                   )}
                   <button 
                     onClick={async () => {
@@ -805,12 +910,26 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
           )}
         </div>
 
-        {/* Desktop View (Table) - Showing Gadi Number, Broker Name, and Validity Status */}
+        {/* Desktop View (Table) - Showing Vehicle Registration No, Broker Name, and Validity Status */}
         <div className="hidden sm:block overflow-x-auto touch-pan-y custom-scrollbar">
           <table className="w-full text-left text-sm text-gray-300">
             <thead className="bg-white/5 text-xs uppercase text-gray-400 border-b border-white/10">
               <tr>
-                <th className="p-3.5 font-bold">Gadi Number</th>
+                <th className="p-3.5 w-10 text-center">
+                  <button
+                    type="button"
+                    onClick={toggleSelectAllFiltered}
+                    className="text-gray-400 hover:text-white transition-colors"
+                    title={isAllFilteredSelected ? "Deselect all in view" : "Select all in view"}
+                  >
+                    {isAllFilteredSelected ? (
+                      <CheckSquare size={16} className="text-blue-400" />
+                    ) : (
+                      <Square size={16} className="text-gray-500 hover:text-gray-300" />
+                    )}
+                  </button>
+                </th>
+                <th className="p-3.5 font-bold">Vehicle Registration No</th>
                 <th className="p-3.5 font-bold">Category & Type</th>
                 <th className="p-3.5 font-bold">Broker / Transporter</th>
                 <th className="p-3.5 font-bold">Driver Info</th>
@@ -823,6 +942,20 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
                 const validity = getVehicleValidity(v);
                 return (
                   <tr key={v.id} className="hover:bg-white/5 transition-colors">
+                    <td className="p-3.5 text-center" onClick={e => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => toggleSelectVehicle(v.id)}
+                        className="text-gray-400 hover:text-white transition-colors"
+                        title={selectedVehicleIds.includes(v.id) ? "Deselect vehicle" : "Select vehicle"}
+                      >
+                        {selectedVehicleIds.includes(v.id) ? (
+                          <CheckSquare size={16} className="text-blue-400" />
+                        ) : (
+                          <Square size={16} className="text-gray-600 hover:text-gray-400" />
+                        )}
+                      </button>
+                    </td>
                     <td className="p-3.5 font-mono font-bold text-white text-base">
                       {v.registrationNumber}
                       {v.dplSerial && (
@@ -847,29 +980,60 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
                       )}
                     </td>
                     <td className="p-3.5 text-right">
-                      <div className="flex justify-end items-center gap-2">
+                      <div className="flex justify-end items-center gap-1.5 flex-wrap">
                         {/* Vehicle Cancellation & NOC Actions */}
                         {v.status === 'CANCELLED' ? (
-                          <button
-                            onClick={() => handleDirectDownloadNoc(v)}
-                            className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-all"
-                            title="Download De-registration NOC PDF"
-                          >
-                            <FileCheck size={14} />
-                            <span>NOC PDF</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleDirectDownloadNoc(v)}
+                              className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+                              title="Download De-registration NOC PDF"
+                            >
+                              <FileCheck size={13} />
+                              <span>NOC PDF</span>
+                            </button>
+                            <button
+                              onClick={() => handleDownloadStampPaperTerminationDocx(v)}
+                              className="bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+                              title="Download Lease Termination on Legal Stamp Paper (.docx)"
+                            >
+                              <FileText size={13} />
+                              <span>Term. (.docx)</span>
+                            </button>
+                            <button
+                              onClick={() => handleDownloadLetterheadCancellationDocx(v)}
+                              className="bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+                              title="Download Customs Cancellation Notice on Company Letterhead (.docx)"
+                            >
+                              <FileText size={13} />
+                              <span>Notice (.docx)</span>
+                            </button>
+                          </>
                         ) : (
-                          <button
-                            onClick={() => {
-                              setVehicleToCancel(v);
-                              setCancellationReason('Operational De-Registration & Contract Release');
-                            }}
-                            className="text-gray-400 hover:text-red-400 hover:bg-red-500/10 px-2.5 py-1.5 rounded-lg transition-colors text-xs flex items-center gap-1 border border-white/5"
-                            title="Cancel / De-register Vehicle & Generate NOC"
-                          >
-                            <Ban size={14} />
-                            <span>Cancel</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => {
+                                setSelectedVehicleIds([v.id]);
+                                setShowDocsModal(true);
+                              }}
+                              className="bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 hover:text-white transition-colors px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1"
+                              title="Generate Official Customs / Lease Word Docs (.docx)"
+                            >
+                              <FileText size={13} />
+                              <span>Docs (.docx)</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setVehicleToCancel(v);
+                                setCancellationReason('Operational De-Registration & Contract Release');
+                              }}
+                              className="text-gray-400 hover:text-red-400 hover:bg-red-500/10 px-2 py-1 rounded-lg transition-colors text-xs flex items-center gap-1 border border-white/5"
+                              title="Cancel / De-register Vehicle & Generate NOC"
+                            >
+                              <Ban size={13} />
+                              <span>Cancel</span>
+                            </button>
+                          </>
                         )}
 
                         <button 
@@ -880,14 +1044,14 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
                               console.error(err);
                             }
                           }} 
-                          className="bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 hover:text-white transition-colors px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1" 
+                          className="bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 hover:text-white transition-colors px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1" 
                           title="Download Vehicle Dossier PDF"
                         >
-                          <Download size={14}/>
+                          <Download size={13}/>
                           <span>PDF</span>
                         </button>
-                        <button onClick={() => setSelectedVehicle(v)} className="text-brand-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/5" title="View Profile"><Eye size={16}/></button>
-                        <button onClick={() => handleDeleteVehicle(v.id)} className="text-gray-500 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-white/5" title="Delete Vehicle Record"><Trash2 size={16}/></button>
+                        <button onClick={() => setSelectedVehicle(v)} className="text-brand-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/5" title="View Profile"><Eye size={15}/></button>
+                        <button onClick={() => handleDeleteVehicle(v.id)} className="text-gray-500 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-white/5" title="Delete Vehicle Record"><Trash2 size={15}/></button>
                       </div>
                     </td>
                   </tr>
@@ -895,7 +1059,7 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
               })}
               {filteredVehicles.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-gray-500 text-xs">No vehicles found matching current filter ({vehicleStatusFilter}).</td>
+                  <td colSpan={7} className="p-8 text-center text-gray-500 text-xs">No vehicles found matching current filter ({vehicleStatusFilter}).</td>
                 </tr>
               )}
             </tbody>
@@ -1077,24 +1241,46 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
               <p className="text-gray-300 mt-1">
                 Vehicle <strong className="text-white font-mono">{nocSuccessNotice.vehicleNo}</strong> de-registered. NOC Ref: <strong className="text-emerald-400 font-mono">{nocSuccessNotice.nocRef}</strong>
               </p>
-              {nocSuccessNotice.downloadUrl && (
-                <div className="flex gap-2 mt-2.5">
-                  <a
-                    href={nocSuccessNotice.downloadUrl}
-                    download={nocSuccessNotice.filename || 'Vehicle_NOC.pdf'}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-[11px]"
-                  >
-                    <Download size={13} /> Download Again
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => setIsNocViewerOpen(true)}
-                    className="bg-white/10 hover:bg-white/20 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-[11px]"
-                  >
-                    <Eye size={13} /> View PDF
-                  </button>
-                </div>
-              )}
+              <div className="flex flex-wrap gap-2 mt-2.5">
+                {nocSuccessNotice.downloadUrl && (
+                  <>
+                    <a
+                      href={nocSuccessNotice.downloadUrl}
+                      download={nocSuccessNotice.filename || 'Vehicle_NOC.pdf'}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 text-[11px]"
+                    >
+                      <Download size={13} /> NOC PDF
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setIsNocViewerOpen(true)}
+                      className="bg-white/10 hover:bg-white/20 text-white font-medium px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 text-[11px]"
+                    >
+                      <Eye size={13} /> View PDF
+                    </button>
+                  </>
+                )}
+                {nocSuccessNotice.cancelledVehicle && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadStampPaperTerminationDocx(nocSuccessNotice.cancelledVehicle!)}
+                      className="bg-amber-600 hover:bg-amber-500 text-white font-semibold px-2.5 py-1.5 rounded-lg flex items-center gap-1 text-[11px]"
+                      title="Download Lease Termination on Legal Stamp Paper (.docx)"
+                    >
+                      <FileText size={13} /> Stamp Paper (.docx)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadLetterheadCancellationDocx(nocSuccessNotice.cancelledVehicle!)}
+                      className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-2.5 py-1.5 rounded-lg flex items-center gap-1 text-[11px]"
+                      title="Download Customs Cancellation Notice on Company Letterhead (.docx)"
+                    >
+                      <FileText size={13} /> Customs Notice (.docx)
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1133,6 +1319,15 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
         vehicle={renewalModalVehicle}
         onClose={() => setRenewalModalVehicle(null)}
         onConfirmRenewal={handleConfirmRenewal}
+      />
+
+      {/* Official Customs & Legal Word Documents (.docx) Modal */}
+      <OfficialDocumentsModal
+        isOpen={showDocsModal}
+        onClose={() => setShowDocsModal(false)}
+        vehicles={vehicles}
+        preSelectedIds={selectedVehicleIds}
+        initialDocType={docsModalType}
       />
     </div>
   );
@@ -1314,6 +1509,31 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
     if (file) {
       setIsExtracting(true);
       try {
+        const ext = file.name.toLowerCase().split('.').pop() || '';
+        if (['xlsx', 'xls', 'docx', 'csv', 'txt'].includes(ext)) {
+          // Parse structured Office document or spreadsheet
+          const result = await parseVehicleFile(file);
+          if (result.rows.length > 0) {
+            const first = result.rows[0];
+            setFormData((prev: any) => ({
+              ...prev,
+              registrationNumber: first.registrationNumber || prev.registrationNumber,
+              category: first.category || prev.category,
+              type: first.type || prev.type,
+              size: first.size || prev.size,
+              engineNo: first.engineNo !== 'N/A' ? (first.engineNo || prev.engineNo) : prev.engineNo,
+              chassisNo: first.chassisNo !== 'N/A' ? (first.chassisNo || prev.chassisNo) : prev.chassisNo,
+              driverName: first.driverName !== 'N/A' ? (first.driverName || prev.driverName) : prev.driverName,
+              driverCnic: first.driverCnic !== 'N/A' ? (first.driverCnic || prev.driverCnic) : prev.driverCnic,
+              driverContact: first.driverContact !== 'N/A' ? (first.driverContact || prev.driverContact) : prev.driverContact,
+              validationExpiryDate: first.validationExpiryDate || prev.validationExpiryDate,
+              brokerName: first.brokerName || first.transporterName || prev.brokerName
+            }));
+            return;
+          }
+        }
+
+        // For image / scan / PDF documents, use OCR / AI extraction
         const extracted = await autoFillVehicleData(file);
         if (extracted && Object.keys(extracted).length > 0) {
           setFormData((prev: any) => ({
@@ -1329,7 +1549,7 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
         } else {
           setFormData((prev: any) => ({
             ...prev,
-            registrationNumber: prev.registrationNumber || 'ABC-8822',
+            registrationNumber: prev.registrationNumber || 'TLP-8822',
             engineNo: prev.engineNo || 'ENG-SCAN-123',
             chassisNo: prev.chassisNo || 'CH-SCAN-456'
           }));
@@ -1377,7 +1597,7 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
           </div>
 
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Gadi Number (Registration No) *</label>
+            <label className="text-xs text-gray-400 block mb-1">Vehicle Registration No *</label>
             <input 
               type="text" 
               placeholder="e.g. KLA-992" 
@@ -1482,7 +1702,14 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
           </div>
 
           <div className="border border-dashed border-white/20 rounded p-4 text-center cursor-pointer hover:bg-white/5 relative">
-            <input type="file" className="hidden" id="reg-upload" onChange={handleFileUpload} disabled={isExtracting} />
+            <input 
+              type="file" 
+              className="hidden" 
+              id="reg-upload" 
+              accept=".xlsx, .xls, .docx, .pdf, image/*"
+              onChange={handleFileUpload} 
+              disabled={isExtracting} 
+            />
             <label htmlFor="reg-upload" className="cursor-pointer block">
               {isExtracting ? (
                 <div className="flex items-center justify-center gap-2 text-brand-400">
@@ -1491,8 +1718,8 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
                 </div>
               ) : (
                 <>
-                  <p className="text-brand-400 font-medium">Upload Registration Page (Doc Scanner)</p>
-                  <p className="text-xs text-gray-500">Auto-fills Reg No, Engine, Chassis, etc.</p>
+                  <p className="text-brand-400 font-medium">Upload Document (Excel .xlsx, Word .docx, PDF, or Photo)</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Extracts Registration No, Engine, Chassis, Driver, and Specs</p>
                 </>
               )}
             </label>
@@ -1575,7 +1802,7 @@ const VehicleProfileModal = ({
       // Section 1: Vehicle Technical & Master Specifications
       csvRows.push(`"=== DPL VEHICLE TRIP & FLEET REPORT ==="`);
       csvRows.push(`"Report Date",${escape(nowStr)}`);
-      csvRows.push(`"Vehicle Number (Gadi No)",${escape(vehicle.registrationNumber)}`);
+      csvRows.push(`"Vehicle Registration Number",${escape(vehicle.registrationNumber)}`);
       csvRows.push(`"DPL Serial No",${escape(vehicle.dplSerial || 'N/A')}`);
       csvRows.push(`"Category",${escape(vehicle.category)}`);
       csvRows.push(`"Vehicle Type",${escape(vehicle.type)}`);

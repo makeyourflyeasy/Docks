@@ -10,12 +10,16 @@ import {
   Calendar, 
   Truck, 
   ShieldCheck,
-  Clock
+  Clock,
+  FileSpreadsheet,
+  Loader2
 } from 'lucide-react';
 import { Vehicle, Transporter } from '../types';
+import { parseVehicleFile, parseTextOrCsvVehicles, ParsedVehicleRow } from '../services/documentParserService';
+import { downloadBulkVehicleExcelTemplate } from '../services/excelExportService';
 
 // ==========================================
-// 1. BULK VEHICLE IMPORT MODAL (Excel / CSV)
+// 1. BULK VEHICLE IMPORT MODAL (Excel / Word / CSV)
 // ==========================================
 
 interface BulkVehicleImportModalProps {
@@ -35,8 +39,14 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
   const [fileName, setFileName] = useState('');
   const [parsedRows, setParsedRows] = useState<Partial<Vehicle>[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const [detectedFormat, setDetectedFormat] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleDownloadExcelSample = () => {
+    downloadBulkVehicleExcelTemplate();
+  };
 
   const handleDownloadSample = () => {
     const sampleHeaders = 'RegistrationNumber,Category,Type,Size,EngineNo,ChassisNo,TransporterBrokerName,DriverName,DriverCnic,DriverContact,ExpiryDate';
@@ -60,75 +70,44 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
   const parseCsvContent = (content: string) => {
     setError(null);
     try {
-      const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
-      if (lines.length < 2) {
-        setError('CSV must contain a header row and at least one data row.');
-        return;
-      }
-
-      // Check header
-      const headers = lines[0].split(/,|\t/).map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
-      const dataLines = lines.slice(1);
-
-      const parsed: Partial<Vehicle>[] = [];
-
-      for (let i = 0; i < dataLines.length; i++) {
-        const rawLine = dataLines[i];
-        if (!rawLine.trim()) continue;
-        
-        // Split by comma or tab (handles basic CSV quotes)
-        const values = rawLine.split(/,|\t/).map(v => v.trim().replace(/^"|"$/g, ''));
-        const regNo = values[0] || `REG-${Date.now() + i}`;
-        const category = (values[1] as any) || 'Bonded Carrier';
-        const type = (values[2] as any) || 'Flatbed';
-        const size = (values[3] as any) || '40ft';
-        const engineNo = values[4] || 'N/A';
-        const chassisNo = values[5] || 'N/A';
-        const transporterBrokerName = values[6] || 'Direct Broker';
-        const driverName = values[7] || 'Assigned Driver';
-        const driverCnic = values[8] || 'N/A';
-        const driverContact = values[9] || 'N/A';
-        const expiryDate = values[10] || new Date(Date.now() + 180 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-
-        parsed.push({
-          registrationNumber: regNo,
-          category: category,
-          type: type,
-          size: size,
-          engineNo: engineNo,
-          chassisNo: chassisNo,
-          transporterName: transporterBrokerName,
-          brokerName: transporterBrokerName,
-          driverName: driverName,
-          driverCnic: driverCnic,
-          driverContact: driverContact,
-          validationExpiryDate: expiryDate
-        });
-      }
-
-      if (parsed.length === 0) {
+      const rows = parseTextOrCsvVehicles(content);
+      if (rows.length === 0) {
         setError('No valid vehicle records could be extracted.');
       } else {
-        setParsedRows(parsed);
+        setDetectedFormat('CSV_TEXT');
+        setParsedRows(rows);
       }
     } catch (err: any) {
       setError(`Failed to parse CSV: ${err.message || err}`);
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const text = evt.target?.result as string;
-      if (text) {
-        setCsvText(text);
-        parseCsvContent(text);
+    setError(null);
+    setIsParsing(true);
+
+    try {
+      const result = await parseVehicleFile(file);
+      if (result.error) {
+        setError(result.error);
+        setParsedRows([]);
+      } else if (result.rows.length === 0) {
+        setError(`No vehicle records could be identified in "${file.name}". Please ensure your file has columns like Registration Number, Category, Type, Driver, etc.`);
+        setParsedRows([]);
+      } else {
+        setDetectedFormat(result.fileType);
+        setParsedRows(result.rows);
       }
-    };
-    reader.readAsText(file);
+    } catch (err: any) {
+      setError(`Failed to read file: ${err.message || err}`);
+      setParsedRows([]);
+    } finally {
+      setIsParsing(false);
+      try { e.target.value = ''; } catch (_) {}
+    }
   };
 
   const handleApply = () => {
@@ -136,7 +115,7 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
       if (csvText.trim()) {
         parseCsvContent(csvText);
       } else {
-        setError('Please upload a CSV/Excel file or paste vehicle rows.');
+        setError('Please upload an Excel (.xlsx), Word (.docx), or CSV file or paste vehicle rows.');
         return;
       }
     }
@@ -152,11 +131,11 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-white/5">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-              <UploadCloud size={20} />
+              <FileSpreadsheet size={22} />
             </div>
             <div>
               <h3 className="text-lg font-bold text-white">Bulk Vehicle Fleet Import</h3>
-              <p className="text-xs text-gray-400">Import multiple commercial vehicles via Excel / CSV spreadsheet</p>
+              <p className="text-xs text-gray-400">Full compatibility with Excel (.xlsx, .xls), Word (.docx), and CSV files</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/5">
@@ -166,44 +145,73 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
 
         {/* Content */}
         <div className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
-          {/* Action to download template */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
-            <div className="flex items-center gap-2 text-xs text-emerald-300">
-              <FileText size={16} />
-              <span>Use standard template: <strong>RegistrationNumber, Category, Type, Size, Engine, Chassis...</strong></span>
+          {/* Action to download templates */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+            <div className="space-y-0.5">
+              <span className="text-xs font-bold text-emerald-300 block">Download Official Fleet Import Templates</span>
+              <p className="text-[11px] text-emerald-200/80">
+                Prepared with standard fields: Registration No, Category, Type, Size, Engine, Chassis, Driver, CNIC, Expiry Date
+              </p>
             </div>
-            <button
-              onClick={handleDownloadSample}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
-            >
-              <Download size={13} />
-              <span>Download Sample CSV</span>
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleDownloadExcelSample}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+              >
+                <FileSpreadsheet size={14} />
+                <span>Excel Template (.xlsx)</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadSample}
+                className="bg-white/10 hover:bg-white/15 text-gray-200 text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 border border-white/10 transition-colors"
+              >
+                <Download size={13} />
+                <span>CSV Template</span>
+              </button>
+            </div>
           </div>
 
           {/* File Upload Box */}
-          <div className="border-2 border-dashed border-white/20 hover:border-emerald-500/50 rounded-2xl p-6 text-center transition-colors">
+          <div className="border-2 border-dashed border-white/20 hover:border-emerald-500/50 rounded-2xl p-6 text-center transition-colors bg-white/[0.02]">
             <input
               type="file"
-              accept=".csv, .txt, .xlsx, .xls"
+              accept=".xlsx, .xls, .xlsm, .docx, .csv, .txt, .tsv"
               onChange={handleFileUpload}
               className="hidden"
               id="bulk-vehicle-file-input"
             />
-            <label htmlFor="bulk-vehicle-file-input" className="cursor-pointer flex flex-col items-center gap-2">
-              <UploadCloud className="text-emerald-400" size={32} />
-              <span className="text-sm font-medium text-white">
-                {fileName ? fileName : 'Choose CSV or Excel file to upload'}
-              </span>
-              <span className="text-xs text-gray-400">Click to browse or drag and drop file</span>
+            <label htmlFor="bulk-vehicle-file-input" className="cursor-pointer flex flex-col items-center gap-2.5">
+              {isParsing ? (
+                <Loader2 className="text-emerald-400 animate-spin" size={34} />
+              ) : (
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="text-emerald-400" size={30} />
+                  <FileText className="text-blue-400" size={30} />
+                </div>
+              )}
+              <div>
+                <span className="text-sm font-semibold text-white block">
+                  {fileName ? fileName : 'Upload Excel (.xlsx), Word (.docx), or CSV file'}
+                </span>
+                <span className="text-xs text-gray-400 mt-1 block">
+                  Supports .xlsx, .xls, .docx tables/lists, and .csv with automatic column recognition
+                </span>
+              </div>
+              {detectedFormat && (
+                <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Format Detected: {detectedFormat === 'EXCEL' ? 'Excel Spreadsheet (.xlsx)' : detectedFormat === 'DOCX' ? 'Word Document (.docx)' : 'CSV / Text File'}
+                </span>
+              )}
             </label>
           </div>
 
           {/* Or Paste Raw Text */}
           <div className="space-y-2">
-            <label className="text-xs text-gray-300 font-semibold block">Or Paste CSV / Spreadsheet Data Below:</label>
+            <label className="text-xs text-gray-300 font-semibold block">Or Paste CSV / Tab-Delimited Vehicle Rows Directly:</label>
             <textarea
-              rows={4}
+              rows={3}
               value={csvText}
               onChange={(e) => {
                 setCsvText(e.target.value);
@@ -218,7 +226,7 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
 
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs flex items-center gap-2">
-              <AlertTriangle size={15} />
+              <AlertTriangle size={15} className="shrink-0" />
               <span>{error}</span>
             </div>
           )}
@@ -235,7 +243,7 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
                 <table className="w-full text-left text-xs text-gray-300">
                   <thead className="bg-white/5 uppercase text-[10px] text-gray-400 sticky top-0">
                     <tr>
-                      <th className="p-2.5">Gadi No</th>
+                      <th className="p-2.5">Vehicle Reg No</th>
                       <th className="p-2.5">Category</th>
                       <th className="p-2.5">Transporter / Broker</th>
                       <th className="p-2.5">Driver</th>
@@ -272,11 +280,11 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
           </button>
           <button
             onClick={handleApply}
-            disabled={parsedRows.length === 0}
+            disabled={parsedRows.length === 0 || isParsing}
             className="px-5 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white flex items-center gap-1.5 transition-colors shadow-lg shadow-emerald-600/30"
           >
             <CheckCircle size={14} />
-            <span>Confirm & Import ({parsedRows.length})</span>
+            <span>Confirm & Import ({parsedRows.length} Vehicles)</span>
           </button>
         </div>
       </div>

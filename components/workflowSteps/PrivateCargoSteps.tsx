@@ -229,7 +229,7 @@ export const PrivateCargoSteps: React.FC<CategoryStepRendererProps> = ({
         </div>
       )}
 
-      {/* STEP 3: LOADING & BILTY GENERATION */}
+      {/* STEP 3: LOADING & WAYBILL GENERATION */}
       {stepIndex === 2 && (
         <div className="space-y-4">
           <WorkflowMultiUploader
@@ -247,7 +247,7 @@ export const PrivateCargoSteps: React.FC<CategoryStepRendererProps> = ({
           <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <span className="font-bold text-white text-sm block">Commercial Bilty / Consignment Note</span>
+                <span className="font-bold text-white text-sm block">Commercial Waybill / Consignment Note</span>
                 <span className="text-gray-400 text-[11px]">Official transport receipt for commercial cargo transit</span>
               </div>
               <button
@@ -260,12 +260,12 @@ export const PrivateCargoSteps: React.FC<CategoryStepRendererProps> = ({
                 }))}
                 className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs shadow-md"
               >
-                {formData.cargoBiltyGenerated ? '✓ Bilty Generated' : 'Generate Digital Bilty'}
+                {formData.cargoBiltyGenerated ? '✓ Waybill Generated' : 'Generate Digital Waybill'}
               </button>
             </div>
 
             <div>
-              <label className="text-gray-400 block mb-1">Bilty / Waybill Serial Number</label>
+              <label className="text-gray-400 block mb-1">Consignment Note / Waybill Serial Number</label>
               <input 
                 type="text"
                 disabled={isReadOnly}
@@ -345,7 +345,7 @@ export const PrivateCargoSteps: React.FC<CategoryStepRendererProps> = ({
 
           <WorkflowMultiUploader
             label="Signed Proof of Delivery (POD) Receipt"
-            sublabel="Upload recipient signed, stamped Bilty / delivery receipt confirming cargo receipt in good order"
+            sublabel="Upload recipient signed, stamped consignment note / delivery receipt confirming cargo receipt in good order"
             urlField="cargoPodUrl"
             nameField="cargoPodName"
             allowCamera={true}

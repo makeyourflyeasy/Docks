@@ -821,7 +821,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
             <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs text-emerald-200 flex items-start gap-2.5">
               <Sparkles size={16} className="shrink-0 mt-0.5 text-emerald-400" />
               <div>
-                <strong>Rule for Default Charges:</strong> By default charges mein pehli bar ek amount likhna zaroori hai. Sirf wohi charges default honge jin mein amount darj hogi (&gt; 0). Jab tak un mein amount dali jaegi phir woh charges is client ke permanent default ban jayenge!
+                <strong>Rule for Default Charges:</strong> Default charges must have an initial amount greater than zero (&gt; 0). Only charges with a specified amount will be saved as the permanent default billing schedule for this client.
               </div>
             </div>
 
