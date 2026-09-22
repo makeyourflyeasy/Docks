@@ -1351,17 +1351,29 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
         <h3 className="text-xl font-bold text-white mb-4 sticky top-0 bg-slate-900/95 pb-4 border-b border-white/10 z-10 backdrop-blur-md">Add New Vehicle</h3>
         
         <div className="flex flex-col gap-4 mb-4 mt-2">
-          <div>
-            <label className="text-xs text-gray-400 block mb-1">Transporter</label>
-            <select 
-              className="w-full glass-input rounded p-2 text-white outline-none bg-slate-900"
-              value={formData.transporterId}
-              onChange={e => setFormData({...formData, transporterId: Number(e.target.value)})}
-              disabled={!!preSelectedTransporterId}
-            >
-              <option value="">Select Transporter</option>
-              {transporters.map((t: Transporter) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Transporter Company (Optional)</label>
+              <select 
+                className="w-full glass-input rounded p-2 text-white outline-none bg-slate-900"
+                value={formData.transporterId}
+                onChange={e => setFormData({...formData, transporterId: Number(e.target.value)})}
+                disabled={!!preSelectedTransporterId}
+              >
+                <option value="">-- Direct / Market Vehicle --</option>
+                {transporters.map((t: Transporter) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Broker / Fleet Vendor (Optional)</label>
+              <input 
+                type="text" 
+                placeholder="e.g. Haji Aslam Broker" 
+                className="w-full glass-input rounded p-2 text-white text-sm" 
+                value={formData.brokerName || ''} 
+                onChange={e => setFormData({...formData, brokerName: e.target.value})} 
+              />
+            </div>
           </div>
 
           <div>
@@ -1503,11 +1515,12 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
           <button onClick={onClose} className="px-4 py-2 text-gray-400 hover:text-white">Cancel</button>
           <button onClick={() => {
              const selectedTransporter = transporters.find((t: Transporter) => t.id === formData.transporterId);
-             const transName = selectedTransporter?.name || 'Direct Transporter';
+             const transName = selectedTransporter?.name || (formData.brokerName?.trim() ? `${formData.brokerName.trim()} (Broker)` : 'Direct Transporter');
+             const finalBroker = formData.brokerName?.trim() || selectedTransporter?.name || 'Direct Transporter';
              onSave({ 
                ...formData, 
                transporterName: transName,
-               brokerName: transName
+               brokerName: finalBroker
              });
           }} className="bg-brand-600 text-white px-4 py-2 rounded-lg">Save Vehicle</button>
         </div>

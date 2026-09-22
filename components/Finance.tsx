@@ -3464,9 +3464,6 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           </>
         );
       }
-          </>
-        );
-      }
 
       case 'payables': {
         const filteredPayables = payables.filter(entry => 
