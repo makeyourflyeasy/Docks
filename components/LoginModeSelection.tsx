@@ -250,17 +250,29 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
               type="submit"
               id="btn-submit-credentials"
               disabled={isLoading}
-              className="w-full mt-3 py-3.5 px-4 rounded-xl bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 active:scale-[0.99] text-slate-950 font-black text-base shadow-xl shadow-amber-500/25 flex items-center justify-center gap-2.5 transition cursor-pointer disabled:opacity-50 border border-amber-300/40"
+              className="w-full mt-3 py-3.5 px-4 rounded-xl bg-amber-400 hover:bg-yellow-300 active:bg-amber-500 text-slate-950 font-black text-base shadow-xl shadow-amber-500/30 flex items-center justify-center gap-2.5 transition-all duration-200 cursor-pointer disabled:opacity-50 border border-amber-300 select-none"
+              style={{
+                backgroundColor: '#fbbf24',
+                color: '#020617',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#fde047';
+                e.currentTarget.style.color = '#020617';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#fbbf24';
+                e.currentTarget.style.color = '#020617';
+              }}
             >
               {isLoading ? (
                 <>
-                  <Loader2 size={19} className="animate-spin text-slate-950" />
-                  <span className="font-extrabold text-slate-950">Verifying Credentials...</span>
+                  <Loader2 size={19} className="animate-spin text-slate-950 shrink-0" style={{ color: '#020617' }} />
+                  <span className="font-extrabold text-slate-950" style={{ color: '#020617' }}>Verifying Credentials...</span>
                 </>
               ) : (
                 <>
-                  <LogIn size={19} className="text-slate-950 stroke-[2.5]" />
-                  <span className="font-black text-slate-950 text-base tracking-wide">Sign In</span>
+                  <LogIn size={19} className="text-slate-950 stroke-[2.5] shrink-0" style={{ color: '#020617' }} />
+                  <span className="font-black text-slate-950 text-base tracking-wide" style={{ color: '#020617' }}>Sign In</span>
                 </>
               )}
             </button>

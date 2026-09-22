@@ -91,22 +91,17 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   // Cross-component and cross-storage live sync
   useEffect(() => {
     const handleSync = () => {
-      const storedCases = safeAppStorage.getJSON<Case[]>('dpl_live_cases', null);
-      if (storedCases && Array.isArray(storedCases)) {
-        setCases(storedCases);
-      }
-      const storedFinance = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_finance', null);
-      if (storedFinance && Array.isArray(storedFinance)) {
-        setFinanceData(storedFinance);
-      }
-      const storedRecv = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_receivables', null);
-      if (storedRecv && Array.isArray(storedRecv)) {
-        setReceivables(storedRecv);
-      }
-      const storedPay = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_payables', null);
-      if (storedPay && Array.isArray(storedPay)) {
-        setPayables(storedPay);
-      }
+      const storedCases = safeAppStorage.getJSON<Case[] | null>('dpl_live_cases', null);
+      setCases(Array.isArray(storedCases) ? storedCases : []);
+
+      const storedFinance = safeAppStorage.getJSON<FinanceEntry[] | null>('dpl_live_finance', null);
+      setFinanceData(Array.isArray(storedFinance) ? storedFinance : []);
+
+      const storedRecv = safeAppStorage.getJSON<FinanceEntry[] | null>('dpl_live_receivables', null);
+      setReceivables(Array.isArray(storedRecv) ? storedRecv : []);
+
+      const storedPay = safeAppStorage.getJSON<FinanceEntry[] | null>('dpl_live_payables', null);
+      setPayables(Array.isArray(storedPay) ? storedPay : []);
     };
 
     window.addEventListener('dpl_cases_updated', handleSync);

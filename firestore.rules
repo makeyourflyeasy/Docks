@@ -67,5 +67,35 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow read, write: if true;
     }
+
+    // Registered Utility & Office Vendors
+    match /vendors/{vendorId} {
+      allow read, write: if true;
+    }
+
+    // Recurring Monthly Templates
+    match /recurring_templates/{templateId} {
+      allow read, write: if true;
+    }
+
+    // Staff Ledgers
+    match /staff_ledgers/{ledgerId} {
+      allow read, write: if true;
+    }
+
+    // Destination Staff & Port Officers
+    match /destination_staff/{staffId} {
+      allow read, write: if true;
+    }
+
+    // Activity Logs
+    match /activity_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Company Branding
+    match /branding/{brandingId} {
+      allow read, write: if true;
+    }
   }
 }

@@ -222,10 +222,12 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
       const result = await restoreDatabaseSnapshot(snapshot);
 
       setSuccessMessage(
-        `Database successfully restored from Google Drive! (${result.restoredCounts.cases} Cases, ${result.restoredCounts.finance} Finance vouchers updated).`
+        `Database successfully restored from Google Drive! (${result.restoredCounts.cases} Cases, ${result.restoredCounts.finance} Finance & Ledger entries, ${result.restoredCounts.vehicles} Vehicles). Refreshing application...`
       );
-      setTimeout(() => setSuccessMessage(null), 7000);
       setRestoreConfirmFile(null);
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
     } catch (err: any) {
       console.error('Restore error:', err);
       setErrorMessage(err.message || 'Failed to restore database from backup file');

@@ -293,10 +293,13 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
           alert(
             `Data Restored Successfully!\n\n` +
             `• Cases Restored: ${result.restoredCounts.cases}\n` +
-            `• Finance Records: ${result.restoredCounts.finance}\n` +
+            `• Finance & General Ledger Entries: ${result.restoredCounts.finance}\n` +
             `• Vehicles: ${result.restoredCounts.vehicles}\n` +
-            `• Clients: ${result.restoredCounts.clients}\n\n` +
-            `Database and cloud storage are synchronized. The application will now refresh.`
+            `• Clients: ${result.restoredCounts.clients}\n` +
+            `• Vendors: ${result.restoredCounts.vendors || 0}\n` +
+            `• Recurring Templates: ${result.restoredCounts.recurringTemplates || 0}\n` +
+            `• Staff Ledgers: ${result.restoredCounts.staffLedgers || 0}\n\n` +
+            `Database, General Ledger, and local storage are synchronized. The application will now refresh.`
           );
           window.location.reload();
         } else {
@@ -347,7 +350,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
 
       setShowResetWarningModal(false);
       setResetSuccessMessage(
-        `System Factory Reset Successful: All ${wipeResult.deletedCounts.cases} cases, ${wipeResult.deletedCounts.finances} finance entries, ${wipeResult.deletedCounts.vehicles} vehicles, and ${wipeResult.deletedCounts.clients} clients were deleted from Firebase Firestore, Google Drive archives, and local cache.`
+        `System Factory Reset Successful: All ${wipeResult.deletedCounts.cases} cases, ${wipeResult.deletedCounts.finances} finance entries, ${wipeResult.deletedCounts.vehicles} vehicles, ${wipeResult.deletedCounts.clients} clients, and all general ledger caches were completely wiped from Firebase Firestore and local storage.`
       );
 
       // Reload window after brief delay so state starts 100% clean

@@ -99,6 +99,64 @@ export const safeAppStorage = {
     safeLocalStorage.removeItem(key);
     safeSessionStorage.removeItem(key);
   },
+  clear: (): void => {
+    Object.keys(memoryCache).forEach((k) => delete memoryCache[k]);
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.clear();
+      }
+    } catch (_) {}
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        window.sessionStorage.clear();
+      }
+    } catch (_) {}
+  },
+  wipeAppOperationalData: (preserveAuth: boolean = true): void => {
+    const authUser = preserveAuth ? safeAppStorage.getItem('dpl_auth_user') : null;
+    const userRole = preserveAuth ? safeAppStorage.getItem('dpl_user_role') : null;
+
+    // 1. Clear memory cache for all dpl keys
+    Object.keys(memoryCache).forEach((k) => {
+      if (k.startsWith('dpl_') || k.startsWith('dpl-')) {
+        delete memoryCache[k];
+      }
+    });
+
+    // 2. Clear localStorage keys
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const key = window.localStorage.key(i);
+          if (key && (key.startsWith('dpl_') || key.startsWith('dpl-'))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+      }
+    } catch (_) {}
+
+    // 3. Clear sessionStorage keys
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < window.sessionStorage.length; i++) {
+          const key = window.sessionStorage.key(i);
+          if (key && (key.startsWith('dpl_') || key.startsWith('dpl-'))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => window.sessionStorage.removeItem(k));
+      }
+    } catch (_) {}
+
+    // 4. Restore auth session if requested
+    if (preserveAuth) {
+      if (authUser) safeAppStorage.setItem('dpl_auth_user', authUser);
+      if (userRole) safeAppStorage.setItem('dpl_user_role', userRole);
+    }
+  },
   getJSON: <T>(key: string, fallback: T): T => {
     try {
       const val = safeAppStorage.getItem(key);

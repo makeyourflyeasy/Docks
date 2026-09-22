@@ -18,7 +18,7 @@ import {
   getActiveDbUserSession,
   clearActiveDbUserSession
 } from './firebase';
-import { Case, FinanceEntry, Vehicle, AppNotification, AppUser, Client, UserRole, RecurringFinanceTemplate, DestinationStaff, StaffLedgerEntry } from '../types';
+import { Case, FinanceEntry, Vehicle, AppNotification, AppUser, Client, UserRole, RecurringFinanceTemplate, DestinationStaff, StaffLedgerEntry, Vendor } from '../types';
 import { safeAppStorage } from './storage';
 
 /**
@@ -701,59 +701,132 @@ export async function deleteStaffLedgerEntryFromFirestore(entryId: string): Prom
 /**
  * Exports complete snapshot of all live collections from Firestore for cloud backup
  */
-export async function exportCompleteDatabaseSnapshot(): Promise<{
-  version: string;
-  timestamp: string;
-  app: string;
-  stats: {
-    casesCount: number;
-    financeCount: number;
-    vehiclesCount: number;
-    clientsCount: number;
-    usersCount: number;
-  };
-  cases: Case[];
-  finance: FinanceEntry[];
-  vehicles: Vehicle[];
-  clients: Client[];
-  users: AppUser[];
-}> {
-  const [casesSnap, finSnap, vehSnap, clientSnap, userSnap] = await Promise.all([
+export async function exportCompleteDatabaseSnapshot(): Promise<any> {
+  const [
+    casesSnap,
+    finSnap,
+    finLegacySnap,
+    vehSnap,
+    clientSnap,
+    userSnap,
+    vendorSnap,
+    recurringSnap,
+    staffLedgerSnap,
+    destStaffSnap,
+    notifSnap,
+    activitySnap,
+    settingsSnap
+  ] = await Promise.all([
     getDocs(collection(db, 'cases')).catch(() => ({ docs: [] } as any)),
     getDocs(collection(db, 'finances')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'finance')).catch(() => ({ docs: [] } as any)),
     getDocs(collection(db, 'vehicles')).catch(() => ({ docs: [] } as any)),
     getDocs(collection(db, 'clients')).catch(() => ({ docs: [] } as any)),
     getDocs(collection(db, 'users')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'vendors')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'recurring_templates')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'staff_ledgers')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'destination_staff')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'notifications')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'activity_logs')).catch(() => ({ docs: [] } as any)),
+    getDocs(collection(db, 'settings')).catch(() => ({ docs: [] } as any)),
   ]);
 
-  const cases: Case[] = casesSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
-  const finance: FinanceEntry[] = finSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
-  const vehicles: Vehicle[] = vehSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
-  const clients: Client[] = clientSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  let cases: Case[] = casesSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  if (cases.length === 0) {
+    cases = safeAppStorage.getJSON<Case[]>('dpl_live_cases', []);
+  }
+
+  // Finance: merge finances + legacy finance + local storage fallback
+  const firestoreFinance: FinanceEntry[] = [
+    ...finSnap.docs.map((d: any) => ({ ...d.data(), id: d.id })),
+    ...finLegacySnap.docs.map((d: any) => ({ ...d.data(), id: d.id }))
+  ];
+  let finance: FinanceEntry[] = firestoreFinance;
+  if (finance.length === 0) {
+    const cash = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_finance', []);
+    const recv = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_receivables', []);
+    const pay = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_payables', []);
+    finance = [...cash, ...recv, ...pay];
+  }
+
+  let vehicles: Vehicle[] = vehSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  if (vehicles.length === 0) {
+    vehicles = safeAppStorage.getJSON<Vehicle[]>('dpl_live_vehicles', safeAppStorage.getJSON<Vehicle[]>('dpl_cached_vehicles', []));
+  }
+
+  let clients: Client[] = clientSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  if (clients.length === 0) {
+    clients = safeAppStorage.getJSON<Client[]>('dpl_cached_clients', []);
+  }
+
   const users: AppUser[] = userSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
 
+  let vendors: Vendor[] = vendorSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  if (vendors.length === 0) {
+    vendors = safeAppStorage.getJSON<Vendor[]>('dpl_vendors_list', []);
+  }
+
+  let recurringTemplates: RecurringFinanceTemplate[] = recurringSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  if (recurringTemplates.length === 0) {
+    recurringTemplates = safeAppStorage.getJSON<RecurringFinanceTemplate[]>('dpl_recurring_templates', []);
+  }
+
+  let staffLedgers: StaffLedgerEntry[] = staffLedgerSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  if (staffLedgers.length === 0) {
+    staffLedgers = safeAppStorage.getJSON<StaffLedgerEntry[]>('dpl_staff_ledgers', []);
+  }
+
+  let destinationStaff: DestinationStaff[] = destStaffSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  if (destinationStaff.length === 0) {
+    destinationStaff = safeAppStorage.getJSON<DestinationStaff[]>('dpl_destination_staff', []);
+  }
+
+  const notifications: AppNotification[] = notifSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+
+  let activityLogs = activitySnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+  if (activityLogs.length === 0) {
+    activityLogs = safeAppStorage.getJSON<any[]>('dpl_system_activity_logs', []);
+  }
+
+  const settingsData = settingsSnap.docs.map((d: any) => ({ ...d.data(), id: d.id }));
+
   return {
-    version: '1.0.0',
+    version: '3.0.0',
     timestamp: new Date().toISOString(),
     app: 'DOCKS (PVT) LTD - ERP & Logistics Management',
+    backupType: 'COMPLETE',
     stats: {
       casesCount: cases.length,
       financeCount: finance.length,
       vehiclesCount: vehicles.length,
       clientsCount: clients.length,
       usersCount: users.length,
+      vendorsCount: vendors.length,
+      recurringTemplatesCount: recurringTemplates.length,
+      staffLedgersCount: staffLedgers.length,
+      destinationStaffCount: destinationStaff.length,
+      notificationsCount: notifications.length,
+      activityLogsCount: activityLogs.length
     },
+    settings: settingsData,
     cases,
     finance,
     vehicles,
     clients,
-    users
+    users,
+    vendors,
+    recurringTemplates,
+    staffLedgers,
+    destinationStaff,
+    notifications,
+    activityLogs
   };
 }
 
 /**
  * Selective export based on user-chosen modules:
- * Full Backup, All Cases, All Finance, All Vehicles, All Clients
+ * Full Backup, All Cases, All Finance, All Vehicles, All Clients, Vendors, Recurring, Staff
  */
 export async function exportSelectiveDatabaseBackup(options: {
   cases: boolean;
@@ -762,6 +835,15 @@ export async function exportSelectiveDatabaseBackup(options: {
   clients: boolean;
   companyInfo?: any;
 }): Promise<any> {
+  const isFull = options.cases && options.finance && options.vehicles && options.clients;
+  if (isFull) {
+    const fullSnapshot = await exportCompleteDatabaseSnapshot();
+    if (options.companyInfo) {
+      fullSnapshot.companyInfo = options.companyInfo;
+    }
+    return fullSnapshot;
+  }
+
   const promises: Promise<any>[] = [];
 
   promises.push(
@@ -787,17 +869,33 @@ export async function exportSelectiveDatabaseBackup(options: {
 
   const [casesSnap, finSnap, vehSnap, clientSnap] = await Promise.all(promises);
 
-  const cases: Case[] = (casesSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
-  const finance: FinanceEntry[] = (finSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
-  const vehicles: Vehicle[] = (vehSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
-  const clients: Client[] = (clientSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+  let cases: Case[] = (casesSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+  if (options.cases && cases.length === 0) {
+    cases = safeAppStorage.getJSON<Case[]>('dpl_live_cases', []);
+  }
 
-  const isFull = options.cases && options.finance && options.vehicles && options.clients;
+  let finance: FinanceEntry[] = (finSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+  if (options.finance && finance.length === 0) {
+    const cash = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_finance', []);
+    const recv = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_receivables', []);
+    const pay = safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_payables', []);
+    finance = [...cash, ...recv, ...pay];
+  }
+
+  let vehicles: Vehicle[] = (vehSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+  if (options.vehicles && vehicles.length === 0) {
+    vehicles = safeAppStorage.getJSON<Vehicle[]>('dpl_live_vehicles', safeAppStorage.getJSON<Vehicle[]>('dpl_cached_vehicles', []));
+  }
+
+  let clients: Client[] = (clientSnap?.docs || []).map((d: any) => ({ ...d.data(), id: d.id }));
+  if (options.clients && clients.length === 0) {
+    clients = safeAppStorage.getJSON<Client[]>('dpl_cached_clients', []);
+  }
 
   return {
-    version: '2.0.0',
+    version: '3.0.0',
     timestamp: new Date().toISOString(),
-    backupType: isFull ? 'FULL' : 'SELECTIVE',
+    backupType: 'SELECTIVE',
     app: 'DOCKS (PVT) LTD - ERP & Logistics Management',
     includedModules: {
       cases: options.cases,
@@ -820,8 +918,8 @@ export async function exportSelectiveDatabaseBackup(options: {
 }
 
 /**
- * Permanently wipes live operational data from Firebase Firestore (Cases, Finance, Vehicles, Clients, Notifications).
- * Clears local and session storage caches as well.
+ * Permanently wipes live operational data from Firebase Firestore (Cases, Finance, Vehicles, Clients, Vendors, Templates, Ledgers, Notifications, Activity Logs).
+ * Clears universal unified storage, localStorage, and sessionStorage completely.
  */
 export async function wipeCompleteDatabase(): Promise<{
   success: boolean;
@@ -830,7 +928,12 @@ export async function wipeCompleteDatabase(): Promise<{
     finances: number;
     vehicles: number;
     clients: number;
+    vendors: number;
+    recurringTemplates: number;
+    staffLedgers: number;
+    destinationStaff: number;
     notifications: number;
+    activityLogs: number;
   };
 }> {
   const deletedCounts = {
@@ -838,10 +941,27 @@ export async function wipeCompleteDatabase(): Promise<{
     finances: 0,
     vehicles: 0,
     clients: 0,
-    notifications: 0
+    vendors: 0,
+    recurringTemplates: 0,
+    staffLedgers: 0,
+    destinationStaff: 0,
+    notifications: 0,
+    activityLogs: 0
   };
 
-  const collectionsToWipe = ['cases', 'finances', 'vehicles', 'clients', 'notifications'] as const;
+  const collectionsToWipe = [
+    'cases',
+    'finances',
+    'finance',
+    'vehicles',
+    'clients',
+    'vendors',
+    'recurring_templates',
+    'staff_ledgers',
+    'destination_staff',
+    'notifications',
+    'activity_logs'
+  ] as const;
 
   for (const colName of collectionsToWipe) {
     try {
@@ -849,10 +969,15 @@ export async function wipeCompleteDatabase(): Promise<{
       const deletePromises = snap.docs.map(async (docSnap) => {
         await deleteDoc(doc(db, colName, docSnap.id));
         if (colName === 'cases') deletedCounts.cases++;
-        else if (colName === 'finances') deletedCounts.finances++;
+        else if (colName === 'finances' || colName === 'finance') deletedCounts.finances++;
         else if (colName === 'vehicles') deletedCounts.vehicles++;
         else if (colName === 'clients') deletedCounts.clients++;
+        else if (colName === 'vendors') deletedCounts.vendors++;
+        else if (colName === 'recurring_templates') deletedCounts.recurringTemplates++;
+        else if (colName === 'staff_ledgers') deletedCounts.staffLedgers++;
+        else if (colName === 'destination_staff') deletedCounts.destinationStaff++;
         else if (colName === 'notifications') deletedCounts.notifications++;
+        else if (colName === 'activity_logs') deletedCounts.activityLogs++;
       });
       await Promise.all(deletePromises);
     } catch (err) {
@@ -860,21 +985,38 @@ export async function wipeCompleteDatabase(): Promise<{
     }
   }
 
-  // Clear local storage / session storage cache for cases, finances, vehicles, drafts
+  // 1. Wipe universal unified storage (all operational dpl_ keys in memory, localStorage, and sessionStorage)
   try {
-    const keysToRemove = [
-      'dpl_reg_draft_active', 'dpl_reg_step', 'dpl_reg_caseno', 'dpl_reg_formdata', 
-      'dpl_reg_docs', 'dpl_reg_updated_at', 'dpl_reg_view', 'dpl_cached_cases',
-      'dpl_cached_finances', 'dpl_cached_vehicles', 'dpl_cached_clients',
-      'dpl_finance_active_tab', 'dpl_dashboard_timeframe'
-    ];
-    keysToRemove.forEach(k => {
-      safeAppStorage.removeItem(k);
-      try { localStorage.removeItem(k); } catch (_) {}
-      try { sessionStorage.removeItem(k); } catch (_) {}
-    });
+    safeAppStorage.wipeAppOperationalData(true);
   } catch (e) {
-    console.warn('Storage clearance notice:', e);
+    console.warn('Storage wipe notice:', e);
+  }
+
+  // 2. Explicitly remove all known keys to ensure complete wipe of general ledger, finance, cases, etc.
+  const explicitKeys = [
+    'dpl_live_finance', 'dpl_live_receivables', 'dpl_live_payables', 'dpl_live_cases',
+    'dpl_live_transporters', 'dpl_live_vehicles', 'dpl_finance_client', 'dpl_finance_tab',
+    'dpl_vendors_list', 'dpl_staff_ledgers', 'dpl_destination_staff', 'dpl_recurring_templates',
+    'dpl_system_activity_logs', 'dpl_cached_cases', 'dpl_cached_finances', 'dpl_cached_vehicles',
+    'dpl_cached_clients', 'dpl_cached_vendors', 'dpl_fleet_vehicles', 'dpl_all_cases', 'dpl_cases',
+    'dpl_reg_draft_active', 'dpl_reg_step', 'dpl_reg_caseno', 'dpl_reg_formdata', 
+    'dpl_reg_docs', 'dpl_reg_updated_at', 'dpl_reg_view', 'dpl_vehicles_data', 'dpl_registered_clients',
+    'dpl_selected_case', 'dpl_selected_case_id', 'dpl_finance_active_tab', 'dpl_dashboard_timeframe',
+    'dpl_ports', 'dpl_company_docs', 'dpl_custom_banks', 'dpl_last_cloud_backup_time'
+  ];
+
+  explicitKeys.forEach((k) => {
+    safeAppStorage.removeItem(k);
+    try { localStorage.removeItem(k); } catch (_) {}
+    try { sessionStorage.removeItem(k); } catch (_) {}
+  });
+
+  // 3. Dispatch live update events so currently rendered views immediately flush state
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('dpl_cases_updated'));
+    window.dispatchEvent(new Event('dpl_finance_updated'));
+    window.dispatchEvent(new Event('dpl_branding_changed'));
+    window.dispatchEvent(new Event('storage'));
   }
 
   return {
@@ -884,7 +1026,7 @@ export async function wipeCompleteDatabase(): Promise<{
 }
 
 /**
- * Restores database collections from a snapshot
+ * Restores database collections and local state from a complete snapshot
  */
 export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
   success: boolean;
@@ -894,6 +1036,12 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
     vehicles: number;
     clients: number;
     users: number;
+    vendors: number;
+    recurringTemplates: number;
+    staffLedgers: number;
+    destinationStaff: number;
+    notifications: number;
+    activityLogs: number;
   };
 }> {
   if (!snapshot || typeof snapshot !== 'object') {
@@ -905,8 +1053,14 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
   let vehCount = 0;
   let clientCount = 0;
   let userCount = 0;
+  let vendorCount = 0;
+  let recurringCount = 0;
+  let staffLedgersCount = 0;
+  let destStaffCount = 0;
+  let notifCount = 0;
+  let activityLogsCount = 0;
 
-  // Restore cases
+  // 1. Cases
   if (Array.isArray(snapshot.cases)) {
     for (const c of snapshot.cases) {
       if (c && c.id) {
@@ -914,9 +1068,10 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
         casesCount++;
       }
     }
+    safeAppStorage.setJSON('dpl_live_cases', snapshot.cases);
   }
 
-  // Restore finance
+  // 2. Finance
   if (Array.isArray(snapshot.finance)) {
     for (const f of snapshot.finance) {
       if (f && f.id) {
@@ -924,9 +1079,17 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
         finCount++;
       }
     }
+    // Partition finance entries for Finance.tsx states
+    const cash = snapshot.finance.filter((f: any) => f.type === 'INFLOW' || f.type === 'OUTFLOW');
+    const recv = snapshot.finance.filter((f: any) => f.type === 'RECEIVABLE');
+    const pay = snapshot.finance.filter((f: any) => f.type === 'PAYABLE');
+
+    safeAppStorage.setJSON('dpl_live_finance', cash.length > 0 ? cash : snapshot.finance);
+    safeAppStorage.setJSON('dpl_live_receivables', recv);
+    safeAppStorage.setJSON('dpl_live_payables', pay);
   }
 
-  // Restore vehicles
+  // 3. Vehicles
   if (Array.isArray(snapshot.vehicles)) {
     for (const v of snapshot.vehicles) {
       if (v && v.id) {
@@ -934,9 +1097,11 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
         vehCount++;
       }
     }
+    safeAppStorage.setJSON('dpl_live_vehicles', snapshot.vehicles);
+    safeAppStorage.setJSON('dpl_cached_vehicles', snapshot.vehicles);
   }
 
-  // Restore clients
+  // 4. Clients
   if (Array.isArray(snapshot.clients)) {
     for (const cl of snapshot.clients) {
       if (cl && cl.id) {
@@ -944,9 +1109,10 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
         clientCount++;
       }
     }
+    safeAppStorage.setJSON('dpl_cached_clients', snapshot.clients);
   }
 
-  // Restore users
+  // 5. Users
   if (Array.isArray(snapshot.users)) {
     for (const u of snapshot.users) {
       if (u && u.id) {
@@ -956,6 +1122,91 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
     }
   }
 
+  // 6. Vendors
+  const vendorsList = snapshot.vendors || snapshot.vendorsList;
+  if (Array.isArray(vendorsList)) {
+    for (const vnd of vendorsList) {
+      if (vnd && vnd.id) {
+        await setDoc(doc(db, 'vendors', String(vnd.id)), sanitizeForFirestore(vnd), { merge: true });
+        vendorCount++;
+      }
+    }
+    safeAppStorage.setJSON('dpl_vendors_list', vendorsList);
+  }
+
+  // 7. Recurring Templates
+  const recurringList = snapshot.recurringTemplates || snapshot.recurring_templates;
+  if (Array.isArray(recurringList)) {
+    for (const rec of recurringList) {
+      if (rec && rec.id) {
+        await setDoc(doc(db, 'recurring_templates', String(rec.id)), sanitizeForFirestore(rec), { merge: true });
+        recurringCount++;
+      }
+    }
+    safeAppStorage.setJSON('dpl_recurring_templates', recurringList);
+  }
+
+  // 8. Staff Ledgers
+  const staffList = snapshot.staffLedgers || snapshot.staff_ledgers;
+  if (Array.isArray(staffList)) {
+    for (const st of staffList) {
+      if (st && st.id) {
+        await setDoc(doc(db, 'staff_ledgers', String(st.id)), sanitizeForFirestore(st), { merge: true });
+        staffLedgersCount++;
+      }
+    }
+    safeAppStorage.setJSON('dpl_staff_ledgers', staffList);
+  }
+
+  // 9. Destination Staff
+  const destStaff = snapshot.destinationStaff || snapshot.destination_staff;
+  if (Array.isArray(destStaff)) {
+    for (const ds of destStaff) {
+      if (ds && ds.id) {
+        await setDoc(doc(db, 'destination_staff', String(ds.id)), sanitizeForFirestore(ds), { merge: true });
+        destStaffCount++;
+      }
+    }
+    safeAppStorage.setJSON('dpl_destination_staff', destStaff);
+  }
+
+  // 10. Notifications
+  if (Array.isArray(snapshot.notifications)) {
+    for (const notif of snapshot.notifications) {
+      if (notif && notif.id) {
+        await setDoc(doc(db, 'notifications', String(notif.id)), sanitizeForFirestore(notif), { merge: true });
+        notifCount++;
+      }
+    }
+  }
+
+  // 11. Activity Logs
+  const actLogs = snapshot.activityLogs || snapshot.activity_logs;
+  if (Array.isArray(actLogs)) {
+    for (const log of actLogs) {
+      if (log && log.id) {
+        await setDoc(doc(db, 'activity_logs', String(log.id)), sanitizeForFirestore(log), { merge: true });
+        activityLogsCount++;
+      }
+    }
+    safeAppStorage.setJSON('dpl_system_activity_logs', actLogs);
+  }
+
+  // 12. Company Info & Settings
+  if (snapshot.companyInfo) {
+    try {
+      await setDoc(doc(db, 'settings', 'companyInfo'), sanitizeForFirestore(snapshot.companyInfo), { merge: true });
+    } catch (_) {}
+  }
+
+  // Notify active components
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('dpl_cases_updated'));
+    window.dispatchEvent(new Event('dpl_finance_updated'));
+    window.dispatchEvent(new Event('dpl_branding_changed'));
+    window.dispatchEvent(new Event('storage'));
+  }
+
   return {
     success: true,
     restoredCounts: {
@@ -963,7 +1214,13 @@ export async function restoreDatabaseSnapshot(snapshot: any): Promise<{
       finance: finCount,
       vehicles: vehCount,
       clients: clientCount,
-      users: userCount
+      users: userCount,
+      vendors: vendorCount,
+      recurringTemplates: recurringCount,
+      staffLedgers: staffLedgersCount,
+      destinationStaff: destStaffCount,
+      notifications: notifCount,
+      activityLogs: activityLogsCount
     }
   };
 }

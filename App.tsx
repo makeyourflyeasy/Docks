@@ -16,7 +16,7 @@ import SplashScreen from './components/SplashScreen';
 import LoginModeSelection, { SelectedModePayload } from './components/LoginModeSelection';
 import GoldenAmountWidget from './components/GoldenAmountWidget';
 import ClientPortal from './components/ClientPortal';
-import TopModeSwitcher, { ModeOption, APP_MODES } from './components/TopModeSwitcher';
+import { ModeOption } from './components/TopModeSwitcher';
 import { AppNotification, UserRole } from './types';
 import NotificationModal from './components/NotificationModal';
 import AuthModal from './components/AuthModal';
@@ -444,10 +444,11 @@ const App: React.FC = () => {
           ))}
         </nav>
 
-        {/* Active Session & Account Switcher */}
+        {/* Active Session Info */}
         <div className={`px-3 py-2 border-t border-white/5 ${!desktopSidebarExpanded && 'lg:hidden'}`}>
-          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between">
-            <div className="min-w-0 pr-2">
+          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center gap-2.5">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <div className="min-w-0 flex-1">
               <span className="text-[10px] text-amber-400 font-mono uppercase block truncate">
                 Role: {currentRole}
               </span>
@@ -455,14 +456,6 @@ const App: React.FC = () => {
                 {currentRole === UserRole.CLIENT ? currentClientName : 'Active User'}
               </span>
             </div>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="text-[10px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 px-2 py-1 rounded-lg transition whitespace-nowrap cursor-pointer"
-              title="Switch user account"
-            >
-              Switch ID
-            </button>
           </div>
         </div>
 
@@ -516,17 +509,6 @@ const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-            
-            {/* Direct Portal Mode Switcher for Desktop / Laptop */}
-            <div className="hidden md:flex items-center">
-              <TopModeSwitcher 
-                currentRole={currentRole}
-                onSwitchMode={handleSwitchMode}
-                onSignOut={handleSignOut}
-                onOpenAuthModal={() => setIsAuthModalOpen(true)}
-              />
-            </div>
-
             {/* Sone se Amount Option (Golden Amount Display & Treasury Breakdown) */}
             <GoldenAmountWidget 
               onOpenFinance={() => setActiveView('finance')}
