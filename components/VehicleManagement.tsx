@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Truck, Plus, Search, FileText, User, Settings, Save, MapPin, Calendar, Clock, AlertTriangle, Trash2, CheckCircle, X, ChevronRight, Eye, Activity, CreditCard, Filter, AlertCircle, Download, Loader2, Ban, FileCheck, ShieldCheck, UploadCloud, CheckSquare, Square, Layers } from 'lucide-react';
-import { Vehicle, Transporter, VehicleCategory, VehicleType, TrackerInfo, VehicleHistory } from '../types';
+import { Vehicle, Transporter, VehicleCategory, VehicleType, TrackerInfo, VehicleHistory, UserRole } from '../types';
+import { submitVehicleActionApproval } from '../services/approvalService';
 import { autoFillVehicleData } from '../services/geminiService';
 import { safeAppStorage } from '../services/storage';
 import { downloadVehicleDetailsPdf, downloadVehicleNocPdf } from '../services/pdfExportService';
@@ -34,13 +35,45 @@ const INITIAL_VEHICLES: Vehicle[] = [];
 interface VehicleManagementProps {
   initialFilter?: any;
   clearFilter?: () => void;
+  userRole?: UserRole;
+  userRoles?: UserRole[];
 }
 
-const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, clearFilter }) => {
+const VehicleManagement: React.FC<VehicleManagementProps> = ({ 
+  initialFilter, 
+  clearFilter,
+  userRole: propUserRole,
+  userRoles: propUserRoles 
+}) => {
   const [activeTab, setActiveTab] = useState<'transporters' | 'vehicles'>(() => {
     const saved = safeAppStorage.getItem('dpl_vehicle_tab');
     return saved === 'transporters' ? 'transporters' : 'vehicles';
   });
+
+  const effectiveRole = propUserRole || (safeAppStorage.getItem('dpl_user_role') as UserRole) || UserRole.ADMIN;
+  const effectiveRoles: UserRole[] = useMemo(() => {
+    if (propUserRoles && propUserRoles.length > 0) return propUserRoles;
+    const stored = safeAppStorage.getItem('dpl_user_roles');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.warn("Could not parse dpl_user_roles:", e);
+      }
+    }
+    return [effectiveRole];
+  }, [propUserRoles, effectiveRole]);
+
+  const hasAdminRole = effectiveRoles.includes(UserRole.ADMIN);
+  const hasVehicleMgrRole = hasAdminRole || effectiveRoles.includes(UserRole.VEHICLE_MANAGER);
+
+  // Approval request state for vehicle actions (delete, cancel, edit)
+  const [showVehicleApprovalModal, setShowVehicleApprovalModal] = useState(false);
+  const [approvalTargetVehicle, setApprovalTargetVehicle] = useState<Vehicle | null>(null);
+  const [approvalVehicleAction, setApprovalVehicleAction] = useState<'DELETE' | 'CANCEL' | 'EDIT'>('DELETE');
+  const [approvalVehicleReason, setApprovalVehicleReason] = useState('');
+  const [isSubmittingVehicleApproval, setIsSubmittingVehicleApproval] = useState(false);
 
   useEffect(() => {
     safeAppStorage.setItem('dpl_vehicle_tab', activeTab);
@@ -386,9 +419,54 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
   };
 
   const handleDeleteVehicle = (id: number) => {
-    if (window.confirm("Are you sure you want to delete this vehicle?")) {
-      setVehicles(vehicles.filter(v => v.id !== id));
-      deleteVehicleFromFirestore(id);
+    const targetVehicle = vehicles.find(v => v.id === id);
+    if (!targetVehicle) return;
+
+    if (hasAdminRole) {
+      if (window.confirm("Are you sure you want to delete this vehicle?")) {
+        setVehicles(vehicles.filter(v => v.id !== id));
+        deleteVehicleFromFirestore(id);
+      }
+      return;
+    }
+
+    // Non-admin deleting vehicle requires Admin approval notification
+    setApprovalTargetVehicle(targetVehicle);
+    setApprovalVehicleAction('DELETE');
+    setApprovalVehicleReason('');
+    setShowVehicleApprovalModal(true);
+  };
+
+  const handleSubmitVehicleApproval = async () => {
+    if (!approvalTargetVehicle) return;
+    if (!approvalVehicleReason.trim()) {
+      alert("Please provide a reason for this action request.");
+      return;
+    }
+
+    setIsSubmittingVehicleApproval(true);
+    try {
+      const requesterName = safeAppStorage.getItem('dpl_user_name') || 'Vehicle Staff';
+      const requesterRole = effectiveRoles.map(r => r.replace(/_/g, ' ')).join(', ');
+      const res = await submitVehicleActionApproval({
+        actionType: approvalVehicleAction,
+        vehicleItem: approvalTargetVehicle,
+        requestedBy: requesterName,
+        requestedByRole: requesterRole,
+        reason: approvalVehicleReason.trim()
+      });
+
+      setVehicles(prev => prev.map(v => v.id === res.updatedVehicle.id ? res.updatedVehicle : v));
+      if (selectedVehicle?.id === res.updatedVehicle.id) {
+        setSelectedVehicle(res.updatedVehicle);
+      }
+      setShowVehicleApprovalModal(false);
+      alert(`Approval request submitted to Super Admin to ${approvalVehicleAction.toLowerCase()} vehicle ${approvalTargetVehicle.registrationNumber}.`);
+    } catch (err) {
+      console.error("Failed to submit vehicle approval request:", err);
+      alert("Failed to submit approval request. Please try again.");
+    } finally {
+      setIsSubmittingVehicleApproval(false);
     }
   };
 
@@ -1024,8 +1102,15 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
                             </button>
                             <button
                               onClick={() => {
-                                setVehicleToCancel(v);
-                                setCancellationReason('Operational De-Registration & Contract Release');
+                                if (hasAdminRole) {
+                                  setVehicleToCancel(v);
+                                  setCancellationReason('Operational De-Registration & Contract Release');
+                                } else {
+                                  setApprovalTargetVehicle(v);
+                                  setApprovalVehicleAction('CANCEL');
+                                  setApprovalVehicleReason('');
+                                  setShowVehicleApprovalModal(true);
+                                }
                               }}
                               className="text-gray-400 hover:text-red-400 hover:bg-red-500/10 px-2 py-1 rounded-lg transition-colors text-xs flex items-center gap-1 border border-white/5"
                               title="Cancel / De-register Vehicle & Generate NOC"
@@ -1051,7 +1136,14 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
                           <span>PDF</span>
                         </button>
                         <button onClick={() => setSelectedVehicle(v)} className="text-brand-400 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/5" title="View Profile"><Eye size={15}/></button>
-                        <button onClick={() => handleDeleteVehicle(v.id)} className="text-gray-500 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-white/5" title="Delete Vehicle Record"><Trash2 size={15}/></button>
+                        {v.pendingApproval ? (
+                          <span className="text-[10px] font-mono px-2 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                            <Clock size={12} className="animate-spin text-amber-400" />
+                            <span>Pending ({v.pendingApproval.type || (v.pendingApproval as any).action})</span>
+                          </span>
+                        ) : (
+                          <button onClick={() => handleDeleteVehicle(v.id)} className="text-gray-500 hover:text-red-400 transition-colors p-1.5 rounded-lg hover:bg-white/5" title="Delete Vehicle Record"><Trash2 size={15}/></button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1329,6 +1421,62 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({ initialFilter, cl
         preSelectedIds={selectedVehicleIds}
         initialDocType={docsModalType}
       />
+
+      {/* Admin Approval Request Modal for Vehicle Deletion / Cancellation */}
+      {showVehicleApprovalModal && approvalTargetVehicle && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-lg border border-amber-500/30 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-amber-400 font-bold text-base">
+                <ShieldCheck size={20} className="text-amber-400" />
+                <span>Super Admin Approval Required</span>
+              </div>
+              <button onClick={() => setShowVehicleApprovalModal(false)} className="text-gray-400 hover:text-white p-1">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-200 space-y-1">
+              <p className="font-semibold text-white">Vehicle: {approvalTargetVehicle.registrationNumber} ({approvalTargetVehicle.brokerName || 'Direct'})</p>
+              <p className="text-gray-300 leading-relaxed">
+                Modifying, canceling or deleting active fleet records requires authorization from the Administrator. An approval notification will be dispatched to the Super Admin.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-gray-300 block">
+                Reason for {approvalVehicleAction} *
+              </label>
+              <textarea
+                rows={3}
+                placeholder={`Explain why you need to ${approvalVehicleAction.toLowerCase()} vehicle ${approvalTargetVehicle.registrationNumber}...`}
+                value={approvalVehicleReason}
+                onChange={(e) => setApprovalVehicleReason(e.target.value)}
+                className="w-full bg-black/40 border border-white/15 rounded-xl p-3 text-white text-xs sm:text-sm outline-none focus:border-amber-400 placeholder:text-gray-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowVehicleApprovalModal(false)}
+                className="px-4 py-2 rounded-xl text-xs sm:text-sm text-gray-300 hover:text-white hover:bg-white/5 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!approvalVehicleReason.trim() || isSubmittingVehicleApproval}
+                onClick={handleSubmitVehicleApproval}
+                className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition shadow-lg shadow-amber-600/30 flex items-center gap-1.5"
+              >
+                {isSubmittingVehicleApproval ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
+                <span>Submit for Approval</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

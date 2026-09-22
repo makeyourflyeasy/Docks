@@ -29,7 +29,8 @@ import {
   saveRecurringTemplateToFirestore,
   deleteRecurringTemplateFromFirestore,
   saveClientToFirestore,
-  DEFAULT_CLIENTS
+  DEFAULT_CLIENTS,
+  syncMonthlyStaffSalariesToPayables
 } from '../services/dbService';
 import { exportCSVFile, compressAndPrepareFile } from '../services/fileUtils';
 import { safeAppStorage } from '../services/storage';
@@ -437,6 +438,20 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     }
   }, [payables]);
 
+  // Automatic staff salary generation on the 1st of every month for all office staff members (regardless of role)
+  useEffect(() => {
+    if (!users || users.length === 0) return;
+    syncMonthlyStaffSalariesToPayables(users, payables).then((created) => {
+      if (created && created.length > 0) {
+        setPayables(prev => {
+          const combined = [...created, ...prev];
+          safeAppStorage.setJSON('dpl_live_payables', combined);
+          return combined;
+        });
+      }
+    }).catch((e) => console.warn('Salary auto-sync notice:', e));
+  }, [users]);
+
   // MANUAL POST ALL FIXED EXPENSES & SALARIES FOR CURRENT MONTH
   const handlePostAllMonthlyFixedExpenses = async () => {
     setIsPostingRecurring(true);
@@ -474,17 +489,18 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         }
       }
 
-      // 2. Post staff salaries
+      // 2. Post staff salaries for all staff members (regardless of assigned role)
       for (const u of users) {
-        if (u.role !== UserRole.CLIENT && Number(u.baseSalary || 0) > 0) {
+        if (u.role !== UserRole.CLIENT && u.role !== UserRole.TRANSPORTER && Number(u.baseSalary || 0) > 0) {
           const salaryRef = `SAL-${currentMonthStr}-${u.id}`;
-          const alreadyExists = payables.some(p => p.reference === salaryRef);
+          const alreadyExists = payables.some(p => p.reference === salaryRef || (p.category === 'Staff Payroll & Salaries' && p.party?.trim().toLowerCase() === u.name?.trim().toLowerCase() && p.date === firstOfMonthDate));
           if (!alreadyExists) {
             const netSalary = Math.max(0, Number(u.baseSalary || 0) - Number(u.loansAdvances || 0));
+            const roleLabel = u.designation || (u.role === UserRole.OFFICE_STAFF ? 'Office Staff' : String(u.role).replace(/_/g, ' '));
             const salaryPayable: FinanceEntry = {
-              id: Date.now() + Math.floor(Math.random() * 1000),
+              id: Date.now() + Math.floor(Math.random() * 1000) + addedCount,
               date: firstOfMonthDate,
-              description: `Monthly Salary - ${u.name} (${u.role || 'Staff'}) [Gross: PKR ${Number(u.baseSalary).toLocaleString()}]`,
+              description: `Monthly Salary - ${u.name} (${roleLabel}) [Gross: PKR ${Number(u.baseSalary).toLocaleString()}]`,
               party: u.name,
               amount: netSalary,
               type: 'PAYABLE',

@@ -64,6 +64,7 @@ interface WorkflowStepModalProps {
   stepIndex: number;
   onSaveCase: (updatedCase: Case) => void;
   userRole?: UserRole;
+  userRoles?: UserRole[];
   availableVehicles?: Vehicle[];
   onReportIncident?: (updatedCase: Case) => void;
 }
@@ -76,42 +77,54 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
   stepIndex,
   onSaveCase,
   userRole = UserRole.ADMIN,
+  userRoles,
   availableVehicles = [],
   onReportIncident
 }) => {
   if (!isOpen || !targetCase) return null;
+
+  const rolesList = useMemo(() => {
+    if (userRoles && userRoles.length > 0) return userRoles;
+    return [userRole];
+  }, [userRole, userRoles]);
 
   const categoryWorkflow = useMemo(() => getCategoryWorkflow(targetCase.category), [targetCase.category]);
   const normCategory = useMemo(() => normalizeCategoryName(targetCase.category), [targetCase.category]);
   const activeStepIdx = useMemo(() => getWorkflowStepIndex(targetCase.category, targetCase.status as string), [targetCase.category, targetCase.status]);
   const canEditStep = useMemo(() => {
     if (targetCase.status === CaseStatus.COMPLETED) return false;
-    // Admin and CEO have unrestricted workflow rights
-    if (userRole === UserRole.ADMIN || userRole === UserRole.CEO) {
+    // Admin has unrestricted workflow rights
+    if (rolesList.includes(UserRole.ADMIN)) {
       return true;
     }
     // Client is strictly read-only
-    if (userRole === UserRole.CLIENT) return false;
+    if (rolesList.includes(UserRole.CLIENT) && rolesList.length === 1) return false;
 
-    // Case Manager (Operations Manager) and Documentation Officer can update up to Step 5 (stepIndex <= 4)
-    if (userRole === UserRole.OPERATIONS_MANAGER || userRole === UserRole.DOCUMENTATION_OFFICER) {
-      return stepIndex <= 4;
+    let canEdit = false;
+
+    // Operations Manager can update up to Vehicle Assignment (stepIndex <= 4)
+    if (rolesList.includes(UserRole.OPERATIONS_MANAGER)) {
+      if (stepIndex <= 4) canEdit = true;
     }
 
     const stepStr = String(stepStatus).toLowerCase();
 
-    // Loading Port Staff (loading01): Terminal Wharfage, Port dispatch, Stuffing, Sealing, Weighbridge
-    if (userRole === UserRole.LOADING_PORT_STAFF) {
-      return stepIndex === 3 || stepIndex === 4 || stepIndex === 5 || stepStr.includes('loading') || stepStr.includes('dispatch') || stepStr.includes('wharfage') || stepStr.includes('stuff') || stepStr.includes('vessel');
+    // Loading Port Staff: Terminal Wharfage, Port dispatch, Stuffing, Sealing, Weighbridge, Loading
+    if (rolesList.includes(UserRole.LOADING_PORT_STAFF)) {
+      if (stepIndex === 3 || stepIndex === 4 || stepIndex === 5 || stepStr.includes('loading') || stepStr.includes('dispatch') || stepStr.includes('wharfage') || stepStr.includes('stuff') || stepStr.includes('vessel')) {
+        canEdit = true;
+      }
     }
 
-    // Unloading Port Staff / Destination Officers (Lahore, Peshawar): Unloading, Gate-in, Gate-out, Terminal DO, Empty Return
-    if (userRole === UserRole.UNLOADING_PORT_STAFF) {
-      return stepIndex >= 5 || stepStr.includes('destination') || stepStr.includes('unload') || stepStr.includes('arrival') || stepStr.includes('gate') || stepStr.includes('return') || stepStr.includes('empty') || stepStr.includes('delivery');
+    // Unloading Port Staff / Destination Officers: Unloading, Gate-in, Gate-out, Terminal DO, Empty Return
+    if (rolesList.includes(UserRole.UNLOADING_PORT_STAFF)) {
+      if (stepIndex >= 5 || stepStr.includes('destination') || stepStr.includes('unload') || stepStr.includes('arrival') || stepStr.includes('gate') || stepStr.includes('return') || stepStr.includes('empty') || stepStr.includes('delivery')) {
+        canEdit = true;
+      }
     }
 
-    return true;
-  }, [userRole, targetCase.status, stepIndex, stepStatus]);
+    return canEdit;
+  }, [rolesList, targetCase.status, stepIndex, stepStatus]);
 
   const isReadOnly = !canEditStep || targetCase.status === CaseStatus.COMPLETED;
 

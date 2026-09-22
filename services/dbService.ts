@@ -172,6 +172,70 @@ export async function deleteFinanceFromFirestore(financeId: number | string): Pr
   }
 }
 
+/**
+ * Automatically ensures that all staff members (regardless of their assigned role)
+ * have their monthly base salary automatically posted to Payables on the 1st of every month.
+ */
+export async function syncMonthlyStaffSalariesToPayables(
+  staffUsers: AppUser[],
+  existingPayables?: FinanceEntry[]
+): Promise<FinanceEntry[]> {
+  if (!staffUsers || staffUsers.length === 0) return [];
+  const now = new Date();
+  const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const firstOfMonthDate = `${currentMonthStr}-01`;
+
+  const currentPayables = existingPayables && existingPayables.length > 0 
+    ? existingPayables 
+    : safeAppStorage.getJSON<FinanceEntry[]>('dpl_live_payables', []);
+
+  const newlyCreated: FinanceEntry[] = [];
+
+  for (const user of staffUsers) {
+    // Skip external client or transporter entities
+    if (user.role === UserRole.CLIENT || user.role === UserRole.TRANSPORTER) continue;
+    const salary = Number(user.baseSalary || 0);
+    if (salary <= 0) continue;
+
+    const salaryRef = `SAL-${currentMonthStr}-${user.id}`;
+    const alreadyExists = currentPayables.some(
+      p => p.reference === salaryRef || (p.category === 'Staff Payroll & Salaries' && p.party?.trim().toLowerCase() === user.name?.trim().toLowerCase() && p.date === firstOfMonthDate)
+    );
+
+    if (!alreadyExists && !newlyCreated.some(p => p.reference === salaryRef)) {
+      const netSalary = Math.max(0, salary - Number(user.loansAdvances || 0));
+      const roleLabel = user.designation || (user.role === UserRole.OFFICE_STAFF ? 'Office Staff' : String(user.role).replace(/_/g, ' '));
+      const salaryEntry: FinanceEntry = {
+        id: Date.now() + Math.floor(Math.random() * 10000) + newlyCreated.length,
+        date: firstOfMonthDate,
+        description: `Monthly Salary - ${user.name} (${roleLabel}) [Gross: PKR ${salary.toLocaleString()}]`,
+        party: user.name,
+        amount: netSalary,
+        type: 'PAYABLE',
+        status: 'PENDING',
+        category: 'Staff Payroll & Salaries',
+        reference: salaryRef,
+        paymentMethod: 'BANK',
+        bankName: 'Meezan Bank'
+      };
+
+      try {
+        await saveFinanceToFirestore(salaryEntry);
+      } catch (err) {
+        console.warn('Could not save auto salary payable to Firestore:', err);
+      }
+      newlyCreated.push(salaryEntry);
+    }
+  }
+
+  if (newlyCreated.length > 0) {
+    const updated = [...newlyCreated, ...currentPayables];
+    safeAppStorage.setJSON('dpl_live_payables', updated);
+  }
+
+  return newlyCreated;
+}
+
 // VEHICLES
 export function subscribeToVehicles(
   onData: (items: Vehicle[]) => void,
@@ -283,15 +347,16 @@ export async function updateNotificationInFirestore(notif: AppNotification): Pro
 // ==========================================
 
 export const DEFAULT_DATABASE_USERS: AppUser[] = [
-  { id: 1, userId: 'admin', password: 'dpl01234', name: 'System Administrator', role: UserRole.ADMIN, contact: '0300-1234567', email: 'admin@docks.com', status: 'ACTIVE', isAdmin: true },
-  { id: 2, userId: 'finance', password: 'dpl01234', name: 'Finance Manager', role: UserRole.FINANCE_MANAGER, contact: '0333-5554444', email: 'finance@docks.com', status: 'ACTIVE', isAdmin: true },
-  { id: 3, userId: 'casemanager', password: 'dpl01234', name: 'Case Manager', role: UserRole.OPERATIONS_MANAGER, contact: '0321-9876543', email: 'casemanager@docks.com', status: 'ACTIVE', isAdmin: true },
-  { id: 4, userId: 'vehiclemanager', password: 'dpl01234', name: 'Vehicles Manager', role: UserRole.VEHICLE_MANAGER, contact: '0301-2233445', email: 'transport@docks.com', status: 'ACTIVE' },
-  { id: 5, userId: 'documentmanager', password: 'dpl01234', name: 'Documentation Manager', role: UserRole.DOCUMENTATION_OFFICER, contact: '0304-5566778', email: 'docs@docks.com', status: 'ACTIVE' },
-  { id: 6, userId: 'loading01', password: 'dpl01234', name: 'Loading Staff', role: UserRole.LOADING_PORT_STAFF, contact: '0302-3344556', email: 'loading@docks.com', status: 'ACTIVE' },
-  { id: 7, userId: 'lahore', password: 'dpl01234', name: 'Destination Officer (Lahore)', role: UserRole.UNLOADING_PORT_STAFF, contact: '0303-4455667', email: 'lahore.destination@docks.com', status: 'ACTIVE' },
-  { id: 8, userId: 'peshawar', password: 'dpl01234', name: 'Destination Officer (Peshawar)', role: UserRole.UNLOADING_PORT_STAFF, contact: '0303-9988776', email: 'peshawar.destination@docks.com', status: 'ACTIVE' },
-  { id: 9, userId: 'client01', password: 'dpl01234', name: 'Client User', role: UserRole.CLIENT, contact: '021-111-222-333', email: 'client01@docks.com', status: 'ACTIVE', clientName: 'Client Account' }
+  { id: 1, userId: 'admin', password: 'dpl01234', name: 'System Administrator', role: UserRole.ADMIN, roles: [UserRole.ADMIN], designation: 'System Administrator', contact: '0300-1234567', email: 'admin@docks.com', status: 'ACTIVE', isAdmin: true, baseSalary: 150000 },
+  { id: 2, userId: 'finance', password: 'dpl01234', name: 'Finance Manager', role: UserRole.FINANCE_MANAGER, roles: [UserRole.FINANCE_MANAGER], designation: 'Head of Finance & Accounts', contact: '0333-5554444', email: 'finance@docks.com', status: 'ACTIVE', isAdmin: false, baseSalary: 110000 },
+  { id: 3, userId: 'casemanager', password: 'dpl01234', name: 'Case Manager', role: UserRole.OPERATIONS_MANAGER, roles: [UserRole.OPERATIONS_MANAGER], designation: 'Operations Manager', contact: '0321-9876543', email: 'casemanager@docks.com', status: 'ACTIVE', isAdmin: false, baseSalary: 95000 },
+  { id: 4, userId: 'vehiclemanager', password: 'dpl01234', name: 'Vehicles Manager', role: UserRole.VEHICLE_MANAGER, roles: [UserRole.VEHICLE_MANAGER], designation: 'Fleet & Logistics Incharge', contact: '0301-2233445', email: 'transport@docks.com', status: 'ACTIVE', baseSalary: 85000 },
+  { id: 5, userId: 'documentmanager', password: 'dpl01234', name: 'Documentation Incharge', role: UserRole.OPERATIONS_MANAGER, roles: [UserRole.OPERATIONS_MANAGER], designation: 'Documentation & Clearing Officer', contact: '0304-5566778', email: 'docs@docks.com', status: 'ACTIVE', baseSalary: 75000 },
+  { id: 6, userId: 'loading01', password: 'dpl01234', name: 'Loading Staff', role: UserRole.LOADING_PORT_STAFF, roles: [UserRole.LOADING_PORT_STAFF], designation: 'Loading Port Supervisor', contact: '0302-3344556', email: 'loading@docks.com', status: 'ACTIVE', baseSalary: 65000 },
+  { id: 7, userId: 'lahore', password: 'dpl01234', name: 'Destination Officer (Lahore)', role: UserRole.DESTINATION_PORT_STAFF, roles: [UserRole.DESTINATION_PORT_STAFF], designation: 'Destination Officer (Lahore)', contact: '0303-4455667', email: 'lahore.destination@docks.com', status: 'ACTIVE', baseSalary: 70000 },
+  { id: 8, userId: 'peshawar', password: 'dpl01234', name: 'Destination Officer (Peshawar)', role: UserRole.DESTINATION_PORT_STAFF, roles: [UserRole.DESTINATION_PORT_STAFF], designation: 'Destination Officer (Peshawar)', contact: '0303-9988776', email: 'peshawar.destination@docks.com', status: 'ACTIVE', baseSalary: 70000 },
+  { id: 10, userId: '', password: '', name: 'Tariq Mehmood', role: UserRole.OFFICE_STAFF, roles: [UserRole.OFFICE_STAFF], designation: 'Head Office Coordinator', contact: '0312-7788990', email: 'tariq.office@docks.com', status: 'ACTIVE', baseSalary: 55000 },
+  { id: 9, userId: 'client01', password: 'dpl01234', name: 'Client User', role: UserRole.CLIENT, roles: [UserRole.CLIENT], designation: 'Corporate Importer', contact: '021-111-222-333', email: 'client01@docks.com', status: 'ACTIVE', clientName: 'Client Account' }
 ];
 
 let hasSeededInitialUsers = false;
@@ -459,7 +524,7 @@ export async function syncFirebaseUserToDatabase(
     profilePicture: firebaseUser.photoURL || undefined,
     lastLogin: new Date().toISOString(),
     authProvider: 'google',
-    isAdmin: role === UserRole.ADMIN || role === UserRole.CEO
+    isAdmin: role === UserRole.ADMIN
   };
 
   try {

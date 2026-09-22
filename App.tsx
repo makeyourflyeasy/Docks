@@ -23,6 +23,7 @@ import AuthModal from './components/AuthModal';
 import Logo from './components/Logo';
 import { auth, onAuthStateChanged, testFirestoreConnection } from './services/firebase';
 import { subscribeToNotifications } from './services/dbService';
+import { approveActionRequest, rejectActionRequest } from './services/approvalService';
 import { safeSessionStorage, safeLocalStorage, safeAppStorage } from './services/storage';
 import ErrorBoundary from './components/ErrorBoundary';
 import { appLifecycle } from './services/lifecycle';
@@ -42,6 +43,22 @@ const App: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<UserRole>(() => {
     const saved = safeAppStorage.getItem('dpl_user_role');
     return (saved as UserRole) || UserRole.ADMIN;
+  });
+  const [currentRoles, setCurrentRoles] = useState<UserRole[]>(() => {
+    const saved = safeAppStorage.getItem('dpl_user_roles');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.warn("Could not parse saved roles:", e);
+      }
+    }
+    const single = safeAppStorage.getItem('dpl_user_role') as UserRole;
+    return single ? [single] : [UserRole.ADMIN];
+  });
+  const [currentDesignation, setCurrentDesignation] = useState<string>(() => {
+    return safeAppStorage.getItem('dpl_user_designation') || '';
   });
   const [currentClientName, setCurrentClientName] = useState(() => {
     return safeAppStorage.getItem('dpl_client_name') || '';
@@ -123,37 +140,45 @@ const App: React.FC = () => {
     { id: 'finance', label: 'Finance & Invoices', icon: FileText },
   ];
 
-  // Dynamic navigation items based on active portal mode
+  // Dynamic navigation items based on active portal mode & multi-roles
   const currentNavItems = (() => {
-    switch (currentRole) {
-      case UserRole.CLIENT:
-        return clientNavItems;
-      case UserRole.FINANCE_MANAGER:
-      case UserRole.ACCOUNTANT:
-        return [
-          { id: 'finance', label: 'Finance & Accounts', icon: FileText },
-          { id: 'cases', label: 'Cases & Records', icon: FolderKanban },
-        ];
-      case UserRole.HR_MANAGER:
-        return [
-          { id: 'users', label: 'Recruiter & Users', icon: Users },
-          { id: 'vehicles', label: 'Drivers & Fleet', icon: Truck },
-        ];
-      case UserRole.VEHICLE_MANAGER:
-      case UserRole.TRANSPORTER:
-        return [
-          { id: 'vehicles', label: 'Fleet & Vehicles', icon: Truck },
-          { id: 'cases', label: 'Cases & Containers', icon: FolderKanban },
-        ];
-      case UserRole.DOCUMENTATION_OFFICER:
-      case UserRole.OPERATIONS_MANAGER:
-        return [
-          { id: 'cases', label: 'Case Documentation', icon: FolderKanban },
-          { id: 'vehicles', label: 'Vehicles & Drivers', icon: Truck },
-        ];
-      default:
-        return adminNavItems;
+    const isAdminUser = currentRoles.includes(UserRole.ADMIN) || currentRole === UserRole.ADMIN;
+    if (isAdminUser) {
+      return adminNavItems;
     }
+    if (currentRole === UserRole.CLIENT) {
+      return clientNavItems;
+    }
+    if (currentRole === UserRole.TRANSPORTER) {
+      return [
+        { id: 'vehicles', label: 'Fleet & Vehicles', icon: Truck },
+        { id: 'cases', label: 'Assigned Shipments', icon: FolderKanban },
+      ];
+    }
+
+    const items: Array<{ id: string; label: string; icon: any }> = [];
+
+    const hasCasesAccess = currentRoles.includes(UserRole.OPERATIONS_MANAGER) || 
+                           currentRoles.includes(UserRole.LOADING_PORT_STAFF) || 
+                           currentRoles.includes(UserRole.UNLOADING_PORT_STAFF);
+    const hasFinanceAccess = currentRoles.includes(UserRole.FINANCE_MANAGER);
+    const hasVehiclesAccess = currentRoles.includes(UserRole.VEHICLE_MANAGER);
+
+    if (hasCasesAccess) {
+      items.push({ id: 'cases', label: 'Case Management', icon: FolderKanban });
+    }
+    if (hasFinanceAccess) {
+      items.push({ id: 'finance', label: 'Finance & Accounts', icon: FileText });
+    }
+    if (hasVehiclesAccess) {
+      items.push({ id: 'vehicles', label: 'Fleet & Vehicles', icon: Truck });
+    }
+
+    if (items.length === 0) {
+      return [{ id: 'cases', label: 'Case Management', icon: FolderKanban }];
+    }
+
+    return items;
   })();
 
   const handleSwitchMode = (mode: ModeOption) => {
@@ -231,18 +256,31 @@ const App: React.FC = () => {
     setIsNotificationModalOpen(true);
   };
 
-  const handleNotificationAction = (action: 'ACCEPT' | 'REJECT' | 'VIEW') => {
+  const handleNotificationAction = async (action: 'ACCEPT' | 'REJECT' | 'VIEW') => {
     if (!selectedNotification) return;
 
     if (action === 'VIEW') {
-        if (selectedNotification.targetView) {
-            handleNavigate(selectedNotification.targetView, { ...selectedNotification.targetFilter, notificationId: selectedNotification.id });
-        }
-        setIsNotificationModalOpen(false);
-        setIsActionCenterOpen(false);
-    } else {
-        handleActionComplete(selectedNotification.id);
-        setIsNotificationModalOpen(false);
+      if (selectedNotification.targetView) {
+        handleNavigate(selectedNotification.targetView, { ...selectedNotification.targetFilter, notificationId: selectedNotification.id });
+      }
+      setIsNotificationModalOpen(false);
+      setIsActionCenterOpen(false);
+    } else if (action === 'ACCEPT') {
+      try {
+        await approveActionRequest(selectedNotification);
+      } catch (err) {
+        console.error("Failed to approve action request:", err);
+      }
+      handleActionComplete(selectedNotification.id);
+      setIsNotificationModalOpen(false);
+    } else if (action === 'REJECT') {
+      try {
+        await rejectActionRequest(selectedNotification);
+      } catch (err) {
+        console.error("Failed to reject action request:", err);
+      }
+      handleActionComplete(selectedNotification.id);
+      setIsNotificationModalOpen(false);
     }
   };
 
@@ -265,10 +303,10 @@ const App: React.FC = () => {
 
     switch(activeView) {
       case 'dashboard': return <Dashboard onNavigate={handleNavigate} />;
-      case 'cases': return <CaseManagement initialFilter={navigationFilter} clearFilter={() => setNavigationFilter(null)} onActionComplete={handleActionComplete} customLogo={customLogo} userRole={currentRole} currentClientName={currentClientName} />;
+      case 'cases': return <CaseManagement initialFilter={navigationFilter} clearFilter={() => setNavigationFilter(null)} onActionComplete={handleActionComplete} customLogo={customLogo} userRole={currentRole} userRoles={currentRoles} currentClientName={currentClientName} />;
       case 'drive': return <GoogleDriveManager />;
       case 'finance': return <Finance initialFilter={navigationFilter} onActionComplete={handleActionComplete} customLogo={customLogo} />;
-      case 'vehicles': return <VehicleManagement initialFilter={navigationFilter} clearFilter={() => setNavigationFilter(null)} />;
+      case 'vehicles': return <VehicleManagement initialFilter={navigationFilter} clearFilter={() => setNavigationFilter(null)} userRole={currentRole} userRoles={currentRoles} />;
       case 'users': return <UserManagement />;
       case 'settings': return <AppSettings onReplaySplash={() => { setIsReplaySplashOnly(true); setShowSplash(true); }} />;
       default: return <Dashboard onNavigate={handleNavigate} />;
@@ -298,6 +336,14 @@ const App: React.FC = () => {
         <LoginModeSelection 
           onSelectMode={(payload: SelectedModePayload) => {
             setCurrentRole(payload.role);
+            const roles = payload.roles && payload.roles.length > 0 ? payload.roles : [payload.role];
+            setCurrentRoles(roles);
+            if (payload.designation) {
+              setCurrentDesignation(payload.designation);
+              safeAppStorage.setItem('dpl_user_designation', payload.designation);
+            }
+            safeAppStorage.setItem('dpl_user_roles', JSON.stringify(roles));
+
             if (payload.clientName) {
               setCurrentClientName(payload.clientName);
               safeAppStorage.setItem('dpl_client_name', payload.clientName);
@@ -449,8 +495,15 @@ const App: React.FC = () => {
           <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center gap-2.5">
             <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
             <div className="min-w-0 flex-1">
+              {currentDesignation && (
+                <span className="text-[10px] text-brand-300 font-medium block truncate">
+                  {currentDesignation}
+                </span>
+              )}
               <span className="text-[10px] text-amber-400 font-mono uppercase block truncate">
-                Role: {currentRole}
+                {currentRoles && currentRoles.length > 1 
+                  ? `${currentRoles.length} Roles Assigned` 
+                  : `Role: ${currentRole}`}
               </span>
               <span className="text-[11px] text-gray-300 font-bold block truncate">
                 {currentRole === UserRole.CLIENT ? currentClientName : 'Active User'}

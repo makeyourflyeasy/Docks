@@ -20,6 +20,8 @@ import { authenticateDatabaseUser, DEFAULT_DATABASE_USERS } from '../services/db
 
 export interface SelectedModePayload {
   role: UserRole;
+  roles?: UserRole[];
+  designation?: string;
   clientName?: string;
   targetView: string;
   displayName: string;
@@ -79,22 +81,33 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
       
       // Determine user role and navigation target
       const userRole = (user.role as UserRole) || UserRole.ADMIN;
+      const userRoles = (user.roles && user.roles.length > 0) ? user.roles : [userRole];
+      safeAppStorage.setItem('dpl_user_roles', JSON.stringify(userRoles));
+      if (user.designation) {
+        safeAppStorage.setItem('dpl_user_designation', user.designation);
+      }
+      safeAppStorage.setItem('dpl_current_user_name', user.name || user.userId || 'Staff');
+
       let targetView = 'dashboard';
 
       if (userRole === UserRole.CLIENT) {
         targetView = 'cases';
-      } else if (userRole === UserRole.FINANCE_MANAGER || userRole === UserRole.ACCOUNTANT) {
+      } else if (userRoles.includes(UserRole.FINANCE_MANAGER)) {
         targetView = 'finance';
-      } else if (userRole === UserRole.VEHICLE_MANAGER || userRole === UserRole.TRANSPORTER) {
+      } else if (userRoles.includes(UserRole.VEHICLE_MANAGER) || userRole === UserRole.TRANSPORTER) {
         targetView = 'vehicles';
-      } else if (hasActiveDraft && (userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER)) {
+      } else if (hasActiveDraft && (userRoles.includes(UserRole.ADMIN) || userRoles.includes(UserRole.OPERATIONS_MANAGER))) {
         targetView = 'cases';
       } else if (lastLocationRole === userRole && lastLocationView) {
         targetView = lastLocationView;
+      } else if (userRoles.includes(UserRole.OPERATIONS_MANAGER) || userRoles.includes(UserRole.LOADING_PORT_STAFF) || userRoles.includes(UserRole.UNLOADING_PORT_STAFF)) {
+        targetView = 'cases';
       }
 
       onSelectMode({
         role: userRole,
+        roles: userRoles,
+        designation: user.designation,
         clientName: user.clientName || (userRole === UserRole.CLIENT ? user.name : 'Client Portal'),
         targetView: targetView,
         displayName: user.name || user.userId || 'Staff User'

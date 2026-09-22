@@ -23,7 +23,8 @@ import {
   subscribeToStaffLedgers, 
   subscribeToCases, 
   subscribeToFinances, 
-  DEFAULT_DATABASE_USERS 
+  DEFAULT_DATABASE_USERS,
+  syncMonthlyStaffSalariesToPayables 
 } from '../services/dbService';
 
 import { ClientRegistrationModal } from './ClientRegistrationModal';
@@ -62,6 +63,7 @@ const UserManagement: React.FC = () => {
     const unsubUsers = subscribeToUsers((data) => {
       if (data && data.length > 0) {
         setUsers(data);
+        syncMonthlyStaffSalariesToPayables(data).catch(() => {});
       }
     });
 
@@ -133,6 +135,8 @@ const UserManagement: React.FC = () => {
     email: '',
     contact: '',
     role: '' as UserRole | '',
+    roles: [] as UserRole[],
+    designation: '',
     generatedId: '',
     generatedPass: '',
     profilePicture: '',
@@ -196,7 +200,9 @@ const UserManagement: React.FC = () => {
       name: '',
       email: '',
       contact: '',
-      role: roleType === 'TRANSPORTER' ? UserRole.TRANSPORTER : UserRole.DATA_ENTRY_OFFICER,
+      role: roleType === 'TRANSPORTER' ? UserRole.TRANSPORTER : UserRole.OPERATIONS_MANAGER,
+      roles: roleType === 'TRANSPORTER' ? [UserRole.TRANSPORTER] : [UserRole.OPERATIONS_MANAGER],
+      designation: '',
       generatedId,
       generatedPass,
       profilePicture: '',
@@ -231,11 +237,15 @@ const UserManagement: React.FC = () => {
     const roleType = isTransporter ? 'TRANSPORTER' : 'STAFF';
     setSelectedOnboardingRole(roleType);
 
+    const userRoles = (user.roles && user.roles.length > 0) ? user.roles : (user.role ? [user.role] : [UserRole.OPERATIONS_MANAGER]);
+
     setFormData({
       name: user.name,
       email: user.email,
       contact: user.contact,
       role: user.role,
+      roles: userRoles,
+      designation: user.designation || '',
       generatedId: user.userId || '',
       generatedPass: user.password || '',
       profilePicture: user.profilePicture || '',
@@ -270,9 +280,10 @@ const UserManagement: React.FC = () => {
       return;
     }
 
-    const assignedRole = selectedOnboardingRole === 'TRANSPORTER' 
-      ? UserRole.TRANSPORTER 
-      : (formData.role || UserRole.DATA_ENTRY_OFFICER);
+    const assignedRoles = selectedOnboardingRole === 'TRANSPORTER' 
+      ? [UserRole.TRANSPORTER] 
+      : (formData.roles && formData.roles.length > 0 ? formData.roles : [formData.role || UserRole.OPERATIONS_MANAGER]);
+    const primaryRole = assignedRoles[0] || UserRole.OPERATIONS_MANAGER;
 
     if (isEditing && editingId) {
       const updatedUser: AppUser = {
@@ -280,8 +291,11 @@ const UserManagement: React.FC = () => {
         name: formData.name.trim(),
         email: formData.email.trim(),
         contact: formData.contact.trim(),
-        role: assignedRole as UserRole,
+        role: primaryRole as UserRole,
+        roles: assignedRoles as UserRole[],
+        designation: formData.designation.trim(),
         status: 'ACTIVE',
+        isAdmin: assignedRoles.includes(UserRole.ADMIN),
         userId: formData.generatedId.trim(),
         password: formData.generatedPass.trim(),
         profilePicture: formData.profilePicture,
@@ -321,8 +335,11 @@ const UserManagement: React.FC = () => {
         name: formData.name.trim(),
         email: formData.email.trim(),
         contact: formData.contact.trim(),
-        role: assignedRole as UserRole,
+        role: primaryRole as UserRole,
+        roles: assignedRoles as UserRole[],
+        designation: formData.designation.trim(),
         status: 'ACTIVE',
+        isAdmin: assignedRoles.includes(UserRole.ADMIN),
         userId: formData.generatedId.trim(),
         password: formData.generatedPass.trim(),
         profilePicture: formData.profilePicture,
@@ -603,13 +620,22 @@ const UserManagement: React.FC = () => {
                     </div>
                     <div className="min-w-0">
                       <h4 className="font-bold text-white text-sm truncate">{user.name}</h4>
-                      <div className="flex items-center gap-1.5 mt-0.5">
+                      {user.designation && (
+                        <p className="text-[11px] text-amber-300/90 font-medium truncate">{user.designation}</p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
                         <span className="text-[11px] font-mono font-semibold text-brand-400 bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/20">
                           {user.userId || `EMP-${user.id}`}
                         </span>
-                        <span className="bg-white/10 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-gray-200 font-medium truncate">
-                          {user.role.replace(/_/g, ' ')}
-                        </span>
+                        {(user.roles && user.roles.length > 0 ? user.roles : [user.role]).map(r => (
+                          <span key={r} className={`rounded px-1.5 py-0.5 text-[10px] font-medium border truncate ${
+                            r === UserRole.ADMIN 
+                              ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' 
+                              : 'bg-white/10 border-white/10 text-gray-200'
+                          }`}>
+                            {r.replace(/_/g, ' ')}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -699,13 +725,24 @@ const UserManagement: React.FC = () => {
                         </div>
                         <div>
                           <span className="font-bold text-white block">{user.name}</span>
+                          {user.designation && (
+                            <span className="text-[11px] text-amber-300 block">{user.designation}</span>
+                          )}
                           <span className="text-xs font-mono text-brand-400">{user.userId || `EMP-${user.id}`}</span>
                         </div>
                       </td>
                       <td className="p-4">
-                        <span className="bg-white/10 border border-white/10 rounded-md px-2.5 py-1 text-xs text-gray-200 font-medium inline-block">
-                          {user.role.replace(/_/g, ' ')}
-                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {(user.roles && user.roles.length > 0 ? user.roles : [user.role]).map(r => (
+                            <span key={r} className={`rounded-md px-2 py-0.5 text-[11px] font-medium inline-block border ${
+                              r === UserRole.ADMIN
+                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                : 'bg-white/10 border-white/10 text-gray-200'
+                            }`}>
+                              {r.replace(/_/g, ' ')}
+                            </span>
+                          ))}
+                        </div>
                         {user.fatherName && (
                           <p className="text-[11px] text-gray-400 mt-1">S/O: {user.fatherName}</p>
                         )}
@@ -1352,17 +1389,14 @@ const UserManagement: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="text-gray-300 font-medium block mb-1">Role / Designation *</label>
-                    <select 
-                      value={formData.role}
-                      onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
-                      className="w-full bg-slate-900 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
-                    >
-                      <option value="">Select Staff Role...</option>
-                      {Object.keys(UserRole).filter(r => r !== 'CLIENT' && r !== 'TRANSPORTER').map(r => (
-                        <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
-                      ))}
-                    </select>
+                    <label className="text-gray-300 font-medium block mb-1">Designation (Custom Title)</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Senior Operations Executive / Port Dispatcher"
+                      value={formData.designation}
+                      onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
+                      className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
+                    />
                   </div>
                   <div>
                     <label className="text-gray-300 font-medium block mb-1">Primary Phone *</label>
@@ -1373,6 +1407,233 @@ const UserManagement: React.FC = () => {
                       onChange={(e) => setFormData({ ...formData, contact: e.target.value })}
                       className="w-full bg-black/40 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500"
                     />
+                  </div>
+
+                  {/* Multi-Role Assignment Section */}
+                  <div className="sm:col-span-2 bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <div>
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                          <ShieldCheck size={16} className="text-brand-400" />
+                          System Role Rights & Multi-Role Assignment *
+                        </h4>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          Admin has universal access (exclusive). For non-admin staff, you can select multiple roles to grant combined rights across modules.
+                        </p>
+                      </div>
+                      <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-300 shrink-0">
+                        {formData.roles.includes(UserRole.ADMIN) 
+                          ? 'Super Admin (All Rights)' 
+                          : `${formData.roles.length} Role(s) Selected`}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                      {/* ADMIN - Exclusive */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => ({
+                            ...prev,
+                            role: UserRole.ADMIN,
+                            roles: [UserRole.ADMIN]
+                          }));
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          formData.roles.includes(UserRole.ADMIN)
+                            ? 'bg-purple-600/25 border-purple-500 shadow-md shadow-purple-500/20 ring-1 ring-purple-400'
+                            : 'bg-black/30 border-white/10 hover:border-purple-500/40 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-purple-400 shadow-[0_0_8px_currentColor]"></span>
+                            Administrator
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-purple-500/30 text-purple-200">
+                            Super Access
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+                          Full system control, approval rights, and unrestricted access across all modules.
+                        </p>
+                      </button>
+
+                      {/* OPERATIONS MANAGER */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => {
+                            let r = prev.roles.filter(x => x !== UserRole.ADMIN);
+                            if (r.includes(UserRole.OPERATIONS_MANAGER)) {
+                              r = r.filter(x => x !== UserRole.OPERATIONS_MANAGER);
+                              if (r.length === 0) r = [UserRole.OPERATIONS_MANAGER];
+                            } else {
+                              r = [...r, UserRole.OPERATIONS_MANAGER];
+                            }
+                            return { ...prev, role: r[0] || UserRole.OPERATIONS_MANAGER, roles: r };
+                          });
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          !formData.roles.includes(UserRole.ADMIN) && formData.roles.includes(UserRole.OPERATIONS_MANAGER)
+                            ? 'bg-blue-600/25 border-blue-500 shadow-md shadow-blue-500/20 ring-1 ring-blue-400'
+                            : 'bg-black/30 border-white/10 hover:border-blue-500/40 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-400 shadow-[0_0_8px_currentColor]"></span>
+                            Operations Manager
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-blue-500/30 text-blue-200">
+                            Cases
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+                          Case registration and operational workflow execution up to vehicle assignment.
+                        </p>
+                      </button>
+
+                      {/* FINANCE MANAGER */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => {
+                            let r = prev.roles.filter(x => x !== UserRole.ADMIN);
+                            if (r.includes(UserRole.FINANCE_MANAGER)) {
+                              r = r.filter(x => x !== UserRole.FINANCE_MANAGER);
+                              if (r.length === 0) r = [UserRole.FINANCE_MANAGER];
+                            } else {
+                              r = [...r, UserRole.FINANCE_MANAGER];
+                            }
+                            return { ...prev, role: r[0] || UserRole.FINANCE_MANAGER, roles: r };
+                          });
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          !formData.roles.includes(UserRole.ADMIN) && formData.roles.includes(UserRole.FINANCE_MANAGER)
+                            ? 'bg-emerald-600/25 border-emerald-500 shadow-md shadow-emerald-500/20 ring-1 ring-emerald-400'
+                            : 'bg-black/30 border-white/10 hover:border-emerald-500/40 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_currentColor]"></span>
+                            Finance Manager
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-200">
+                            Finance
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+                          Manages entire finance suite: cashbook, bank accounts, ledgers, and billing.
+                        </p>
+                      </button>
+
+                      {/* LOADING PORT STAFF */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => {
+                            let r = prev.roles.filter(x => x !== UserRole.ADMIN);
+                            if (r.includes(UserRole.LOADING_PORT_STAFF)) {
+                              r = r.filter(x => x !== UserRole.LOADING_PORT_STAFF);
+                              if (r.length === 0) r = [UserRole.LOADING_PORT_STAFF];
+                            } else {
+                              r = [...r, UserRole.LOADING_PORT_STAFF];
+                            }
+                            return { ...prev, role: r[0] || UserRole.LOADING_PORT_STAFF, roles: r };
+                          });
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          !formData.roles.includes(UserRole.ADMIN) && formData.roles.includes(UserRole.LOADING_PORT_STAFF)
+                            ? 'bg-amber-600/25 border-amber-500 shadow-md shadow-amber-500/20 ring-1 ring-amber-400'
+                            : 'bg-black/30 border-white/10 hover:border-amber-500/40 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_currentColor]"></span>
+                            Loading Port Staff
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-200">
+                            Loading Port
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+                          Completes loading port workflow, wharfage, stuffing, container seals, and dispatch.
+                        </p>
+                      </button>
+
+                      {/* UNLOADING PORT STAFF */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => {
+                            let r = prev.roles.filter(x => x !== UserRole.ADMIN);
+                            if (r.includes(UserRole.UNLOADING_PORT_STAFF)) {
+                              r = r.filter(x => x !== UserRole.UNLOADING_PORT_STAFF);
+                              if (r.length === 0) r = [UserRole.UNLOADING_PORT_STAFF];
+                            } else {
+                              r = [...r, UserRole.UNLOADING_PORT_STAFF];
+                            }
+                            return { ...prev, role: r[0] || UserRole.UNLOADING_PORT_STAFF, roles: r };
+                          });
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          !formData.roles.includes(UserRole.ADMIN) && formData.roles.includes(UserRole.UNLOADING_PORT_STAFF)
+                            ? 'bg-teal-600/25 border-teal-500 shadow-md shadow-teal-500/20 ring-1 ring-teal-400'
+                            : 'bg-black/30 border-white/10 hover:border-teal-500/40 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-teal-400 shadow-[0_0_8px_currentColor]"></span>
+                            Unloading Port Staff
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-teal-500/30 text-teal-200">
+                            Destination & DO
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+                          Manages destination workflow, arrival, delivery orders (DO), and empty container return.
+                        </p>
+                      </button>
+
+                      {/* VEHICLE MANAGER */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => {
+                            let r = prev.roles.filter(x => x !== UserRole.ADMIN);
+                            if (r.includes(UserRole.VEHICLE_MANAGER)) {
+                              r = r.filter(x => x !== UserRole.VEHICLE_MANAGER);
+                              if (r.length === 0) r = [UserRole.VEHICLE_MANAGER];
+                            } else {
+                              r = [...r, UserRole.VEHICLE_MANAGER];
+                            }
+                            return { ...prev, role: r[0] || UserRole.VEHICLE_MANAGER, roles: r };
+                          });
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          !formData.roles.includes(UserRole.ADMIN) && formData.roles.includes(UserRole.VEHICLE_MANAGER)
+                            ? 'bg-rose-600/25 border-rose-500 shadow-md shadow-rose-500/20 ring-1 ring-rose-400'
+                            : 'bg-black/30 border-white/10 hover:border-rose-500/40 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-rose-400 shadow-[0_0_8px_currentColor]"></span>
+                            Vehicle Manager
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-rose-500/30 text-rose-200">
+                            Fleet
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+                          Manages vehicle registrations, vehicle maintenance, carriers, and fleet management.
+                        </p>
+                      </button>
+                    </div>
                   </div>
                   <div className="sm:col-span-2">
                     <label className="text-gray-300 font-medium block mb-1">Residential Address</label>

@@ -1,23 +1,13 @@
 
 export enum UserRole {
   ADMIN = 'ADMIN',
-  CEO = 'CEO',
   OPERATIONS_MANAGER = 'OPERATIONS_MANAGER',
   FINANCE_MANAGER = 'FINANCE_MANAGER',
-  CRO = 'CRO',
-  ACCOUNTANT = 'ACCOUNTANT',
-  HR_MANAGER = 'HR_MANAGER',
   LOADING_PORT_STAFF = 'LOADING_PORT_STAFF',
   UNLOADING_PORT_STAFF = 'UNLOADING_PORT_STAFF',
+  DESTINATION_PORT_STAFF = 'DESTINATION_PORT_STAFF',
   VEHICLE_MANAGER = 'VEHICLE_MANAGER',
-  DOCUMENTATION_OFFICER = 'DOCUMENTATION_OFFICER',
-  TRANSPORT_ALLOCATION_OFFICER = 'TRANSPORT_ALLOCATION_OFFICER',
-  DATA_ENTRY_OFFICER = 'DATA_ENTRY_OFFICER',
-  CUSTOMER_SUPPORT = 'CUSTOMER_SUPPORT',
-  RIDER = 'RIDER',
-  PEON = 'PEON',
-  SWEEPER = 'SWEEPER',
-  WATCHMAN = 'WATCHMAN',
+  OFFICE_STAFF = 'OFFICE_STAFF',
   CLIENT = 'CLIENT',
   TRANSPORTER = 'TRANSPORTER'
 }
@@ -708,6 +698,14 @@ export interface Case {
   client?: string;
   totalAmount?: number;
   date?: string;
+  pendingApproval?: {
+    type: 'DELETE' | 'CANCEL' | 'EDIT';
+    reason?: string;
+    requestedBy: string;
+    requestedByRole?: string;
+    requestedAt: string;
+    proposedChanges?: any;
+  };
 }
 
 export interface LogEntry {
@@ -1012,6 +1010,14 @@ export interface Vehicle {
   
   history: VehicleHistory[];
   createdAt: string;
+  pendingApproval?: {
+    type: 'DELETE' | 'CANCEL' | 'EDIT';
+    reason?: string;
+    requestedBy: string;
+    requestedByRole?: string;
+    requestedAt: string;
+    proposedChanges?: any;
+  };
 }
 
 export interface AppUser {
@@ -1021,6 +1027,8 @@ export interface AppUser {
   password?: string;
   name: string;
   role: UserRole;
+  roles?: UserRole[]; // Multi-role assignments
+  designation?: string; // Free-text designation/title
   contact: string;
   email: string;
   status: 'ACTIVE' | 'INACTIVE';
@@ -1075,12 +1083,23 @@ export interface AppNotification {
   details?: string; // Full details for the pop-up
   timestamp: string;
   type: 'ACTION' | 'INFO' | 'ALERT';
-  notificationSubType?: 'CASE_APPROVAL' | 'BUYING' | 'GENERAL';
-  status: 'PENDING' | 'RESOLVED';
+  notificationSubType?: 'CASE_APPROVAL' | 'BUYING' | 'GENERAL' | 'DELETION_APPROVAL' | 'CANCELLATION_APPROVAL' | 'EDIT_APPROVAL';
+  status: 'PENDING' | 'RESOLVED' | 'REJECTED';
   actionLabel?: string;
   priority?: 'HIGH' | 'MEDIUM' | 'LOW';
   targetView?: string;
   targetFilter?: any;
+  approvalData?: {
+    entityType: 'case' | 'vehicle';
+    entityId: number | string;
+    entityName?: string;
+    actionType: 'DELETE' | 'CANCEL' | 'EDIT';
+    requestedBy: string;
+    requestedByRole?: string;
+    reason?: string;
+    proposedChanges?: any;
+    originalData?: any;
+  };
 }
 
 export interface Bank {

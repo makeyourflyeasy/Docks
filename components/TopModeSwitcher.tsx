@@ -112,9 +112,9 @@ export const TopModeSwitcher: React.FC<TopModeSwitcherProps> = ({
   // Determine current active mode
   const currentMode = APP_MODES.find(m => m.role === currentRole) || 
     (currentRole === UserRole.CLIENT ? APP_MODES[2] : 
-     (currentRole === UserRole.FINANCE_MANAGER || currentRole === UserRole.ACCOUNTANT) ? APP_MODES[1] :
-     (currentRole === UserRole.DOCUMENTATION_OFFICER || currentRole === UserRole.OPERATIONS_MANAGER) ? APP_MODES[3] :
-     (currentRole === UserRole.HR_MANAGER || currentRole === UserRole.VEHICLE_MANAGER) ? APP_MODES[4] :
+     currentRole === UserRole.FINANCE_MANAGER ? APP_MODES[1] :
+     currentRole === UserRole.OPERATIONS_MANAGER ? APP_MODES[3] :
+     currentRole === UserRole.VEHICLE_MANAGER ? APP_MODES[4] :
      APP_MODES[0]);
 
   // Click outside to close

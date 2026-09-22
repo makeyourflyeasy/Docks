@@ -4,7 +4,7 @@ import {
   MapPin, Anchor, Box, User, AlertCircle, Calendar, Camera, X, Truck, Briefcase, 
   Search, Eye, Share2, AlertTriangle, ArrowLeft, Download, Trash2, Edit, Plus, ListFilter, Filter,
   Sparkles, Scan, FileCheck, Globe, Receipt, Scale, Ship, UploadCloud, Play, Clock, ArrowRight, RefreshCw, Layers,
-  Building, Phone, Mail, DollarSign, Tag, Package, ShieldCheck
+  Building, Phone, Mail, DollarSign, Tag, Package, ShieldCheck, XCircle
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
@@ -15,6 +15,7 @@ import { detectMimeType, compressAndPrepareFile } from '../services/fileUtils';
 import { Container, ExtractedData, CaseStatus, Case, MockDocument, UserRole, CaseCharge, Client, ClientDefaultCharge, CaseStepDetail, WORKFLOW_8_STEPS, Vehicle } from '../types';
 import { WorkflowStepModal } from './WorkflowStepModal';
 import { CompletedCaseDossier } from './CompletedCaseDossier';
+import { submitCaseActionApproval } from '../services/approvalService';
 import { 
   PAKISTAN_CUSTOMS_COMPLIANCE, 
   getStandardChargesForCategory, 
@@ -356,6 +357,7 @@ interface CaseManagementProps {
     onActionComplete?: (notificationId: number) => void;
     customLogo?: string | null;
     userRole?: UserRole;
+    userRoles?: UserRole[];
     currentClientName?: string;
 }
 
@@ -365,6 +367,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
   onActionComplete, 
   customLogo,
   userRole: propUserRole,
+  userRoles: propUserRoles,
   currentClientName: propClientName
 }) => {
   const branding = useBranding();
@@ -450,8 +453,34 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
   // User role state
   const [mockUserRole, setMockUserRole] = useState(UserRole.ADMIN);
 
-  // Determine effective user role and client account
+  // Determine effective user role and multi-roles
   const effectiveRole = propUserRole || (safeAppStorage.getItem('dpl_user_role') as UserRole) || mockUserRole || UserRole.ADMIN;
+  const effectiveRoles: UserRole[] = useMemo(() => {
+    if (propUserRoles && propUserRoles.length > 0) return propUserRoles;
+    const stored = safeAppStorage.getItem('dpl_user_roles');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {
+        console.warn("Could not parse dpl_user_roles:", e);
+      }
+    }
+    return [effectiveRole];
+  }, [propUserRoles, effectiveRole]);
+
+  const hasAdminRole = effectiveRoles.includes(UserRole.ADMIN);
+  const hasOpsRole = hasAdminRole || effectiveRoles.includes(UserRole.OPERATIONS_MANAGER);
+  const hasFinanceRole = hasAdminRole || effectiveRoles.includes(UserRole.FINANCE_MANAGER);
+  const hasLoadingRole = hasAdminRole || effectiveRoles.includes(UserRole.LOADING_PORT_STAFF);
+  const hasUnloadingRole = hasAdminRole || effectiveRoles.includes(UserRole.UNLOADING_PORT_STAFF);
+
+  // Approval request state for finished cases
+  const [showApprovalPromptModal, setShowApprovalPromptModal] = useState(false);
+  const [approvalTargetAction, setApprovalTargetAction] = useState<'DELETE' | 'CANCEL' | 'EDIT'>('EDIT');
+  const [approvalReason, setApprovalReason] = useState('');
+  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
+
   const effectiveClientName = propClientName || safeAppStorage.getItem('dpl_client_name') || 'Global Traders Ltd';
   const isClientUser = effectiveRole === UserRole.CLIENT;
 
@@ -1757,6 +1786,71 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
       updateCaseInFirestore(editedCase).catch((e) => console.warn("Firestore updateCase error:", e));
   };
 
+  const handleInitiateFinishedCaseAction = (action: 'DELETE' | 'CANCEL' | 'EDIT') => {
+    const target = isEditingCase ? editedCase : selectedCase;
+    if (!target) return;
+
+    const isCaseFinished = target.status === CaseStatus.COMPLETED || target.status === ('Delivered' as any) || target.status === ('Completed' as any);
+
+    if (!isCaseFinished || hasAdminRole) {
+      if (action === 'EDIT') {
+        handleEditCaseToggle();
+      } else if (action === 'DELETE') {
+        if (window.confirm("Are you sure you want to delete this case?")) {
+          if (target?.id) {
+            deleteCaseFromFirestore(target.id).catch(() => {});
+          }
+          setCases(cases.filter(c => c.id !== target?.id));
+          setView('list');
+        }
+      } else if (action === 'CANCEL') {
+        if (window.confirm("Are you sure you want to cancel this case?")) {
+          const cancelledCase = { ...target, status: 'Cancelled' as any };
+          setCases(cases.map(c => c.id === target.id ? cancelledCase : c));
+          setSelectedCase(cancelledCase);
+          updateCaseInFirestore(cancelledCase).catch(() => {});
+        }
+      }
+      return;
+    }
+
+    // Finished case & non-admin -> requires Admin approval notification!
+    setApprovalTargetAction(action);
+    setApprovalReason('');
+    setShowApprovalPromptModal(true);
+  };
+
+  const handleSubmitFinishedCaseApproval = async () => {
+    const target = isEditingCase ? editedCase : selectedCase;
+    if (!target) return;
+    if (!approvalReason.trim()) {
+      alert("Please enter a reason or justification for this action.");
+      return;
+    }
+    setIsSubmittingApproval(true);
+    try {
+      const requesterName = safeAppStorage.getItem('dpl_user_name') || 'Staff User';
+      const requesterRole = effectiveRoles.map(r => r.replace(/_/g, ' ')).join(', ');
+      const res = await submitCaseActionApproval({
+        actionType: approvalTargetAction,
+        caseItem: target,
+        requestedBy: requesterName,
+        requestedByRole: requesterRole,
+        reason: approvalReason.trim()
+      });
+
+      setCases(prev => prev.map(c => c.id === res.updatedCase.id ? res.updatedCase : c));
+      setSelectedCase(res.updatedCase);
+      setShowApprovalPromptModal(false);
+      alert(`Your request to ${approvalTargetAction} this finished case has been submitted to Super Admin for approval.`);
+    } catch (err) {
+      console.error("Failed to submit approval request:", err);
+      alert("Could not submit approval request. Please try again.");
+    } finally {
+      setIsSubmittingApproval(false);
+    }
+  };
+
   const handleApproveCase = () => {
     const target = isEditingCase ? editedCase : selectedCase;
     if (!target) return;
@@ -2612,22 +2706,35 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                           </button>
                       )}
                       
-                      {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.OPERATIONS_MANAGER) && (
+                      {(hasOpsRole || hasAdminRole) && (
                         <>
-                          <button onClick={handleEditCaseToggle} className="bg-brand-600/20 hover:bg-brand-600/30 text-brand-400 border border-brand-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-medium">
-                              <Edit size={15} /> Edit Case
-                          </button>
-                          <button onClick={() => {
-                             if(window.confirm("Are you sure you want to delete this case?")) {
-                                if (targetCase?.id) {
-                                  deleteCaseFromFirestore(targetCase.id).catch(() => {});
-                                }
-                                setCases(cases.filter(c => c.id !== targetCase?.id));
-                                setView('list');
-                             }
-                          }} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-medium">
-                              <Trash2 size={15} /> Delete
-                          </button>
+                          {targetCase?.pendingApproval ? (
+                            <div className="bg-amber-500/20 border border-amber-500/40 text-amber-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold">
+                              <Clock size={14} className="animate-spin text-amber-400" />
+                              <span>Pending Admin Approval ({targetCase.pendingApproval.action})</span>
+                            </div>
+                          ) : (
+                            <>
+                              <button 
+                                onClick={() => handleInitiateFinishedCaseAction('EDIT')} 
+                                className="bg-brand-600/20 hover:bg-brand-600/30 text-brand-400 border border-brand-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-medium"
+                              >
+                                <Edit size={15} /> Edit Case
+                              </button>
+                              <button 
+                                onClick={() => handleInitiateFinishedCaseAction('CANCEL')} 
+                                className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-medium"
+                              >
+                                <XCircle size={15} /> Cancel
+                              </button>
+                              <button 
+                                onClick={() => handleInitiateFinishedCaseAction('DELETE')} 
+                                className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm font-medium"
+                              >
+                                <Trash2 size={15} /> Delete
+                              </button>
+                            </>
+                          )}
                         </>
                       )}
                       <button 
@@ -2642,6 +2749,24 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                 )}
             </div>
          </div>
+
+         {/* Pending Approval Banner on Detail View */}
+         {targetCase?.pendingApproval && (
+           <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start sm:items-center justify-between gap-3 text-amber-200 text-xs sm:text-sm shadow-xl">
+             <div className="flex items-center gap-2.5">
+               <AlertTriangle size={18} className="text-amber-400 shrink-0" />
+               <div>
+                 <span className="font-bold text-amber-300">Approval Pending from Super Admin: </span>
+                 <span>
+                   A request to <strong>{targetCase.pendingApproval.action}</strong> this completed case was submitted by <strong>{targetCase.pendingApproval.requestedBy}</strong>. Reason: &quot;{targetCase.pendingApproval.reason}&quot;.
+                 </span>
+               </div>
+             </div>
+             <span className="text-[10px] font-mono uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+               Awaiting Admin
+             </span>
+           </div>
+         )}
 
          {/* Mobile-Friendly PDF Download Alert / Notification Banner */}
          {(isDownloadingPdf || pdfDownloadSuccess || pdfDownloadError) && (
@@ -2950,7 +3075,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                   </h3>
                 </div>
                 <div className="flex items-center gap-2">
-                  {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.FINANCE_MANAGER || effectiveRole === UserRole.CEO) ? (
+                  {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.FINANCE_MANAGER) ? (
                     <button
                       type="button"
                       onClick={() => {
@@ -3059,7 +3184,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                           )}
                         </td>
                         <td className="p-3 text-center">
-                          {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.FINANCE_MANAGER || effectiveRole === UserRole.CEO) ? (
+                          {(effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.FINANCE_MANAGER) ? (
                             <button
                               type="button"
                               onClick={() => {
@@ -6388,6 +6513,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
           stepStatus={selectedStepStatus}
           stepIndex={stepModalIndex}
           userRole={effectiveRole}
+          userRoles={effectiveRoles}
           onSaveCase={(updatedCase) => {
             setCases(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
             setSelectedCase(updatedCase);
@@ -7236,6 +7362,62 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
         filename={directDownloadFilename}
         title={printOptions.onlyInvoice ? "Invoice" : "Case Details"}
       />
+
+      {/* Admin Approval Request Modal for Finished Cases */}
+      {showApprovalPromptModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-lg border border-amber-500/30 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-amber-400 font-bold text-base">
+                <ShieldCheck size={20} className="text-amber-400" />
+                <span>Admin Approval Required</span>
+              </div>
+              <button onClick={() => setShowApprovalPromptModal(false)} className="text-gray-400 hover:text-white p-1">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-200 space-y-1">
+              <p className="font-semibold text-white">This case has finished its operational lifecycle.</p>
+              <p className="text-gray-300 leading-relaxed">
+                Under company operating rules, any <span className="text-amber-300 font-bold uppercase">{approvalTargetAction}</span> action on a completed case requires Super Admin review and authorization.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-gray-300 block">
+                Reason / Justification for {approvalTargetAction} *
+              </label>
+              <textarea
+                rows={3}
+                placeholder={`Explain why this completed case needs to be ${approvalTargetAction.toLowerCase()}ed...`}
+                value={approvalReason}
+                onChange={(e) => setApprovalReason(e.target.value)}
+                className="w-full bg-black/40 border border-white/15 rounded-xl p-3 text-white text-xs sm:text-sm outline-none focus:border-amber-400 placeholder:text-gray-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowApprovalPromptModal(false)}
+                className="px-4 py-2 rounded-xl text-xs sm:text-sm text-gray-300 hover:text-white hover:bg-white/5 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!approvalReason.trim() || isSubmittingApproval}
+                onClick={handleSubmitFinishedCaseApproval}
+                className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition shadow-lg shadow-amber-600/30 flex items-center gap-1.5"
+              >
+                {isSubmittingApproval ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
+                <span>Submit for Approval</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

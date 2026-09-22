@@ -46,7 +46,7 @@ export const CompletedCaseDossier: React.FC<CompletedCaseDossierProps> = ({
   const [holdReasonInput, setHoldReasonInput] = useState('');
 
   const isHoldFlagged = !!targetCase.objectionHold?.flagged;
-  const canManageHold = userRole === UserRole.ADMIN || (userRole as string) === 'MANAGER' || userRole === UserRole.DATA_ENTRY_OFFICER;
+  const canManageHold = userRole === UserRole.ADMIN || (userRole as string) === 'MANAGER' || userRole === UserRole.OPERATIONS_MANAGER;
 
   const handleDownloadDeliveryOrder = async () => {
     if (isHoldFlagged) {
