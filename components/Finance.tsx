@@ -21,6 +21,7 @@ import {
   subscribeToFinances, 
   saveFinanceToFirestore, 
   updateFinanceInFirestore,
+  deleteFinanceFromFirestore,
   subscribeToCases,
   subscribeToClients,
   subscribeToUsers,
@@ -423,65 +424,18 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     return () => unsubscribe();
   }, []);
 
-  // AUTOMATIC 1ST OF THE MONTH RECURRING & SALARY EXPENSES
+  // One-time purge for any previously auto-generated mock recurring/salary entries that were posted during reset
   useEffect(() => {
-    if (users.length === 0 && recurringTemplates.length === 0) return;
-    
-    const now = new Date();
-    const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const firstOfMonthDate = `${currentMonthStr}-01`;
-
-    // A. Check staff salaries on 1st of month
-    users.forEach((u) => {
-      if (u.role !== UserRole.CLIENT && Number(u.baseSalary || 0) > 0) {
-        const salaryRef = `SAL-${currentMonthStr}-${u.id}`;
-        const alreadyExists = payables.some(p => p.reference === salaryRef);
-        if (!alreadyExists) {
-          const netSalary = Math.max(0, Number(u.baseSalary || 0) - Number(u.loansAdvances || 0));
-          const salaryPayable: FinanceEntry = {
-            id: Date.now() + Math.floor(Math.random() * 1000),
-            date: firstOfMonthDate,
-            description: `Monthly Salary - ${u.name} (${u.role || 'Staff'}) [Gross: PKR ${Number(u.baseSalary).toLocaleString()}]`,
-            party: u.name,
-            amount: netSalary,
-            type: 'PAYABLE',
-            status: 'PENDING',
-            category: 'Staff Payroll & Salaries',
-            reference: salaryRef,
-            paymentMethod: 'BANK',
-            bankName: 'Meezan Bank'
-          };
-          saveFinanceToFirestore(salaryPayable).catch(() => {});
-        }
-      }
-    });
-
-    // B. Check active recurring fixed expenses & receivables on 1st of month
-    recurringTemplates.forEach((tpl) => {
-      if (tpl.active) {
-        const recRef = `REC-${currentMonthStr}-${tpl.id}`;
-        const targetList = tpl.type === 'PAYABLE' ? payables : receivables;
-        const alreadyExists = targetList.some(item => item.reference === recRef);
-        if (!alreadyExists) {
-          const recEntry: FinanceEntry = {
-            id: Date.now() + Math.floor(Math.random() * 1000),
-            date: firstOfMonthDate,
-            description: `${tpl.title} (${tpl.category})`,
-            party: tpl.party,
-            amount: tpl.amount,
-            type: tpl.type,
-            status: 'PENDING',
-            category: tpl.category,
-            reference: recRef,
-            recurringTemplateId: tpl.id,
-            paymentMethod: 'BANK',
-            bankName: 'HBL Corporate'
-          };
-          saveFinanceToFirestore(recEntry).catch(() => {});
-        }
-      }
-    });
-  }, [users, recurringTemplates, payables, receivables]);
+    const phantomEntries = payables.filter(p => p.reference?.startsWith('REC-') || p.reference?.startsWith('SAL-'));
+    if (phantomEntries.length > 0 && safeAppStorage.getItem('dpl_cleanup_phantom_v3') !== 'done') {
+      safeAppStorage.setItem('dpl_cleanup_phantom_v3', 'done');
+      phantomEntries.forEach(p => {
+        if (p.id) deleteFinanceFromFirestore(p.id).catch(() => {});
+      });
+      setPayables(prev => prev.filter(p => !p.reference?.startsWith('REC-') && !p.reference?.startsWith('SAL-')));
+      safeAppStorage.setJSON('dpl_live_payables', []);
+    }
+  }, [payables]);
 
   // MANUAL POST ALL FIXED EXPENSES & SALARIES FOR CURRENT MONTH
   const handlePostAllMonthlyFixedExpenses = async () => {
@@ -1975,6 +1929,31 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     ]);
     const filename = `General_Ledger_DPL_${glAccountFilter.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}`;
     exportCSVFile(filename, headers, rows);
+  };
+
+  // Clear all General Ledger vouchers
+  const handleClearGeneralLedger = async () => {
+    if (!window.confirm("Are you sure you want to clear all General Ledger vouchers? This will delete all pending/posted finance entries and reset the ledger balance to PKR 0.")) {
+      return;
+    }
+    try {
+      const allEntries = [...financeData, ...receivables, ...payables];
+      for (const entry of allEntries) {
+        if (entry.id) {
+          await deleteFinanceFromFirestore(entry.id).catch(() => {});
+        }
+      }
+      setFinanceData([]);
+      setReceivables([]);
+      setPayables([]);
+      safeAppStorage.setJSON('dpl_live_finance', []);
+      safeAppStorage.setJSON('dpl_live_receivables', []);
+      safeAppStorage.setJSON('dpl_live_payables', []);
+      window.dispatchEvent(new Event('dpl_finance_updated'));
+      alert("General Ledger cleared successfully. Balance is now PKR 0.");
+    } catch (err: any) {
+      alert("Error clearing General Ledger: " + (err.message || String(err)));
+    }
   };
 
   const StatCard = ({ title, amount, type, icon: Icon, subtitle, badge, onClick }: any) => (
@@ -4069,6 +4048,16 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                   <Download size={14} className="text-gray-400" />
                   <span>CSV</span>
                 </button>
+                {generalLedgerEntries.length > 0 && (
+                  <button 
+                    onClick={handleClearGeneralLedger}
+                    className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md"
+                    title="Clear all general ledger vouchers and reset balance to PKR 0"
+                  >
+                    <Trash2 size={14} className="text-red-400" />
+                    <span>Clear Ledger</span>
+                  </button>
+                )}
               </div>
             </div>
 

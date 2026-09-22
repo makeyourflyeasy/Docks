@@ -988,6 +988,7 @@ export async function wipeCompleteDatabase(): Promise<{
   // 1. Wipe universal unified storage (all operational dpl_ keys in memory, localStorage, and sessionStorage)
   try {
     safeAppStorage.wipeAppOperationalData(true);
+    safeAppStorage.setItem('dpl_cleanup_phantom_v3', 'done');
   } catch (e) {
     console.warn('Storage wipe notice:', e);
   }
@@ -1282,15 +1283,7 @@ export function subscribeToRecurringTemplates(
     collection(db, path),
     (snapshot) => {
       if (snapshot.empty) {
-        // Initialize default templates
-        DEFAULT_RECURRING_TEMPLATES.forEach(async (tpl) => {
-          try {
-            await setDoc(doc(db, path, tpl.id), sanitizeForFirestore(tpl));
-          } catch (e) {
-            console.warn('Seed recurring template warning:', e);
-          }
-        });
-        onData(DEFAULT_RECURRING_TEMPLATES);
+        onData([]);
         return;
       }
       const items: RecurringFinanceTemplate[] = [];
@@ -1302,7 +1295,7 @@ export function subscribeToRecurringTemplates(
     (error) => {
       console.warn(`Firestore subscription notice on ${path}:`, error);
       if (onError) onError(error);
-      onData(DEFAULT_RECURRING_TEMPLATES);
+      onData([]);
     }
   );
 }
