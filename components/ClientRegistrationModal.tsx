@@ -160,7 +160,7 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       // Build initial category charges
       populateCategoryCharges(cat);
 
-      setLoginEnabled(false);
+      setLoginEnabled(true);
       setUserId(`CLT-${Math.floor(1000 + Math.random() * 9000)}`);
       setPassword(`DPL@${Math.floor(100 + Math.random() * 900)}`);
     }
@@ -361,8 +361,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       defaultServiceArrangements: arrangements,
       defaultCharges: validDefaultCharges,
       loginEnabled: loginEnabled,
-      userId: loginEnabled ? userId : undefined,
-      password: loginEnabled ? password : undefined,
+      userId: userId || `CLT-${Math.floor(1000 + Math.random() * 9000)}`,
+      password: password || `DPL@${Math.floor(100 + Math.random() * 900)}`,
       createdAt: initialClient?.createdAt || new Date().toISOString()
     };
 

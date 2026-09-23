@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import Logo from './Logo';
 import { PdfViewerModal } from './PdfViewerModal';
-import { FinanceEntry, Case, Client, LedgerEntry, AppUser, RecurringFinanceTemplate, UserRole, Vendor, CaseStatus } from '../types';
+import { FinanceEntry, Case, Client, LedgerEntry, AppUser, RecurringFinanceTemplate, UserRole, Vendor, CaseStatus, CaseCharge } from '../types';
 import { exportGeneralLedgerToExcel, exportClientLedgerToExcel } from '../services/excelExportService';
 import { 
   getStoredVendors, 
@@ -46,6 +46,7 @@ import {
   sharePdfFile
 } from '../services/pdfExportService';
 import { getStandardChargesForCategory } from '../services/customsComplianceService';
+import { getCategoryArrangements, getArrangementCharges } from '../services/categoryTariffService';
 
 const INITIAL_FINANCE_DATA: FinanceEntry[] = [];
 
@@ -89,6 +90,28 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const [statBreakdownModal, setStatBreakdownModal] = useState<'cash_in_hand' | 'receivables' | 'payables' | 'received_amount' | null>(null);
   const [statSearchQuery, setStatSearchQuery] = useState('');
   const [statFilterSubtab, setStatFilterSubtab] = useState<string>('ALL');
+
+  const generateFinanceReference = (customList?: FinanceEntry[]) => {
+    // Collect all entries from financeData, receivables, and payables to find the maximum serial globally
+    const listToScan = customList || [...financeData, ...receivables, ...payables];
+    let maxSeq = 0;
+    listToScan.forEach(f => {
+      if (f.reference) {
+        const match = f.reference.match(/DPL-(\d+)/i);
+        if (match) {
+          const seq = parseInt(match[1], 10);
+          if (seq > maxSeq) maxSeq = seq;
+        } else {
+          const parts = f.reference.split('-');
+          const last = parts[parts.length - 1];
+          const seq = parseInt(last, 10);
+          if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+        }
+      }
+    });
+    const nextSeq = maxSeq + 1;
+    return `DPL-${String(nextSeq).padStart(4, '0')}`;
+  };
 
   // Cross-component and cross-storage live sync
   useEffect(() => {
@@ -591,13 +614,59 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     { id: 'recurring', label: 'Monthly Fixed & Recurring' },
   ];
 
+  // Helper to extract all valid invoiced charges for a case (explicit charges, arrangements, or default tariff)
+  const getCaseChargesList = (c: Case): CaseCharge[] => {
+    // 1. Direct explicit charges stored on the case
+    if (c.charges && c.charges.length > 0) {
+      const valid = c.charges.filter(ch => ch.arrangedBy !== 'Client' && (Number(ch.amount) || 0) > 0);
+      if (valid.length > 0) return valid;
+    }
+    // 2. Service arrangements stored on the case
+    if (c.serviceArrangements && typeof c.serviceArrangements === 'object') {
+      const arrCharges: CaseCharge[] = Object.entries(c.serviceArrangements)
+        .filter(([_, item]: [string, any]) => item && item.arrangedBy !== 'Client' && (Number(item.amount) || 0) > 0)
+        .map(([key, item]: [string, any], idx) => ({
+          id: `arr_${c.id}_${key}_${idx}`,
+          description: item.label || key.replace(/_/g, ' ').toUpperCase(),
+          amount: Number(item.amount) || 0,
+          arrangedBy: 'DPL',
+          category: c.category
+        }));
+      if (arrCharges.length > 0) return arrCharges;
+    }
+    // 3. Fallback to totalAmount / extractedData amount if specified
+    const fallbackAmount = Number(c.totalAmount) || 
+                           Number((c.extractedData as any)?.totalAmount) || 
+                           Number((c.extractedData as any)?.invoiceAmount) || 0;
+    if (fallbackAmount > 0) {
+      return [{
+        id: `fb_${c.id}`,
+        description: `Case Invoiced Charges (${c.category || 'Transit'})`,
+        amount: fallbackAmount,
+        arrangedBy: 'DPL',
+        category: c.category
+      }];
+    }
+    // 4. Default tariff arrangements based on category
+    try {
+      const catArr = getCategoryArrangements(c.category || 'Bonded Carrier');
+      if (catArr) {
+        const dCharges = getArrangementCharges(catArr);
+        if (dCharges.length > 0) return dCharges;
+      }
+    } catch {
+      // fallback
+    }
+    return [];
+  };
+
   // Helper to calculate total charges for a case (ONLY explicit charges arranged by DPL, excluding Client arranged)
   const getCaseTotalCharges = (c: Case): { total: number; breakdown: string } => {
-    if (c.charges && c.charges.length > 0) {
-      const validCharges = c.charges.filter(ch => ch.arrangedBy !== 'Client');
-      const sum = validCharges.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
-      const details = validCharges.map(ch => `${ch.description}: PKR ${Number(ch.amount || 0).toLocaleString()}`).join(', ');
-      return { total: sum, breakdown: details || 'No invoiced charges' };
+    const charges = getCaseChargesList(c);
+    if (charges.length > 0) {
+      const sum = charges.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+      const details = charges.map(ch => `${ch.description}: PKR ${Number(ch.amount || 0).toLocaleString()}`).join(', ');
+      return { total: sum, breakdown: details || 'Invoiced charges' };
     }
     return { total: 0, breakdown: 'No charges added' };
   };
@@ -606,7 +675,13 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const clientLedgerEntries = useMemo(() => {
     if (!selectedLedgerClient) return [];
     const entries: LedgerEntry[] = [];
-    const targetClient = selectedLedgerClient.trim().toLowerCase();
+    const targetClient = selectedLedgerClient.trim().toLowerCase().replace(/\s+/g, ' ');
+
+    const matchClient = (candidate?: string) => {
+      if (!candidate) return false;
+      const c = candidate.trim().toLowerCase().replace(/\s+/g, ' ');
+      return c === targetClient || c.includes(targetClient) || targetClient.includes(c);
+    };
 
     // 1. Initial Opening Balance entry
     entries.push({
@@ -621,31 +696,46 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       party: selectedLedgerClient
     });
 
-    // 2. Add Debits from Cases (Charges explicitly added per case & container)
+    // 2. Add Debits from Cases (Charges explicitly added per case & container / tariff / invoice)
     cases.forEach((c) => {
-      if (c.clientName && c.clientName.trim().toLowerCase() === targetClient) {
-        // Invoice charges ledger mein use waqt chadenge jab loading mukmmal ho jayegi
-        const isPreTransit = c.status === CaseStatus.SHIPPING_LINE_DO || 
-                             c.status === CaseStatus.TP_FILING || 
-                             c.status === CaseStatus.EXCISE_PAYMENT || 
-                             c.status === CaseStatus.WHARFAGE_PAYMENT || 
-                             c.status === CaseStatus.VEHICLE_ASSIGNMENT || 
-                             c.status === CaseStatus.LOADING_PORT_PROCESSING;
-        if (isPreTransit) return; // Skip loading charges from ledger until loading is complete
-        
-        const { total, breakdown } = getCaseTotalCharges(c);
-        if (total > 0) {
-          const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
-          const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
-          const cntrInfo = cntrNumbers ? `[${(c.containers || []).length} Cntr: ${cntrNumbers}]` : '';
-          const refParts = [invNo, `Case: ${c.caseNo}`, cntrNumbers ? `Cntr: ${cntrNumbers}` : ''].filter(Boolean);
+      const clientCandidate = c.clientName || c.client || c.importer || (c.extractedData as any)?.cargoOwner || (c.extractedData as any)?.importerName;
+      if (matchClient(clientCandidate)) {
+        // Active cases have charges billed & recognized; only exclude cancelled
+        if (c.status === 'CANCELLED') return;
 
+        const charges = getCaseChargesList(c);
+        const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
+        const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
+        const cntrInfo = cntrNumbers ? `[${(c.containers || []).length} Cntr: ${cntrNumbers}]` : '';
+
+        if (charges.length > 1) {
+          // Add each itemized charge line as its own debit entry so payments against specific charges (e.g. AGAINST TP CHARGES) reconcile cleanly
+          charges.forEach((ch, idx) => {
+            const chargeDate = (ch as any).date || c.createdAt || c.registrationDate || new Date().toISOString().split('T')[0];
+            const refParts = [invNo, `Case: ${c.caseNo}`, cntrNumbers ? `Cntr: ${cntrNumbers}` : ''].filter(Boolean);
+            entries.push({
+              id: `case_${c.id}_ch_${idx}_${ch.id || idx}`,
+              date: chargeDate,
+              reference: refParts.join(' | '),
+              description: `Invoice Charge: ${ch.description} - Case ${c.caseNo}${cntrInfo ? ' ' + cntrInfo : ''} (${c.pol || 'POL'} to ${c.pod || 'POD'})`,
+              debit: Number(ch.amount) || 0,
+              credit: 0,
+              balance: 0,
+              type: 'DEBIT',
+              party: selectedLedgerClient,
+              relatedCaseId: c.id
+            });
+          });
+        } else if (charges.length === 1) {
+          const ch = charges[0];
+          const chargeDate = (ch as any).date || c.createdAt || c.registrationDate || new Date().toISOString().split('T')[0];
+          const refParts = [invNo, `Case: ${c.caseNo}`, cntrNumbers ? `Cntr: ${cntrNumbers}` : ''].filter(Boolean);
           entries.push({
             id: `case_${c.id}`,
-            date: c.createdAt || c.registrationDate || '2026-04-10',
+            date: chargeDate,
             reference: refParts.join(' | '),
-            description: `Case ${c.caseNo}: ${c.category} ${cntrInfo} - ${c.pol || 'POL'} to ${c.pod || 'POD'} (${breakdown})`,
-            debit: total,
+            description: `Invoice: ${ch.description} - Case ${c.caseNo}${cntrInfo ? ' ' + cntrInfo : ''} (${c.pol || 'POL'} to ${c.pod || 'POD'})`,
+            debit: Number(ch.amount) || 0,
             credit: 0,
             balance: 0,
             type: 'DEBIT',
@@ -658,7 +748,15 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     // 3. Add Receivables billed directly (if not from cases)
     receivables.forEach((r) => {
-      if (r.party && r.party.trim().toLowerCase() === targetClient) {
+      if (matchClient(r.party)) {
+        // Prevent duplicate if this receivable is already linked to a case that was added above
+        const isAlreadyAdded = entries.some(e => 
+          (r.relatedCaseId && (e as any).relatedCaseId === r.relatedCaseId) ||
+          (r.caseNo && e.reference && e.reference.includes(r.caseNo)) ||
+          (r.reference && e.reference && e.reference.includes(r.reference))
+        );
+        if (isAlreadyAdded) return;
+
         const refParts = [
           r.reference || `INV-${r.id}`,
           r.caseNo ? `Case: ${r.caseNo}` : '',
@@ -670,7 +768,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           date: r.date,
           reference: refParts.join(' | '),
           description: `Invoice: ${r.description} (${r.category})`,
-          debit: r.amount,
+          debit: Number(r.amount) || 0,
           credit: 0,
           balance: 0,
           type: 'DEBIT',
@@ -681,7 +779,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     // 4. Add Credits from Payments Received (INCOME or Settled RECEIVABLES)
     financeData.forEach((f) => {
-      if (f.party && f.party.trim().toLowerCase() === targetClient && f.type === 'INCOME') {
+      if (matchClient(f.party) && f.type === 'INCOME') {
         const methodInfo = f.paymentMethod === 'BANK' 
           ? `Bank Transfer (${f.bankName || 'HBL'} Trx #${f.transactionId || 'Direct'})` 
           : 'Cash Receipt';
@@ -697,7 +795,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           reference: refParts.join(' | '),
           description: `Payment Received: ${f.description} [${methodInfo}]`,
           debit: 0,
-          credit: f.amount,
+          credit: Number(f.amount) || 0,
           balance: 0,
           type: 'CREDIT',
           party: selectedLedgerClient
@@ -705,8 +803,12 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       }
     });
 
-    // 5. Sort chronologically by date ascending
-    entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    // 5. Sort chronologically by date ascending, ensuring opening balance is always first
+    entries.sort((a, b) => {
+      if (a.reference === 'OPN-BAL') return -1;
+      if (b.reference === 'OPN-BAL') return 1;
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
 
     // 6. Compute accurate running balance
     // Debit increases receivable (client owes DPL); Credit decreases receivable (client paid)
@@ -734,7 +836,11 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     const totalDebits = entriesToSummarize.reduce((sum, e) => sum + e.debit, 0);
     const totalCredits = entriesToSummarize.reduce((sum, e) => sum + e.credit, 0);
     const netBalance = entriesToSummarize.length > 0 ? entriesToSummarize[entriesToSummarize.length - 1].balance : 0;
-    const clientCases = cases.filter(c => c.clientName?.trim().toLowerCase() === selectedLedgerClient.trim().toLowerCase());
+    const target = (selectedLedgerClient || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const clientCases = cases.filter(c => {
+      const cClient = (c.clientName || c.client || c.importer || (c.extractedData as any)?.cargoOwner || (c.extractedData as any)?.importerName || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      return cClient === target || cClient.includes(target) || target.includes(cClient);
+    });
     const totalContainers = clientCases.reduce((sum, c) => sum + (c.containers?.length || 1), 0);
 
     return {
@@ -824,16 +930,9 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     // 1. Collect all invoice / billing items
     const allInvoices: (FinanceEntry & { isCaseInvoice?: boolean })[] = [];
 
-    // A. Case Invoices (only cases with explicit charges)
+    // A. Case Invoices
     cases.forEach((c) => {
-      // Invoice charges ledger mein use waqt chadenge jab loading mukmmal ho jayegi
-      const isPreTransit = c.status === CaseStatus.SHIPPING_LINE_DO || 
-                           c.status === CaseStatus.TP_FILING || 
-                           c.status === CaseStatus.EXCISE_PAYMENT || 
-                           c.status === CaseStatus.WHARFAGE_PAYMENT || 
-                           c.status === CaseStatus.VEHICLE_ASSIGNMENT || 
-                           c.status === CaseStatus.LOADING_PORT_PROCESSING;
-      if (isPreTransit) return; // Skip loading charges from receivables until loading is complete
+      if (c.status === 'CANCELLED') return;
 
       const { total, breakdown } = getCaseTotalCharges(c);
       if (total > 0) {
@@ -841,8 +940,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
         allInvoices.push({
           id: typeof c.id === 'number' ? c.id : Number(String(c.id).replace(/\D/g, '').slice(0, 9)) || 1000 + Math.floor(Math.random() * 8000),
-          date: c.createdAt || c.registrationDate || '2026-04-10',
-          party: c.clientName?.trim() || 'General Client',
+          date: c.createdAt || c.registrationDate || new Date().toISOString().split('T')[0],
+          party: (c.clientName || c.client || c.importer || (c.extractedData as any)?.cargoOwner || (c.extractedData as any)?.importerName || 'General Client').trim(),
           description: `Case ${c.caseNo}: ${c.category} [${(c.containers || []).length || 1} Cntr: ${cntrNumbers || 'N/A'}] - ${c.pol || 'POL'} to ${c.pod || 'POD'} (${breakdown})`,
           amount: total,
           type: 'RECEIVABLE',
@@ -1202,14 +1301,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     // All Client Case charges (Debits)
     cases.forEach((c) => {
-      // Invoice charges ledger mein use waqt chadenge jab loading mukmmal ho jayegi
-      const isPreTransit = c.status === CaseStatus.SHIPPING_LINE_DO || 
-                           c.status === CaseStatus.TP_FILING || 
-                           c.status === CaseStatus.EXCISE_PAYMENT || 
-                           c.status === CaseStatus.WHARFAGE_PAYMENT || 
-                           c.status === CaseStatus.VEHICLE_ASSIGNMENT || 
-                           c.status === CaseStatus.LOADING_PORT_PROCESSING;
-      if (isPreTransit) return; // Skip loading charges from GL until loading is complete
+      if (c.status === 'CANCELLED') return;
 
       const { total, breakdown } = getCaseTotalCharges(c);
       if (total > 0) {
@@ -1219,14 +1311,14 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
         glEntries.push({
           id: `gl_case_${c.id}`,
-          date: c.createdAt || c.registrationDate || '2026-04-10',
+          date: c.createdAt || c.registrationDate || new Date().toISOString().split('T')[0],
           reference: refParts.join(' | '),
           description: `Case Billing: ${c.category} [${(c.containers || []).length || 1} Cntr] - ${breakdown}`,
           debit: total,
           credit: 0,
           balance: 0,
           type: 'DEBIT',
-          party: c.clientName || 'General Client',
+          party: c.clientName || c.client || 'General Client',
           category: 'Freight & Clearance'
         });
       }
@@ -1563,7 +1655,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       status: isDirectPayment ? 'PAID' : 'PENDING',
       party: finalParty,
       category: matchedVendor ? matchedVendor.category : (transactionType === 'INCOME' ? 'Client Payment' : transactionType === 'EXPENSE' ? 'Operational Expense' : transactionType === 'PAYABLE' ? 'Payable Bill' : 'Receivable Bill'),
-      reference: newTransaction.transactionId || (transactionType === 'PAYABLE' ? `PAY-${Math.floor(1000 + Math.random() * 9000)}` : transactionType === 'RECEIVABLE' ? `INV-${Math.floor(1000 + Math.random() * 9000)}` : `REF-${Math.floor(1000 + Math.random() * 9000)}`),
+      reference: newTransaction.transactionId || generateFinanceReference(),
       paymentMethod: isDirectPayment ? (newTransaction.paymentMethod as any || 'CASH') : undefined,
       bankId: isDirectPayment ? newTransaction.bankId : undefined,
       bankName: isDirectPayment ? newTransaction.bankName : undefined,

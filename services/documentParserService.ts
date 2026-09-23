@@ -16,7 +16,63 @@ export interface ParsedVehicleRow {
   driverCnic: string;
   driverContact: string;
   validationExpiryDate: string;
+  registrationDate?: string;
   weightCapacity?: string;
+}
+
+export function parseRobustDate(val: any): string | null {
+  if (!val) return null;
+  const str = String(val).trim();
+  if (!str) return null;
+
+  // If Excel serial number
+  if (!isNaN(Number(str)) && Number(str) > 30000) {
+    try {
+      const dateObj = new Date((Number(str) - 25569) * 86400 * 1000);
+      return dateObj.toISOString().slice(0, 10);
+    } catch (_) {}
+  }
+
+  // Try parsing direct Date string or South Asian/European format DD/MM/YYYY
+  const parts = str.split(/[-/.\s]+/);
+  if (parts.length === 3) {
+    // Check if it's YYYY-MM-DD
+    if (parts[0].length === 4) {
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      const d = parseInt(parts[2], 10);
+      if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+        return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      }
+    }
+    // Check if it's DD/MM/YYYY
+    if (parts[2].length === 4) {
+      const d = parseInt(parts[0], 10);
+      let m = parseInt(parts[1], 10);
+      const y = parseInt(parts[2], 10);
+
+      // Handle word months like Oct/October
+      if (isNaN(m)) {
+        const monthStr = parts[1].toLowerCase();
+        const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+        const matchedIdx = months.findIndex(mon => monthStr.includes(mon));
+        if (matchedIdx >= 0) m = matchedIdx + 1;
+      }
+
+      if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
+        return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      }
+    }
+  }
+
+  try {
+    const parsed = Date.parse(str);
+    if (!isNaN(parsed)) {
+      return new Date(parsed).toISOString().slice(0, 10);
+    }
+  } catch (_) {}
+
+  return null;
 }
 
 /**
@@ -129,28 +185,45 @@ export function parseExcelVehicles(arrayBuffer: ArrayBuffer): ParsedVehicleRow[]
 
   const headers = (jsonData[headerRowIndex] || []).map(h => String(h || '').trim().toLowerCase());
 
-  // Helper to find column index by keywords
-  const findCol = (keywords: string[]): number => {
+  // Helper to find column index with strict keyword prioritized matching and exclusions
+  const findCol = (keywords: string[], exclusions: string[] = []): number => {
+    // Stage 1: Exact matches first
     for (let i = 0; i < headers.length; i++) {
-      for (const kw of keywords) {
-        if (headers[i].includes(kw)) return i;
-      }
+      const h = headers[i];
+      const matchesExclusion = exclusions.some(ex => h.includes(ex));
+      if (matchesExclusion) continue;
+
+      const isExact = keywords.some(kw => h === kw || h.startsWith(kw + ' ') || h.endsWith(' ' + kw));
+      if (isExact) return i;
+    }
+
+    // Stage 2: Substring inclusion matches
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i];
+      const matchesExclusion = exclusions.some(ex => h.includes(ex));
+      if (matchesExclusion) continue;
+
+      const matchesKeyword = keywords.some(kw => h.includes(kw));
+      if (matchesKeyword) return i;
     }
     return -1;
   };
 
-  const regCol = findCol(['reg', 'gadi', 'vehicle', 'plate', 'number']);
+  // Exclude date/expiry words from registration number to avoid capturing registration date/serial number columns
+  const regCol = findCol(['vehicle number', 'vehicle no', 'plate number', 'plate no', 'gadi number', 'gadi no', 'veh no', 'reg no', 'registration no', 'reg', 'gadi', 'vehicle', 'plate', 'number'], ['date', 'expiry', 'valid', 'time', 'issue', 'day']);
+  const regDateCol = findCol(['registration date', 'reg date', 'issue date', 'reg_date', 'registered date'], []);
   const catCol = findCol(['category', 'carrier', 'transit']);
   const typeCol = findCol(['type', 'body']);
   const sizeCol = findCol(['size', 'length', 'feet', 'ft']);
   const engCol = findCol(['engine']);
-  const chsCol = findCol(['chassis']);
+  const chassisKeywordIdx = findCol(['chassis']);
+  const chsCol = chassisKeywordIdx >= 0 ? chassisKeywordIdx : findCol(['chasis', 'chass']);
   const transpCol = findCol(['transporter', 'company', 'fleet']);
   const brokerCol = findCol(['broker', 'vendor']);
   const driverCol = findCol(['driver', 'name']);
-  const cnicCol = findCol(['cnic', 'nic', 'id card']);
-  const contactCol = findCol(['contact', 'phone', 'mobile', 'cell']);
-  const expiryCol = findCol(['expiry', 'valid', 'date']);
+  const cnicCol = findCol(['cnic', 'nic', 'id card', 'cnic no']);
+  const contactCol = findCol(['contact', 'phone', 'mobile', 'cell', 'phone no']);
+  const expiryCol = findCol(['expiry', 'valid', 'expire', 'exp', 'expiry date', 'validity'], ['registration', 'reg', 'start', 'issue']);
   const weightCol = findCol(['weight', 'capacity', 'ton']);
 
   const results: ParsedVehicleRow[] = [];
@@ -159,16 +232,14 @@ export function parseExcelVehicles(arrayBuffer: ArrayBuffer): ParsedVehicleRow[]
     const row = jsonData[r];
     if (!Array.isArray(row) || row.length === 0) continue;
 
-    // Pick reg number either from column match or column 0
     const rawReg = regCol >= 0 ? row[regCol] : row[0];
     const cleanReg = String(rawReg || '').trim().toUpperCase();
 
-    // Skip empty or header-like rows
-    if (!cleanReg || cleanReg.toLowerCase().includes('vehicle registration') || cleanReg.toLowerCase() === 'sr no') {
+    // Skip empty rows or headers
+    if (!cleanReg || cleanReg.toLowerCase().includes('vehicle registration') || cleanReg.toLowerCase() === 'sr no' || cleanReg.toLowerCase() === 'serial') {
       continue;
     }
 
-    // Skip corrupted zip rows if any
     if (isCorruptedVehicleRecord({ registrationNumber: cleanReg })) {
       continue;
     }
@@ -187,17 +258,12 @@ export function parseExcelVehicles(arrayBuffer: ArrayBuffer): ParsedVehicleRow[]
     const driverCnic = cnicCol >= 0 ? String(row[cnicCol] || '').trim() : (row[9] ? String(row[9]).trim() : 'N/A');
     const driverContact = contactCol >= 0 ? String(row[contactCol] || '').trim() : (row[10] ? String(row[10]).trim() : 'N/A');
 
-    let expiry = expiryCol >= 0 ? String(row[expiryCol] || '').trim() : (row[11] ? String(row[11]).trim() : '');
-    // If expiry is numeric (Excel serial date)
-    if (expiry && !isNaN(Number(expiry)) && Number(expiry) > 30000) {
-      try {
-        const dateObj = new Date((Number(expiry) - 25569) * 86400 * 1000);
-        expiry = dateObj.toISOString().slice(0, 10);
-      } catch (_) {}
-    }
-    if (!expiry || !/^\d{4}-\d{2}-\d{2}$/.test(expiry)) {
+    let expiry = expiryCol >= 0 ? parseRobustDate(row[expiryCol]) : null;
+    if (!expiry) {
       expiry = new Date(Date.now() + 180 * 24 * 3600 * 1000).toISOString().slice(0, 10);
     }
+
+    const regDate = regDateCol >= 0 ? parseRobustDate(row[regDateCol]) || undefined : undefined;
 
     const weightCapacity = weightCol >= 0 ? String(row[weightCol] || '').trim() : undefined;
 
@@ -214,6 +280,7 @@ export function parseExcelVehicles(arrayBuffer: ArrayBuffer): ParsedVehicleRow[]
       driverCnic: driverCnic || 'N/A',
       driverContact: driverContact || 'N/A',
       validationExpiryDate: expiry,
+      registrationDate: regDate,
       weightCapacity
     });
   }

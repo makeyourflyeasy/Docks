@@ -11,8 +11,11 @@ import { useBranding, optimizeLogoImage } from '../services/brandingService';
 import { 
   wipeCompleteDatabase, 
   exportSelectiveDatabaseBackup, 
-  restoreDatabaseSnapshot 
+  restoreDatabaseSnapshot,
+  subscribeToCases,
+  subscribeToFinances
 } from '../services/dbService';
+import { downloadTaxReportPdf } from '../services/pdfExportService';
 import { 
   getDriveAccessToken, 
   uploadDatabaseBackupToDrive, 
@@ -28,6 +31,66 @@ interface AppSettingsProps {
 
 const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
   const [activeSection, setActiveSection] = useState('general');
+
+  // Tax Report State
+  const [taxStartDate, setTaxStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(1); // First day of current month
+    return d.toISOString().split('T')[0];
+  });
+  const [taxEndDate, setTaxEndDate] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+  const [taxCases, setTaxCases] = useState<any[]>([]);
+  const [taxFinances, setTaxFinances] = useState<any[]>([]);
+  const [isGeneratingTaxReport, setIsGeneratingTaxReport] = useState(false);
+  const [taxReportError, setTaxReportError] = useState<string | null>(null);
+  const [taxReportSuccess, setTaxReportSuccess] = useState<string | null>(null);
+
+  // Subscribe to Cases and Finances for Tax Reporting
+  useEffect(() => {
+    let unsubscribeCases: (() => void) | undefined;
+    let unsubscribeFinances: (() => void) | undefined;
+
+    if (activeSection === 'tax') {
+      unsubscribeCases = subscribeToCases((items) => {
+        setTaxCases(items);
+      });
+      unsubscribeFinances = subscribeToFinances((items) => {
+        setTaxFinances(items);
+      });
+    }
+
+    return () => {
+      if (unsubscribeCases) unsubscribeCases();
+      if (unsubscribeFinances) unsubscribeFinances();
+    };
+  }, [activeSection]);
+
+  const handleDownloadTaxReport = async () => {
+    if (!taxStartDate || !taxEndDate) {
+      alert("Please select both start and end dates.");
+      return;
+    }
+    setIsGeneratingTaxReport(true);
+    setTaxReportError(null);
+    setTaxReportSuccess(null);
+    try {
+      await downloadTaxReportPdf({
+        startDate: taxStartDate,
+        endDate: taxEndDate,
+        cases: taxCases,
+        finances: taxFinances,
+        branding
+      });
+      setTaxReportSuccess("Tax report generated and downloaded successfully!");
+    } catch (err) {
+      console.error(err);
+      setTaxReportError("Failed to generate tax report. Please try again.");
+    } finally {
+      setIsGeneratingTaxReport(false);
+    }
+  };
 
   // Branding & Logo State
   const { branding, saveBranding, resetBrandingToDefault, isCustomLogo } = useBranding();
@@ -606,6 +669,118 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
         )}
      </div>
   );
+
+  const renderTaxSettings = () => {
+    const start = new Date(taxStartDate);
+    const end = new Date(taxEndDate);
+    end.setHours(23, 59, 59, 999);
+
+    const periodFinances = taxFinances.filter(f => {
+      const d = new Date(f.date);
+      return d >= start && d <= end;
+    });
+
+    const periodCases = taxCases.filter(c => {
+      const d = new Date(c.createdAt || c.date || Date.now());
+      return d >= start && d <= end;
+    });
+
+    let periodIncome = 0;
+    let periodExpense = 0;
+    periodFinances.forEach(f => {
+      if (f.type === 'INCOME') periodIncome += f.amount;
+      else if (f.type === 'EXPENSE') periodExpense += f.amount;
+    });
+
+    return (
+      <div className="glass-card rounded-2xl p-6 shadow-2xl animate-fade-in text-left space-y-6 font-sans">
+        <div>
+          <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
+            <FileText className="text-brand-400" size={20} />
+            Tax & Finance Performance Statements
+          </h3>
+          <p className="text-gray-400 text-xs">
+            Generate and export complete tax-compliant logistics performance reports for all ledger transactions and active fleet operations within a specific date range. Modeled on professional tax report standard layouts.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">Start Date</label>
+            <input 
+              type="date" 
+              value={taxStartDate} 
+              onChange={(e) => setTaxStartDate(e.target.value)}
+              className="w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-brand-500 font-sans"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">End Date</label>
+            <input 
+              type="date" 
+              value={taxEndDate} 
+              onChange={(e) => setTaxEndDate(e.target.value)}
+              className="w-full bg-slate-950 border border-white/10 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-brand-500 font-sans"
+            />
+          </div>
+        </div>
+
+        {/* Live Preview Stats */}
+        <div className="bg-slate-950/50 border border-white/5 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <span className="text-[10px] font-bold text-gray-400 uppercase">Revenue (Period)</span>
+            <p className="text-base font-semibold text-emerald-400 mt-1">PKR {Math.round(periodIncome).toLocaleString()}</p>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-gray-400 uppercase">Expenses (Period)</span>
+            <p className="text-base font-semibold text-rose-400 mt-1">PKR {Math.round(periodExpense).toLocaleString()}</p>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-gray-400 uppercase">Matching Transactions</span>
+            <p className="text-base font-semibold text-white mt-1">{periodFinances.length} Entries</p>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-gray-400 uppercase">Operational Cases</span>
+            <p className="text-base font-semibold text-brand-400 mt-1">{periodCases.length} Cases</p>
+          </div>
+        </div>
+
+        {taxReportError && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-red-400 text-xs flex items-center gap-2">
+            <AlertCircle size={16} />
+            {taxReportError}
+          </div>
+        )}
+
+        {taxReportSuccess && (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 text-emerald-400 text-xs flex items-center gap-2">
+            <CheckCircle2 size={16} />
+            {taxReportSuccess}
+          </div>
+        )}
+
+        <div className="pt-2">
+          <button
+            onClick={handleDownloadTaxReport}
+            disabled={isGeneratingTaxReport}
+            className="w-full sm:w-auto px-6 py-3 bg-brand-600 hover:bg-brand-500 disabled:bg-brand-800 text-white font-medium rounded-lg text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-brand-600/20"
+          >
+            {isGeneratingTaxReport ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Compiling Report...
+              </>
+            ) : (
+              <>
+                <Download size={16} />
+                Download Tax & Finance PDF
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const renderBackupSystem = () => (
      <div className="glass-card rounded-2xl p-6 shadow-2xl animate-fade-in text-left font-sans">
@@ -1298,6 +1473,10 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
           Logo & Branding
           {isCustomLogo && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>}
         </button>
+        <button onClick={() => setActiveSection('tax')} className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 font-sans flex items-center gap-2 ${activeSection === 'tax' ? 'border-brand-500 text-white font-bold' : 'border-transparent text-gray-400 hover:text-white'}`}>
+          <FileText size={15} />
+          Tax & Finance
+        </button>
         <button onClick={() => setActiveSection('drive')} className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 font-sans flex items-center gap-2 ${activeSection === 'drive' ? 'border-brand-500 text-white font-bold' : 'border-transparent text-gray-400 hover:text-white'}`}>
           <HardDrive size={15} />
           Google Drive
@@ -1309,6 +1488,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
       <div className="mt-6">
         {activeSection === 'general' && renderGeneralSettings()}
         {activeSection === 'logo' && renderLogoSettings()}
+        {activeSection === 'tax' && renderTaxSettings()}
         {activeSection === 'drive' && (
           <div className="glass-card rounded-2xl p-6 shadow-2xl animate-fade-in text-left">
             <GoogleDriveManager attachedMode={true} />

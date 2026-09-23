@@ -449,13 +449,13 @@ export async function authenticateDatabaseUser(
       console.log('Firestore offline / unreachable, falling back to local credentials catalog.');
     }
 
-    // 1.5. If not matched, query Firestore clients collection (if loginEnabled)
+    // 1.5. If not matched, query Firestore clients collection
     if (!matchedUser) {
       try {
         const clientSnap = await getDocs(collection(db, 'clients'));
         clientSnap.forEach((docSnap) => {
           const client = docSnap.data();
-          if (client.loginEnabled) {
+          if (client.loginEnabled || (client.userId && client.password)) {
             const matchUserId = client.userId && client.userId.toLowerCase() === cleanId;
             const matchEmail = client.email && client.email.toLowerCase() === cleanId;
             const matchName = client.name && client.name.toLowerCase() === cleanId;

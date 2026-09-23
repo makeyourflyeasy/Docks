@@ -46,6 +46,8 @@ const UserManagement: React.FC = () => {
     return (safeAppStorage.getItem('dpl_user_tab') as any) || 'office';
   });
 
+  const [destSubTab, setDestSubTab] = useState<'agents' | 'users'>('agents');
+
   useEffect(() => {
     safeAppStorage.setItem('dpl_user_tab', activeTab);
   }, [activeTab]);
@@ -169,8 +171,12 @@ const UserManagement: React.FC = () => {
       return;
     }
     if (activeTab === 'destinations') {
-      setDestinationStaffToEdit(null);
-      setShowDestinationModal(true);
+      if (destSubTab === 'users') {
+        handleSelectRoleType('STAFF', [UserRole.UNLOADING_PORT_STAFF]);
+      } else {
+        setDestinationStaffToEdit(null);
+        setShowDestinationModal(true);
+      }
       return;
     }
     if (activeTab === 'transporters') {
@@ -181,7 +187,7 @@ const UserManagement: React.FC = () => {
     handleSelectRoleType('STAFF');
   };
 
-  const handleSelectRoleType = (roleType: 'STAFF' | 'TRANSPORTER') => {
+  const handleSelectRoleType = (roleType: 'STAFF' | 'TRANSPORTER', defaultRolesOverride?: UserRole[]) => {
     setSelectedOnboardingRole(roleType);
     setShowRoleSelectorModal(false);
     setIsEditing(false);
@@ -196,13 +202,16 @@ const UserManagement: React.FC = () => {
     const generatedId = `${prefix}${nextNum.toString().padStart(4, '0')}`;
     const generatedPass = Math.random().toString(36).slice(-8).toUpperCase();
 
+    const finalRoles = defaultRolesOverride || (roleType === 'TRANSPORTER' ? [UserRole.TRANSPORTER] : [UserRole.OPERATIONS_MANAGER]);
+    const finalRole = finalRoles[0];
+
     setFormData({
       name: '',
       email: '',
       contact: '',
-      role: roleType === 'TRANSPORTER' ? UserRole.TRANSPORTER : UserRole.OPERATIONS_MANAGER,
-      roles: roleType === 'TRANSPORTER' ? [UserRole.TRANSPORTER] : [UserRole.OPERATIONS_MANAGER],
-      designation: '',
+      role: finalRole,
+      roles: finalRoles,
+      designation: roleType === 'STAFF' && defaultRolesOverride?.includes(UserRole.UNLOADING_PORT_STAFF) ? 'Destination Representative' : '',
       generatedId,
       generatedPass,
       profilePicture: '',
@@ -227,6 +236,7 @@ const UserManagement: React.FC = () => {
     });
 
     if (roleType === 'TRANSPORTER') setActiveTab('transporters');
+    else if (defaultRolesOverride?.includes(UserRole.UNLOADING_PORT_STAFF)) setActiveTab('destinations');
     else setActiveTab('office');
 
     setShowModal(true);
@@ -463,11 +473,26 @@ const UserManagement: React.FC = () => {
     );
   });
 
+  const destinationUsers = users.filter(u => 
+    u.role === UserRole.UNLOADING_PORT_STAFF || 
+    u.role === UserRole.DESTINATION_PORT_STAFF ||
+    (u.roles && (u.roles.includes(UserRole.UNLOADING_PORT_STAFF) || u.roles.includes(UserRole.DESTINATION_PORT_STAFF)))
+  );
+
+  const filteredDestinationUsers = destinationUsers.filter(u => {
+    if (!q) return true;
+    return (
+      (u.name && u.name.toLowerCase().includes(q)) ||
+      (u.userId && u.userId.toLowerCase().includes(q)) ||
+      (u.contact && u.contact.toLowerCase().includes(q))
+    );
+  });
+
   const getActiveCount = () => {
     if (activeTab === 'office') return filteredOfficeUsers.length;
     if (activeTab === 'clients') return filteredClients.length;
     if (activeTab === 'transporters') return filteredTransporters.length;
-    return filteredDestinationStaff.length;
+    return destSubTab === 'agents' ? filteredDestinationStaff.length : filteredDestinationUsers.length;
   };
 
   return (
@@ -488,7 +513,7 @@ const UserManagement: React.FC = () => {
         >
           <UserPlus size={17} /> 
           <span>
-            {activeTab === 'clients' ? 'Register New Client' : activeTab === 'destinations' ? 'Add Destination Staff' : activeTab === 'transporters' ? 'Add Transporter / Broker' : 'Create User / Staff ID'}
+            {activeTab === 'clients' ? 'Register New Client' : activeTab === 'destinations' ? (destSubTab === 'users' ? 'Create Destination User' : 'Add Destination Representative') : activeTab === 'transporters' ? 'Add Transporter / Broker' : 'Create User / Staff ID'}
           </span>
         </button>
       </div>
@@ -528,7 +553,7 @@ const UserManagement: React.FC = () => {
             activeTab === 'destinations' ? 'bg-amber-600/20 text-amber-300 border border-amber-500/40 shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
           }`}
         >
-          <MapPin size={16} /> Destinations Staff ({destinationStaffList.length})
+          <MapPin size={16} /> Destinations Staff ({destinationStaffList.length + destinationUsers.length})
         </button>
       </div>
 
@@ -542,6 +567,7 @@ const UserManagement: React.FC = () => {
               activeTab === 'office' ? "Search office staff by name, ID, role, phone..." :
               activeTab === 'clients' ? "Search clients by company, owner, category, NTN..." :
               activeTab === 'transporters' ? "Search transporters / brokers by fleet name, ID..." :
+              destSubTab === 'users' ? "Search destination staff login accounts by name, ID..." :
               "Search destination representatives by name, station, role..."
             }
             value={searchQuery}
@@ -1101,186 +1127,400 @@ const UserManagement: React.FC = () => {
       {/* 4. DESTINATIONS STAFF TAB (New Tab as requested) */}
       {/* ========================================================================= */}
       {activeTab === 'destinations' && (
-        filteredDestinationStaff.length === 0 ? (
-          <div className="glass-card rounded-2xl p-8 text-center border border-white/10 text-gray-400 space-y-2">
-            <MapPin size={32} className="mx-auto text-amber-500 mb-2" />
-            <p className="text-sm font-semibold text-white">No destination staff representatives registered</p>
-            <p className="text-xs text-gray-500">
-              Stationed representatives handle loading, unloading, seals inspection and customs clearance at ports (Karachi, Port Qasim) and borders (Torkham, Chaman).
-            </p>
+        <div className="space-y-4">
+          {/* Destination Sub-Tabs */}
+          <div className="flex bg-white/5 p-1 rounded-xl border border-white/5 self-start w-fit">
             <button
-              onClick={() => {
-                setDestinationStaffToEdit(null);
-                setShowDestinationModal(true);
-              }}
-              className="mt-3 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition"
+              onClick={() => setDestSubTab('agents')}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                destSubTab === 'agents'
+                  ? 'bg-amber-600 text-white shadow-md font-bold animate-pulse-glow'
+                  : 'text-gray-400 hover:text-white'
+              }`}
             >
-              <Plus size={14} /> Add First Destination Representative
+              <MapPin size={14} />
+              <span>Field Representatives ({filteredDestinationStaff.length})</span>
+            </button>
+            <button
+              onClick={() => setDestSubTab('users')}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                destSubTab === 'users'
+                  ? 'bg-amber-600 text-white shadow-md font-bold animate-pulse-glow'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Users size={14} />
+              <span>Staff Login Accounts ({filteredDestinationUsers.length})</span>
             </button>
           </div>
-        ) : viewMode === 'cards' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {filteredDestinationStaff.map(staff => (
-              <div 
-                key={staff.id} 
-                className="glass-card rounded-2xl p-4 border border-white/10 hover:border-amber-500/30 transition-all shadow-lg space-y-3 relative overflow-hidden group"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-11 h-11 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-sm font-bold text-amber-400 shadow-lg shrink-0">
-                      <MapPin size={20} />
+
+          {destSubTab === 'agents' ? (
+            filteredDestinationStaff.length === 0 ? (
+              <div className="glass-card rounded-2xl p-8 text-center border border-white/10 text-gray-400 space-y-2">
+                <MapPin size={32} className="mx-auto text-amber-500 mb-2" />
+                <p className="text-sm font-semibold text-white">No destination staff representatives registered</p>
+                <p className="text-xs text-gray-500">
+                  Stationed representatives handle loading, unloading, seals inspection and customs clearance at ports (Karachi, Port Qasim) and borders (Torkham, Chaman).
+                </p>
+                <button
+                  onClick={() => {
+                    setDestinationStaffToEdit(null);
+                    setShowDestinationModal(true);
+                  }}
+                  className="mt-3 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition"
+                >
+                  <Plus size={14} /> Add First Destination Representative
+                </button>
+              </div>
+            ) : viewMode === 'cards' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {filteredDestinationStaff.map(staff => (
+                  <div 
+                    key={staff.id} 
+                    className="glass-card rounded-2xl p-4 border border-white/10 hover:border-amber-500/30 transition-all shadow-lg space-y-3 relative overflow-hidden group"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-11 h-11 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-sm font-bold text-amber-400 shadow-lg shrink-0">
+                          <MapPin size={20} />
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-white text-sm truncate">{staff.name}</h4>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-medium">
+                              {staff.role}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                        staff.status === 'ACTIVE' 
+                          ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
+                          : 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
+                      }`}>
+                        {staff.status === 'ACTIVE' ? 'Active Duty' : 'On Leave'}
+                      </span>
                     </div>
-                    <div className="min-w-0">
-                      <h4 className="font-bold text-white text-sm truncate">{staff.name}</h4>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-medium">
-                          {staff.role}
+
+                    <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Station:</span>
+                        <span className="text-white font-semibold flex items-center gap-1">
+                          <MapPinned size={12} className="text-amber-400" /> {staff.station}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Phone:</span>
+                        <a href={`tel:${staff.phone}`} className="text-white font-mono font-medium hover:text-amber-300">
+                          {staff.phone}
+                        </a>
+                      </div>
+                      {staff.cnic && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400">CNIC:</span>
+                          <span className="text-gray-300 font-mono text-[11px]">{staff.cnic}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px]">
+                        <span className="text-gray-400">Compensation:</span>
+                        <span className="text-emerald-400 font-mono font-bold">
+                          PKR {(staff.baseRate || 0).toLocaleString()} / {staff.paymentType === 'PER_CASE_COMMISSION' ? 'case' : staff.paymentType === 'DAILY_RATE' ? 'day' : 'month'}
                         </span>
                       </div>
                     </div>
-                  </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                    staff.status === 'ACTIVE' 
-                      ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
-                      : 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
-                  }`}>
-                    {staff.status === 'ACTIVE' ? 'Active Duty' : 'On Leave'}
-                  </span>
-                </div>
 
-                <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1.5 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">Station:</span>
-                    <span className="text-white font-semibold flex items-center gap-1">
-                      <MapPinned size={12} className="text-amber-400" /> {staff.station}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">Phone:</span>
-                    <a href={`tel:${staff.phone}`} className="text-white font-mono font-medium hover:text-amber-300">
-                      {staff.phone}
-                    </a>
-                  </div>
-                  {staff.cnic && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-400">CNIC:</span>
-                      <span className="text-gray-300 font-mono text-[11px]">{staff.cnic}</span>
+                    {staff.notes && (
+                      <p className="text-[11px] text-gray-400 line-clamp-1 italic px-1">
+                        &quot;{staff.notes}&quot;
+                      </p>
+                    )}
+
+                    <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-white/5">
+                      <button 
+                        onClick={() => {
+                          setDestinationStaffToEdit(staff);
+                          setShowDestinationModal(true);
+                        }}
+                        className="text-gray-300 hover:text-white p-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
+                        title="Edit Destination Representative"
+                      >
+                        <Edit size={14} />
+                      </button>
+                      <button 
+                        onClick={() => setDeleteTarget({ type: 'DESTINATION', id: staff.id, name: staff.name })}
+                        className="text-gray-400 hover:text-red-400 p-1.5 rounded-xl bg-white/5 hover:bg-red-500/10 transition-colors"
+                        title="Delete Staff"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                  )}
-                  <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px]">
-                    <span className="text-gray-400">Compensation:</span>
-                    <span className="text-emerald-400 font-mono font-bold">
-                      PKR {(staff.baseRate || 0).toLocaleString()} / {staff.paymentType === 'PER_CASE_COMMISSION' ? 'case' : staff.paymentType === 'DAILY_RATE' ? 'day' : 'month'}
-                    </span>
                   </div>
-                </div>
-
-                {staff.notes && (
-                  <p className="text-[11px] text-gray-400 line-clamp-1 italic px-1">
-                    &quot;{staff.notes}&quot;
-                  </p>
-                )}
-
-                <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-white/5">
-                  <button 
-                    onClick={() => {
-                      setDestinationStaffToEdit(staff);
-                      setShowDestinationModal(true);
-                    }}
-                    className="text-gray-300 hover:text-white p-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
-                    title="Edit Destination Representative"
-                  >
-                    <Edit size={14} />
-                  </button>
-                  <button 
-                    onClick={() => setDeleteTarget({ type: 'DESTINATION', id: staff.id, name: staff.name })}
-                    className="text-gray-400 hover:text-red-400 p-1.5 rounded-xl bg-white/5 hover:bg-red-500/10 transition-colors"
-                    title="Delete Staff"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="glass-card rounded-2xl overflow-hidden border border-white/10 shadow-2xl animate-in fade-in duration-200">
+                <div className="overflow-x-auto custom-scrollbar custom-scrollbar-x" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}>
+                  <table className="w-full text-left text-sm text-gray-300 min-w-[750px]">
+                    <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/10">
+                      <tr>
+                        <th className="p-4">Representative Name</th>
+                        <th className="p-4">Station Location</th>
+                        <th className="p-4">Operational Role</th>
+                        <th className="p-4">Primary Contact</th>
+                        <th className="p-4">Compensation Terms</th>
+                        <th className="p-4">Duty Status</th>
+                        <th className="p-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {filteredDestinationStaff.map(staff => (
+                        <tr key={staff.id} className="hover:bg-white/5 transition-colors">
+                          <td className="p-4 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold shrink-0">
+                              <MapPin size={18} />
+                            </div>
+                            <div>
+                              <span className="font-bold text-white block">{staff.name}</span>
+                              <span className="text-[11px] text-gray-400">{staff.cnic || 'CNIC not recorded'}</span>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <span className="bg-white/5 border border-white/10 rounded-md px-2.5 py-1 text-xs text-white font-medium inline-flex items-center gap-1.5">
+                              <MapPinned size={12} className="text-amber-400" /> {staff.station}
+                            </span>
+                          </td>
+                          <td className="p-4 text-xs font-medium text-gray-200">
+                            {staff.role}
+                          </td>
+                          <td className="p-4 font-mono text-xs text-white">
+                            {staff.phone}
+                          </td>
+                          <td className="p-4 font-mono text-xs text-emerald-400 font-semibold">
+                            PKR {(staff.baseRate || 0).toLocaleString()} ({staff.paymentType === 'PER_CASE_COMMISSION' ? 'per case' : staff.paymentType === 'DAILY_RATE' ? 'daily' : 'monthly'})
+                          </td>
+                          <td className="p-4">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                              staff.status === 'ACTIVE' 
+                                ? 'text-green-400 bg-green-500/10 border border-green-500/20' 
+                                : 'text-gray-400 bg-gray-500/10 border border-gray-500/20'
+                            }`}>
+                              {staff.status === 'ACTIVE' ? 'Active Duty' : 'On Leave'}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button 
+                                onClick={() => {
+                                  setDestinationStaffToEdit(staff);
+                                  setShowDestinationModal(true);
+                                }}
+                                className="text-gray-300 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                                title="Edit Profile"
+                              >
+                                <Edit size={15} />
+                              </button>
+                              <button 
+                                onClick={() => setDeleteTarget({ type: 'DESTINATION', id: staff.id, name: staff.name })}
+                                className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
+                                title="Delete Staff"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="glass-card rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
-            <div className="overflow-x-auto custom-scrollbar custom-scrollbar-x" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}>
-              <table className="w-full text-left text-sm text-gray-300 min-w-[750px]">
-                <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/10">
-                  <tr>
-                    <th className="p-4">Representative Name</th>
-                    <th className="p-4">Station Location</th>
-                    <th className="p-4">Operational Role</th>
-                    <th className="p-4">Primary Contact</th>
-                    <th className="p-4">Compensation Terms</th>
-                    <th className="p-4">Duty Status</th>
-                    <th className="p-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {filteredDestinationStaff.map(staff => (
-                    <tr key={staff.id} className="hover:bg-white/5 transition-colors">
-                      <td className="p-4 flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold shrink-0">
-                          <MapPin size={18} />
+            )
+          ) : (
+            filteredDestinationUsers.length === 0 ? (
+              <div className="glass-card rounded-2xl p-8 text-center border border-white/10 text-gray-400 space-y-2 animate-in fade-in duration-200">
+                <Users size={32} className="mx-auto text-amber-500 mb-2" />
+                <p className="text-sm font-semibold text-white">No destination staff login accounts registered</p>
+                <p className="text-xs text-gray-500">
+                  Create a login-enabled employee user account with the Destination Staff role to see them here.
+                </p>
+                <button
+                  onClick={() => handleSelectRoleType('STAFF', [UserRole.UNLOADING_PORT_STAFF])}
+                  className="mt-3 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 transition animate-all"
+                >
+                  <Plus size={14} /> Create First Destination Staff User
+                </button>
+              </div>
+            ) : viewMode === 'cards' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 animate-in fade-in duration-200">
+                {filteredDestinationUsers.map(user => (
+                  <div 
+                    key={user.id} 
+                    className="glass-card rounded-2xl p-4 border border-white/10 hover:border-amber-500/30 transition-all shadow-lg space-y-3 relative overflow-hidden group"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-11 h-11 rounded-xl bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-sm font-bold text-amber-400 shadow-lg overflow-hidden shrink-0">
+                          {user.profilePicture ? (
+                            <img src={user.profilePicture} alt={user.name} className="w-full h-full object-cover" />
+                          ) : (
+                            user.name.charAt(0)
+                          )}
                         </div>
-                        <div>
-                          <span className="font-bold text-white block">{staff.name}</span>
-                          <span className="text-[11px] text-gray-400">{staff.cnic || 'CNIC not recorded'}</span>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-white text-sm truncate">{user.name}</h4>
+                          {user.designation && (
+                            <p className="text-[11px] text-amber-300/90 font-medium truncate">{user.designation}</p>
+                          )}
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                            <span className="text-[11px] font-mono font-semibold text-brand-400 bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/20">
+                              {user.userId || `EMP-${user.id}`}
+                            </span>
+                            {(user.roles && user.roles.length > 0 ? user.roles : [user.role]).map(r => (
+                              <span key={r} className="rounded px-1.5 py-0.5 text-[10px] font-medium border truncate bg-teal-500/15 text-teal-300 border-teal-500/30">
+                                {r === UserRole.UNLOADING_PORT_STAFF ? 'Destination Staff' : r.replace(/_/g, ' ')}
+                              </span>
+                            ))}
+                          </div>
                         </div>
-                      </td>
-                      <td className="p-4">
-                        <span className="bg-white/5 border border-white/10 rounded-md px-2.5 py-1 text-xs text-white font-medium inline-flex items-center gap-1.5">
-                          <MapPinned size={12} className="text-amber-400" /> {staff.station}
-                        </span>
-                      </td>
-                      <td className="p-4 text-xs font-medium text-gray-200">
-                        {staff.role}
-                      </td>
-                      <td className="p-4 font-mono text-xs text-white">
-                        {staff.phone}
-                      </td>
-                      <td className="p-4 font-mono text-xs text-emerald-400 font-semibold">
-                        PKR {(staff.baseRate || 0).toLocaleString()} ({staff.paymentType === 'PER_CASE_COMMISSION' ? 'per case' : staff.paymentType === 'DAILY_RATE' ? 'daily' : 'monthly'})
-                      </td>
-                      <td className="p-4">
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                          staff.status === 'ACTIVE' 
-                            ? 'text-green-400 bg-green-500/10 border border-green-500/20' 
-                            : 'text-gray-400 bg-gray-500/10 border border-gray-500/20'
-                        }`}>
-                          {staff.status === 'ACTIVE' ? 'Active Duty' : 'On Leave'}
-                        </span>
-                      </td>
-                      <td className="p-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button 
-                            onClick={() => {
-                              setDestinationStaffToEdit(staff);
-                              setShowDestinationModal(true);
-                            }}
-                            className="text-gray-300 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-                            title="Edit Profile"
-                          >
-                            <Edit size={15} />
-                          </button>
-                          <button 
-                            onClick={() => setDeleteTarget({ type: 'DESTINATION', id: staff.id, name: staff.name })}
-                            className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
-                            title="Delete Staff"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                      </div>
+                      <span className="text-green-400 text-[11px] font-bold flex items-center gap-1 shrink-0 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_currentColor]"></span> {user.status || 'ACTIVE'}
+                      </span>
+                    </div>
+
+                    <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1.5 text-xs font-mono">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400 font-sans">Contact:</span>
+                        <a href={`tel:${user.contact}`} className="text-white hover:text-amber-300">{user.contact}</a>
+                      </div>
+                      {user.email && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 font-sans">Email:</span>
+                          <span className="text-gray-300 truncate max-w-[150px]">{user.email}</span>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )
+                      )}
+                      <div className="flex items-center justify-between pt-1.5 border-t border-white/5">
+                        <span className="text-gray-400 font-sans">Password:</span>
+                        <span className="text-amber-400 font-bold">{user.password || '••••••••'}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-white/5">
+                      <button
+                        onClick={() => setSelectedStaffUser(user)}
+                        className="text-emerald-400 hover:text-emerald-300 px-2.5 py-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors text-[11px] flex items-center gap-1 font-semibold"
+                        title="View Salary & Daily Routine Ledgers"
+                      >
+                        <CreditCard size={12} /> Ledgers
+                      </button>
+                      <button 
+                        onClick={() => handleEditUser(user)}
+                        className="text-gray-300 hover:text-white p-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
+                        title="Edit User ID & Role"
+                      >
+                        <Edit size={13} />
+                      </button>
+                      <button 
+                        onClick={() => setDeleteTarget({ type: 'USER', id: user.id, name: user.name })}
+                        className="text-gray-400 hover:text-red-400 p-1.5 rounded-xl bg-white/5 hover:bg-red-500/10 transition-colors"
+                        title="Delete Staff"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="glass-card rounded-2xl overflow-hidden border border-white/10 shadow-2xl animate-in fade-in duration-200">
+                <div className="overflow-x-auto custom-scrollbar custom-scrollbar-x" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y' }}>
+                  <table className="w-full text-left text-sm text-gray-300 min-w-[750px]">
+                    <thead className="bg-white/5 uppercase text-xs font-semibold text-gray-400 border-b border-white/10">
+                      <tr>
+                        <th className="p-4">Staff Member Name</th>
+                        <th className="p-4">Assigned Roles</th>
+                        <th className="p-4">Primary Contact / Credentials</th>
+                        <th className="p-4">Salary Base</th>
+                        <th className="p-4">Status</th>
+                        <th className="p-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {filteredDestinationUsers.map(user => (
+                        <tr key={user.id} className="hover:bg-white/5 transition-colors">
+                          <td className="p-4 flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-amber-600/20 border border-amber-500/30 flex items-center justify-center text-sm font-bold text-amber-400 shadow-lg overflow-hidden shrink-0">
+                              {user.profilePicture ? (
+                                <img src={user.profilePicture} alt={user.name} className="w-full h-full object-cover" />
+                              ) : (
+                                user.name.charAt(0)
+                              )}
+                            </div>
+                            <div>
+                              <span className="font-bold text-white block">{user.name}</span>
+                              {user.designation && (
+                                <span className="text-[11px] text-amber-300 block">{user.designation}</span>
+                              )}
+                              <span className="text-xs font-mono text-brand-400">{user.userId || `EMP-${user.id}`}</span>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex flex-wrap gap-1">
+                              {(user.roles && user.roles.length > 0 ? user.roles : [user.role]).map(r => (
+                                <span key={r} className="rounded-md px-2 py-0.5 text-[11px] font-medium inline-block border bg-teal-500/15 text-teal-300 border-teal-500/30 font-medium">
+                                  {r === UserRole.UNLOADING_PORT_STAFF ? 'Destination Staff' : r.replace(/_/g, ' ')}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-4 font-mono text-xs">
+                            <div className="text-white">Phone: {user.contact}</div>
+                            <div className="text-gray-400 text-[11px]">Pass: {user.password || '••••••••'}</div>
+                          </td>
+                          <td className="p-4">
+                            <span className="font-mono text-emerald-400 font-semibold text-xs">
+                              PKR {(user.baseSalary || 45000).toLocaleString()}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <span className="text-green-400 text-xs font-bold flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_currentColor]"></span> {user.status || 'ACTIVE'}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => setSelectedStaffUser(user)}
+                                className="text-emerald-400 hover:text-emerald-300 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors text-xs flex items-center gap-1 font-semibold"
+                                title="View Salary & Daily Routine Ledgers"
+                              >
+                                <CreditCard size={14} /> Dual Ledgers
+                              </button>
+                              <button 
+                                onClick={() => handleEditUser(user)}
+                                className="text-gray-300 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                                title="Edit User ID & Role"
+                              >
+                                <Edit size={15} />
+                              </button>
+                              <button 
+                                onClick={() => setDeleteTarget({ type: 'USER', id: user.id, name: user.name })}
+                                className="text-gray-400 hover:text-red-400 p-1.5 rounded-lg bg-white/5 hover:bg-red-500/10 transition-colors"
+                                title="Delete Staff"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          )}
+        </div>
       )}
 
       {/* ========================================================================= */}
@@ -1588,14 +1828,14 @@ const UserManagement: React.FC = () => {
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-white flex items-center gap-1.5">
                             <span className="w-2 h-2 rounded-full bg-teal-400 shadow-[0_0_8px_currentColor]"></span>
-                            Unloading Port Staff
+                            Destination Staff
                           </span>
                           <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-teal-500/30 text-teal-200">
-                            Destination & DO
+                            Unloading & DO
                           </span>
                         </div>
                         <p className="text-[11px] text-gray-400 mt-1 leading-tight">
-                          Manages destination workflow, arrival, delivery orders (DO), and empty container return.
+                          Manages unloading, destination workflow, arrival, delivery orders (DO), and empty container return.
                         </p>
                       </button>
 

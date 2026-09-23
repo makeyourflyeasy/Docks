@@ -1122,28 +1122,24 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
   // Generate strictly sequential case number from current active cases
   const generateCaseNumber = (customList?: Case[]) => {
     const listToScan = customList || cases;
-    const year = new Date().getFullYear().toString().slice(-2);
-    
-    // Find the max sequence number from existing cases to maintain a single continuous sequence
     let maxSeq = 0;
     listToScan.forEach(c => {
-      // Format is DPL-YY-XXXXXX
-      const parts = c.caseNo.split('-');
-      if (parts.length === 3) {
-        const num = parseInt(parts[2], 10);
-        if (!isNaN(num) && num > maxSeq) {
-          maxSeq = num;
+      if (c.caseNo) {
+        const match = c.caseNo.match(/DPL-(\d+)/i);
+        if (match) {
+          const seq = parseInt(match[1], 10);
+          if (seq > maxSeq) maxSeq = seq;
+        } else {
+          // Fallback parsing for legacy formats like DPL-26-000001
+          const parts = c.caseNo.split('-');
+          const last = parts[parts.length - 1];
+          const seq = parseInt(last, 10);
+          if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
         }
       }
     });
-
-    // Increment and pad to 6 digits, resetting after 999999
-    let nextSeq = maxSeq + 1;
-    if (nextSeq > 999999) {
-      nextSeq = 1;
-    }
-    const count = nextSeq.toString().padStart(6, '0');
-    return `DPL-${year}-${count}`;
+    const nextSeq = maxSeq + 1;
+    return `DPL-${String(nextSeq).padStart(4, '0')}`;
   };
 
   const handleResumeDraft = () => {

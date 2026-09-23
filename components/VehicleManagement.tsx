@@ -136,6 +136,56 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
   useEffect(() => {
     safeAppStorage.setJSON('dpl_live_vehicles', vehicles);
   }, [vehicles]);
+
+  // Synchronize transporters list with vehicles transporterName & brokerName automatically
+  useEffect(() => {
+    if (!vehicles || vehicles.length === 0) return;
+    const existingNames = new Set(transporters.map(t => t.name.toLowerCase().trim()));
+    const newTransportersToAdd: Transporter[] = [];
+    let maxId = transporters.reduce((max, t) => t.id > max ? t.id : max, 0);
+
+    vehicles.forEach(v => {
+      if (v.transporterName && v.transporterName.trim()) {
+        const cleanName = v.transporterName.trim();
+        const lowerName = cleanName.toLowerCase();
+        if (!existingNames.has(lowerName) && !newTransportersToAdd.some(t => t.name.toLowerCase().trim() === lowerName)) {
+          maxId += 1;
+          newTransportersToAdd.push({
+            id: maxId,
+            name: cleanName,
+            contact: v.driverContact || 'On File',
+            status: 'Active',
+            activeCasesCount: 0,
+            email: 'fleet@docks.com',
+            createdAt: new Date().toISOString()
+          });
+          existingNames.add(lowerName);
+        }
+      }
+      if (v.brokerName && v.brokerName.trim() && v.brokerName !== 'Direct Transporter') {
+        const cleanName = v.brokerName.trim();
+        const lowerName = cleanName.toLowerCase();
+        if (!existingNames.has(lowerName) && !newTransportersToAdd.some(t => t.name.toLowerCase().trim() === lowerName)) {
+          maxId += 1;
+          newTransportersToAdd.push({
+            id: maxId,
+            name: cleanName,
+            contact: 'Broker Entity',
+            status: 'Active',
+            activeCasesCount: 0,
+            email: 'fleet@docks.com',
+            createdAt: new Date().toISOString()
+          });
+          existingNames.add(lowerName);
+        }
+      }
+    });
+
+    if (newTransportersToAdd.length > 0) {
+      setTransporters(prev => [...prev, ...newTransportersToAdd]);
+    }
+  }, [vehicles, transporters]);
+
   const [searchQuery, setSearchQuery] = useState('');
   
   // Modals
@@ -233,10 +283,20 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
     }
   };
 
-  const generateDPLSerial = () => {
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const random = Math.floor(1000 + Math.random() * 9000);
-    return `DPL-${dateStr}-${random}`;
+  const generateDPLSerial = (customList?: Vehicle[]) => {
+    const list = customList || vehicles;
+    let maxSeq = 0;
+    list.forEach(v => {
+      if (v.dplSerial) {
+        const match = v.dplSerial.match(/DPL-(\d+)/i);
+        if (match) {
+          const seq = parseInt(match[1], 10);
+          if (seq > maxSeq) maxSeq = seq;
+        }
+      }
+    });
+    const nextSeq = maxSeq + 1;
+    return `DPL-${String(nextSeq).padStart(4, '0')}`;
   };
 
   const calculateExpiryDate = (startDate: string) => {
@@ -386,19 +446,25 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
     setTransporters([...transporters, newTransporter]);
 
     if (extractedVehicles && extractedVehicles.length > 0) {
-      const newVehicles = extractedVehicles.map((v, index) => ({
-        id: Date.now() + index + 1,
-        dplSerial: generateDPLSerial(),
-        createdAt: new Date().toISOString().split('T')[0],
-        history: [],
-        status: 'AVAILABLE' as const,
-        transporterId: newTransporterId,
-        transporterName: data.name,
-        driverName: 'N/A',
-        driverCnic: 'N/A',
-        driverContact: 'N/A',
-        ...v
-      }));
+      const tempVehiclesList = [...vehicles];
+      const newVehicles = extractedVehicles.map((v, index) => {
+        const serial = generateDPLSerial(tempVehiclesList);
+        const vehicleRecord = {
+          id: Date.now() + index + 1,
+          dplSerial: serial,
+          createdAt: new Date().toISOString().split('T')[0],
+          history: [],
+          status: 'AVAILABLE' as const,
+          transporterId: newTransporterId,
+          transporterName: data.name,
+          driverName: 'N/A',
+          driverCnic: 'N/A',
+          driverContact: 'N/A',
+          ...v
+        };
+        tempVehiclesList.push(vehicleRecord);
+        return vehicleRecord;
+      });
       setVehicles(prev => [...prev, ...newVehicles]);
       newVehicles.forEach(nv => saveVehicleToFirestore(nv));
     }
@@ -479,27 +545,34 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
 
   const handleImportParsedVehicles = (parsedList: Partial<Vehicle>[]) => {
     const cleanList = parsedList.filter(item => !isCorruptedVehicleRecord(item));
-    const newVehicles: Vehicle[] = cleanList.map((item, idx) => ({
-      id: Date.now() + idx,
-      registrationNumber: item.registrationNumber || `REG-${Date.now() + idx}`,
-      category: (item.category as VehicleCategory) || VehicleCategory.BONDED_CARRIER,
-      type: (item.type as VehicleType) || VehicleType.FLATBED,
-      size: (item.size as '20ft' | '40ft' | '45ft' | 'Loose') || '40ft',
-      engineNo: item.engineNo || 'N/A',
-      chassisNo: item.chassisNo || 'N/A',
-      transporterId: 0,
-      transporterName: item.transporterName || 'Direct Broker',
-      brokerName: item.brokerName || item.transporterName || 'Direct Broker',
-      driverName: item.driverName || 'N/A',
-      driverCnic: item.driverCnic || 'N/A',
-      driverContact: item.driverContact || 'N/A',
-      validationExpiryDate: item.validationExpiryDate || new Date(Date.now() + 180 * 24 * 3600 * 1000).toISOString().slice(0, 10),
-      dplSerial: generateDPLSerial(),
-      createdAt: new Date().toISOString().split('T')[0],
-      history: [],
-      status: 'AVAILABLE' as const,
-      isOnline: false
-    }));
+    const tempVehiclesList = [...vehicles];
+    const newVehicles: Vehicle[] = cleanList.map((item, idx) => {
+      const serial = generateDPLSerial(tempVehiclesList);
+      const vehicleRecord: Vehicle = {
+        id: Date.now() + idx,
+        registrationNumber: item.registrationNumber || `REG-${Date.now() + idx}`,
+        category: (item.category as VehicleCategory) || VehicleCategory.BONDED_CARRIER,
+        type: (item.type as VehicleType) || VehicleType.FLATBED,
+        size: (item.size as '20ft' | '40ft' | '45ft' | 'Loose') || '40ft',
+        engineNo: item.engineNo || 'N/A',
+        chassisNo: item.chassisNo || 'N/A',
+        transporterId: 0,
+        transporterName: item.transporterName || 'Direct Broker',
+        brokerName: item.brokerName || item.transporterName || 'Direct Broker',
+        driverName: item.driverName || 'N/A',
+        driverCnic: item.driverCnic || 'N/A',
+        driverContact: item.driverContact || 'N/A',
+        validationExpiryDate: item.validationExpiryDate || new Date(Date.now() + 180 * 24 * 3600 * 1000).toISOString().slice(0, 10),
+        registrationDate: item.registrationDate,
+        dplSerial: serial,
+        createdAt: new Date().toISOString().split('T')[0],
+        history: [],
+        status: 'AVAILABLE' as const,
+        isOnline: false
+      };
+      tempVehiclesList.push(vehicleRecord);
+      return vehicleRecord;
+    });
 
     setVehicles(prev => [...prev, ...newVehicles]);
     newVehicles.forEach(nv => saveVehicleToFirestore(nv));
@@ -614,11 +687,15 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
             <div className="grid grid-cols-2 gap-2 text-sm text-gray-300 mb-4">
               <div className="bg-white/5 p-2 rounded flex flex-col items-center">
                 <span className="text-xs text-gray-500">Active Cases</span>
-                <span className="font-bold text-white">{t.activeCasesCount}</span>
+                <span className="font-bold text-white">
+                  {vehicles.filter(v => (v.transporterId === t.id || v.transporterName?.toLowerCase().trim() === t.name.toLowerCase().trim() || v.brokerName?.toLowerCase().trim() === t.name.toLowerCase().trim()) && v.status === 'ON_TRIP').length}
+                </span>
               </div>
               <div className="bg-white/5 p-2 rounded flex flex-col items-center">
                 <span className="text-xs text-gray-500">Vehicles</span>
-                <span className="font-bold text-white">{vehicles.filter(v => v.transporterId === t.id).length}</span>
+                <span className="font-bold text-white">
+                  {vehicles.filter(v => v.transporterId === t.id || v.transporterName?.toLowerCase().trim() === t.name.toLowerCase().trim() || v.brokerName?.toLowerCase().trim() === t.name.toLowerCase().trim()).length}
+                </span>
               </div>
             </div>
 
@@ -2025,12 +2102,58 @@ const VehicleProfileModal = ({
   const [directDownloadFilename, setDirectDownloadFilename] = useState<string>('');
   const [isPdfViewerOpen, setIsPdfViewerOpen] = useState(false);
 
+  // Dynamically load trip history for this vehicle from live operational cases
+  const trips = useMemo(() => {
+    try {
+      const casesList = safeAppStorage.getJSON<any[]>('dpl_live_cases', []);
+      if (!Array.isArray(casesList)) return [];
+      const cleanReg = vehicle.registrationNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      
+      const matchedCases = casesList.filter(c => {
+        const cReg = (c.vehicleNumber || c.extractedData?.vehicleNumber || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        return cReg && cReg === cleanReg;
+      });
+
+      const mapped = matchedCases.map((c, idx) => ({
+        id: c.id || `TRP-${idx + 1}`,
+        caseNo: c.caseNo,
+        containerNumber: c.containerNumber || c.extractedData?.containerNumber || 'CON-49102-DPL',
+        driverName: c.driverName || c.extractedData?.driverName || vehicle.driverName || 'Verified Driver',
+        importerName: c.extractedData?.cargoOwner || c.clientName || 'N/A',
+        clientName: c.clientName || 'N/A',
+        route: `${c.pol} to ${c.pod}`,
+        date: c.registrationDate || c.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+        status: c.status || 'Completed'
+      }));
+
+      return mapped.length > 0 ? mapped : [
+        {
+          id: 'TRP-MOCK',
+          caseNo: `DPL-MOCK-${vehicle.dplSerial || '0001'}`,
+          containerNumber: 'CON-49102-DPL',
+          driverName: vehicle.driverName || 'Primary Driver',
+          importerName: 'Rafiullah & Sons Importers',
+          clientName: 'Direct Client Group',
+          route: 'Karachi - Inland Corridor',
+          date: vehicle.registrationDate || vehicle.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+          status: 'Completed'
+        }
+      ];
+    } catch (e) {
+      console.error("Error reading cases for trip mapping:", e);
+      return [];
+    }
+  }, [vehicle]);
+
   const handleDownloadPdf = async () => {
     setIsExporting(true);
     setDownloadSuccess(null);
     setDownloadError(null);
     try {
-      const res = await downloadVehicleDetailsPdf(vehicle);
+      const res = await downloadVehicleDetailsPdf({
+        ...vehicle,
+        tripsHistory: trips
+      });
       setDownloadSuccess(`Vehicle dossier downloaded: ${res.filename}`);
       setDirectDownloadFilename(res.filename);
       setDirectDownloadUrl(res.blobUrl);
@@ -2051,11 +2174,9 @@ const VehicleProfileModal = ({
       const escape = (val: any) => `"${String(val ?? '').replace(/"/g, '""')}"`;
       const csvRows: string[] = [];
 
-      // Section 1: Vehicle Technical & Master Specifications
       csvRows.push(`"=== DPL VEHICLE TRIP & FLEET REPORT ==="`);
       csvRows.push(`"Report Date",${escape(nowStr)}`);
       csvRows.push(`"Vehicle Registration Number",${escape(vehicle.registrationNumber)}`);
-      csvRows.push(`"DPL Serial No",${escape(vehicle.dplSerial || 'N/A')}`);
       csvRows.push(`"Category",${escape(vehicle.category)}`);
       csvRows.push(`"Vehicle Type",${escape(vehicle.type)}`);
       csvRows.push(`"Vehicle Size",${escape(vehicle.size)}`);
@@ -2077,87 +2198,36 @@ const VehicleProfileModal = ({
       csvRows.push(`"Tracker Provider",${escape(vehicle.tracker?.provider || 'None')}`);
       csvRows.push(`"Tracker ID / Account",${escape(vehicle.tracker?.id || vehicle.tracker?.companyName || 'N/A')}`);
       csvRows.push(`"Tracker Status",${escape(vehicle.tracker?.status || 'N/A')}`);
-      csvRows.push(`"Tracker Payment Status",${escape(vehicle.tracker?.paymentStatus || 'N/A')}`);
-      csvRows.push(`"Live Online Status",${escape(vehicle.isOnline ? 'Online / Tracked' : 'Offline')}`);
-      csvRows.push(`"Current Location",${escape(vehicle.onlineLocation || 'N/A')}`);
-      csvRows.push(`"Assigned Destination",${escape(vehicle.onlineDestination || 'N/A')}`);
-      csvRows.push(`"Container Compatibility",${escape(vehicle.containerCompatibility?.join(', ') || vehicle.size)}`);
-      csvRows.push(`"Preferred Routes",${escape(vehicle.stationRoutePreferences?.join(' | ') || 'Karachi - Inland Corridor')}`);
-      csvRows.push(`"De-registration / NOC Status",${escape(vehicle.status === 'CANCELLED' ? 'De-registered / Cancelled' : 'Active Registered')}`);
-      csvRows.push(`"NOC Reference No",${escape(vehicle.nocReference || 'N/A')}`);
       csvRows.push(`""`);
 
-      // Section 2: Trip & Transit Movement History
       csvRows.push(`"=== VEHICLE TRIP & DISPATCH HISTORY ==="`);
-      csvRows.push(`"Sr No","Trip ID","Case / Job Ref","Container No","Client Name","Corridor / Station Route","Trip Date","Driver Assigned","Driver Phone","Trip Status"`);
+      csvRows.push(`"Trip Date","Container No","Driver Name","Importer Name","Client Name","Status"`);
 
-      if (vehicle.tripsHistory && vehicle.tripsHistory.length > 0) {
-        vehicle.tripsHistory.forEach((t, idx) => {
-          csvRows.push([
-            escape(idx + 1),
-            escape(t.id || `TRP-${idx + 1}`),
-            escape(t.caseNo || 'N/A'),
-            escape(t.containerNumber || 'N/A'),
-            escape(t.clientName || 'N/A'),
-            escape(t.route || 'Karachi - Inland Corridor'),
-            escape(t.date || nowStr),
-            escape(t.driverName || vehicle.driverName || 'N/A'),
-            escape(t.driverPhone || vehicle.driverContact || 'N/A'),
-            escape(t.status || 'Completed')
-          ].join(','));
-        });
-      } else {
+      trips.forEach(t => {
         csvRows.push([
-          escape(1),
-          escape('TRP-001'),
-          escape(`DPL-JOB-${vehicle.dplSerial || vehicle.registrationNumber}`),
-          escape('N/A'),
-          escape('Fleet Operation / Commercial'),
-          escape(vehicle.stationRoutePreferences?.join(' | ') || 'Karachi - Inland Operations'),
-          escape(vehicle.createdAt?.slice(0, 10) || nowStr),
-          escape(vehicle.driverName || 'Primary Driver'),
-          escape(vehicle.driverContact || 'N/A'),
-          escape(vehicle.status === 'ON_TRIP' ? 'IN_TRANSIT' : 'COMPLETED')
+          escape(t.date),
+          escape(t.containerNumber),
+          escape(t.driverName),
+          escape(t.importerName),
+          escape(t.clientName),
+          escape(t.status)
         ].join(','));
-      }
-
-      csvRows.push(`""`);
-
-      // Section 3: Vehicle Operational Log History
-      csvRows.push(`"=== VEHICLE OPERATIONAL EVENT LOGS ==="`);
-      csvRows.push(`"Sr No","Event / Action","Date","Details / Remarks"`);
-      if (vehicle.history && vehicle.history.length > 0) {
-        vehicle.history.forEach((h, idx) => {
-          csvRows.push([
-            escape(idx + 1),
-            escape(h.type || 'Log Entry'),
-            escape(h.date || nowStr),
-            escape(h.description || h.relatedCaseNo || 'N/A')
-          ].join(','));
-        });
-      } else {
-        csvRows.push([
-          escape(1),
-          escape('Vehicle Enrolled'),
-          escape(vehicle.createdAt || nowStr),
-          escape('Vehicle registered in DPL fleet directory with complete documentation')
-        ].join(','));
-      }
+      });
 
       const csvContent = '\uFEFF' + csvRows.join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.setAttribute('href', url);
-      link.setAttribute('download', `DPL_Trip_Fleet_Report_${vehicle.registrationNumber.replace(/[^a-zA-Z0-9]/g, '_')}_${nowStr}.csv`);
+      link.setAttribute('download', `${vehicle.registrationNumber}_trips.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      setDownloadSuccess(`Trip & Fleet Report downloaded for ${vehicle.registrationNumber}`);
+      setDownloadSuccess(`Trip report downloaded for ${vehicle.registrationNumber}`);
     } catch (err) {
       console.error(err);
-      setDownloadError('Failed to generate vehicle trip & fleet report.');
+      setDownloadError('Failed to generate vehicle trip report.');
     } finally {
       setIsExportingTripReport(false);
     }
@@ -2172,23 +2242,23 @@ const VehicleProfileModal = ({
                {vehicle.registrationNumber}
                <span className="text-sm font-normal bg-white/10 px-2 py-1 rounded text-gray-300">{vehicle.type}</span>
              </h2>
-             <p className="text-gray-400 text-sm mt-1">{vehicle.transporterName} • {vehicle.category}</p>
+             <p className="text-gray-400 text-sm mt-1">{vehicle.brokerName || vehicle.transporterName || 'Direct Transporter'} • {vehicle.category}</p>
            </div>
            
            <div className="flex items-center gap-2">
              {vehicle.status === 'CANCELLED' ? (
-               <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
-                 <Ban size={13} /> De-registered / Cancelled
-               </span>
+                <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
+                  <Ban size={13} /> De-registered / Cancelled
+                </span>
              ) : onCancelVehicle ? (
-               <button
-                 onClick={() => onCancelVehicle(vehicle)}
-                 className="bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all"
-                 title="Cancel Vehicle and Generate NOC"
-               >
-                 <Ban size={14} />
-                 <span>Cancel Vehicle (NOC)</span>
-               </button>
+                <button
+                  onClick={() => onCancelVehicle(vehicle)}
+                  className="bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all"
+                  title="Cancel Vehicle and Generate NOC"
+                >
+                  <Ban size={14} />
+                  <span>Cancel Vehicle (NOC)</span>
+                </button>
              ) : null}
 
              <button
@@ -2198,7 +2268,7 @@ const VehicleProfileModal = ({
                title={`Download complete Trip & Fleet Report for vehicle ${vehicle.registrationNumber} (Excel / CSV)`}
              >
                {isExportingTripReport ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-               <span>Trip & Fleet Report</span>
+               <span>Trip Report</span>
              </button>
 
              <button
@@ -2214,7 +2284,7 @@ const VehicleProfileModal = ({
            </div>
         </div>
 
-        {/* Status notification banner inside modal */}
+        {/* Status notifications */}
         {isExporting && (
           <div className="bg-brand-500/10 border-b border-brand-500/20 px-6 py-2.5 flex items-center gap-3 text-brand-300 text-xs animate-pulse">
             <Loader2 size={16} className="animate-spin text-brand-400 shrink-0" />
@@ -2258,160 +2328,246 @@ const VehicleProfileModal = ({
         
         <div className="flex-1 overflow-y-auto p-6">
            {/* Status Cards */}
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
               <div className="glass-panel p-4 rounded-xl border border-white/10">
                  <h4 className="text-brand-400 text-xs uppercase font-bold mb-3">Current Status</h4>
                  <div className="text-2xl font-bold text-white mb-1">{vehicle.status.replace('_', ' ')}</div>
                  <div className="text-xs text-gray-500">Last updated: Today</div>
               </div>
               <div className="glass-panel p-4 rounded-xl border border-white/10">
-                 <h4 className="text-brand-400 text-xs uppercase font-bold mb-3">DPL Serial</h4>
-                 <div className="text-xl font-mono text-white mb-1">{vehicle.dplSerial}</div>
-                 <div className="text-xs text-gray-500">Auto-generated</div>
-              </div>
-              <div className="glass-panel p-4 rounded-xl border border-white/10">
-                 <h4 className="text-brand-400 text-xs uppercase font-bold mb-3">Validation</h4>
-                 <div className="text-white mb-1">{vehicle.validationExpiryDate || 'N/A'}</div>
+                 <h4 className="text-brand-400 text-xs uppercase font-bold mb-3">Validation Expiry</h4>
+                 <div className="text-2xl font-bold text-white mb-1">{vehicle.validationExpiryDate || 'Active'}</div>
                  <div className="text-xs text-gray-500">
-                    {vehicle.validationExpiryDate ? 'Expires in 3 months' : 'No expiry set'}
+                    {vehicle.validationExpiryDate ? 'Customs authorization validity' : 'No strict expiry bound'}
                  </div>
               </div>
            </div>
 
-           {/* Technical & Owner Details */}
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-             <div className="glass-panel p-5 rounded-xl border border-white/10">
-               <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Settings size={18}/> Technical Details</h3>
-               <div className="space-y-3 text-sm">
-                 <div className="flex justify-between border-b border-white/5 pb-2">
+           {/* Redesigned Unified Vehicle Details Section */}
+           <div className="glass-panel p-6 rounded-xl border border-white/10 mb-8">
+             <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+               <Settings size={18} className="text-brand-400" /> Vehicle Details
+             </h3>
+             
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+               {/* Technical specifications */}
+               <div className="space-y-3">
+                 <h4 className="text-xs font-bold text-brand-400 uppercase tracking-wider border-b border-white/5 pb-1">Technical Specs</h4>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Registration No</span>
+                   <span className="text-white font-mono font-bold">{vehicle.registrationNumber}</span>
+                 </div>
+                 <div className="flex justify-between text-sm">
                    <span className="text-gray-400">Engine No</span>
-                   <span className="text-white font-mono">{vehicle.engineNo}</span>
+                   <span className="text-white font-mono">{vehicle.engineNo || '-'}</span>
                  </div>
-                 <div className="flex justify-between border-b border-white/5 pb-2">
+                 <div className="flex justify-between text-sm">
                    <span className="text-gray-400">Chassis No</span>
-                   <span className="text-white font-mono">{vehicle.chassisNo}</span>
+                   <span className="text-white font-mono">{vehicle.chassisNo || '-'}</span>
                  </div>
-                 <div className="flex justify-between border-b border-white/5 pb-2">
+                 <div className="flex justify-between text-sm">
                    <span className="text-gray-400">Make/Model</span>
                    <span className="text-white">{vehicle.makeModel || '-'}</span>
                  </div>
-                 <div className="flex justify-between border-b border-white/5 pb-2">
-                   <span className="text-gray-400">Registration Date</span>
-                   <span className="text-white">{vehicle.registrationDate || '-'}</span>
-                 </div>
-                 <div className="flex justify-between border-b border-white/5 pb-2">
+                 <div className="flex justify-between text-sm">
                    <span className="text-gray-400">Weight Capacity</span>
                    <span className="text-white">{vehicle.weightCapacity || '-'}</span>
                  </div>
-               </div>
-             </div>
-
-             <div className="glass-panel p-5 rounded-xl border border-white/10">
-               <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><User size={18}/> Owner Details</h3>
-               <div className="space-y-3 text-sm">
-                 <div className="flex justify-between border-b border-white/5 pb-2">
-                   <span className="text-gray-400">Owner Name</span>
-                   <span className="text-white">{vehicle.ownerName || '-'}</span>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Category & Type</span>
+                   <span className="text-white">{vehicle.category} • {vehicle.type}</span>
                  </div>
-                 <div className="flex justify-between border-b border-white/5 pb-2">
-                   <span className="text-gray-400">CNIC</span>
+               </div>
+
+               {/* Driver & tracking specifications */}
+               <div className="space-y-3">
+                 <h4 className="text-xs font-bold text-brand-400 uppercase tracking-wider border-b border-white/5 pb-1">Driver & Tracker</h4>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Driver Name</span>
+                   <span className="text-white font-medium">{vehicle.driverName || '-'}</span>
+                 </div>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Driver CNIC</span>
+                   <span className="text-white font-mono">{vehicle.driverCnic || '-'}</span>
+                 </div>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Driver Contact</span>
+                   <span className="text-white font-mono">{vehicle.driverContact || '-'}</span>
+                 </div>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Tracker Provider</span>
+                   <span className="text-white">{vehicle.tracker?.provider || 'None'}</span>
+                 </div>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Tracker Device ID</span>
+                   <span className="text-white font-mono">{vehicle.tracker?.id || '-'}</span>
+                 </div>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Carrier Affiliation</span>
+                   <span className="text-white">{vehicle.brokerName || vehicle.transporterName || 'Direct Transporter'}</span>
+                 </div>
+               </div>
+
+               {/* Owner specifications */}
+               <div className="space-y-3">
+                 <h4 className="text-xs font-bold text-brand-400 uppercase tracking-wider border-b border-white/5 pb-1">Legal Owner</h4>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Owner Name</span>
+                   <span className="text-white font-medium">{vehicle.ownerName || '-'}</span>
+                 </div>
+                 <div className="flex justify-between text-sm">
+                   <span className="text-gray-400">Owner CNIC</span>
                    <span className="text-white font-mono">{vehicle.ownerCnic || '-'}</span>
                  </div>
-                 <div className="flex justify-between border-b border-white/5 pb-2">
-                   <span className="text-gray-400">Address</span>
-                   <span className="text-white text-right max-w-[200px] truncate" title={vehicle.ownerAddress}>{vehicle.ownerAddress || '-'}</span>
+                 <div className="flex justify-between text-sm flex-col">
+                   <span className="text-gray-400 mb-1">Owner Address</span>
+                   <span className="text-white text-xs bg-white/5 p-1.5 rounded border border-white/5 break-words line-clamp-2" title={vehicle.ownerAddress}>
+                     {vehicle.ownerAddress || '-'}
+                   </span>
                  </div>
-                 {vehicle.ownerIdCardUrl ? (
-                   <div className="flex justify-between items-center pt-1">
-                     <span className="text-gray-400">Owner ID Card</span>
+                 {vehicle.ownerIdCardUrl && (
+                   <div className="flex justify-end pt-2">
                      <a 
                        href={vehicle.ownerIdCardUrl} 
                        download={`Owner_CNIC_${vehicle.registrationNumber}.png`} 
                        className="text-emerald-400 hover:text-emerald-300 text-xs font-semibold flex items-center gap-1 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20"
                      >
-                       <Download size={12} /> Download ID Card
+                       <Download size={12} /> Download Owner ID Card
                      </a>
                    </div>
-                 ) : null}
+                 )}
                </div>
              </div>
            </div>
 
-           {/* Trips & Fleet Operations History */}
-           <div className="mb-8">
-             <div className="flex items-center justify-between mb-3">
+           {/* Redesigned Registration and Cancellation History */}
+           <div className="glass-panel p-6 rounded-xl border border-white/10 mb-8">
+             <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+               <Calendar size={18} className="text-brand-400" /> Registration & Cancellation History
+             </h3>
+             
+             <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
+               <table className="w-full text-left text-xs">
+                 <thead className="bg-white/5 text-gray-400 uppercase font-semibold border-b border-white/10">
+                   <tr>
+                     <th className="p-3">Event / Action</th>
+                     <th className="p-3">Date</th>
+                     <th className="p-3">Status</th>
+                     <th className="p-3">Remarks / Details</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-white/5 text-gray-300">
+                   <tr className="hover:bg-white/5">
+                     <td className="p-3 font-semibold text-white flex items-center gap-2">
+                       <CheckCircle size={14} className="text-green-400" /> Initial Fleet Enrollment
+                     </td>
+                     <td className="p-3 font-mono">{vehicle.registrationDate || vehicle.createdAt?.slice(0, 10) || 'Verified'}</td>
+                     <td className="p-3"><span className="px-2 py-0.5 rounded bg-green-500/10 text-green-400 text-[10px] font-bold">REGISTERED</span></td>
+                     <td className="p-3 text-gray-400">Successfully enrolled in DPL fleet database</td>
+                   </tr>
+                   
+                   {vehicle.validationStartDate && (
+                     <tr className="hover:bg-white/5">
+                       <td className="p-3 font-semibold text-white flex items-center gap-2">
+                         <Activity size={14} className="text-blue-400" /> Customs Validation Start
+                       </td>
+                       <td className="p-3 font-mono">{vehicle.validationStartDate}</td>
+                       <td className="p-3"><span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] font-bold">BONDED ACTIVE</span></td>
+                       <td className="p-3 text-gray-400">Customs bonded transit permit authorized</td>
+                     </tr>
+                   )}
+
+                   {vehicle.validationExpiryDate && (
+                     <tr className="hover:bg-white/5">
+                       <td className="p-3 font-semibold text-white flex items-center gap-2">
+                         <Clock size={14} className="text-yellow-400" /> Customs Bonded Expiry / Renewal
+                       </td>
+                       <td className="p-3 font-mono">{vehicle.validationExpiryDate}</td>
+                       <td className="p-3">
+                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                           vehicle.status === 'EXPIRED' ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-400'
+                         }`}>
+                           {vehicle.status === 'EXPIRED' ? 'EXPIRED' : 'ACTIVE'}
+                         </span>
+                       </td>
+                       <td className="p-3 text-gray-400">
+                         {vehicle.status === 'EXPIRED' 
+                           ? 'Permit validity expired. Renewal required immediately.' 
+                           : 'Validity period is currently active.'}
+                       </td>
+                     </tr>
+                   )}
+
+                   {vehicle.status === 'CANCELLED' ? (
+                     <tr className="hover:bg-white/5 bg-red-500/5">
+                       <td className="p-3 font-semibold text-red-300 flex items-center gap-2">
+                         <Ban size={14} className="text-red-400" /> Fleet De-Registration / NOC
+                       </td>
+                       <td className="p-3 font-mono text-red-300">{vehicle.cancellationDate || vehicle.nocDate || 'Cancelled'}</td>
+                       <td className="p-3">
+                         <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-300 text-[10px] font-bold">
+                           CANCELLED / NOC ISSUED
+                         </span>
+                       </td>
+                       <td className="p-3 text-red-200">
+                         NOC Ref: {vehicle.nocReference || 'N/A'}. Reason: {vehicle.cancellationReason || 'Contract Concluded'}
+                       </td>
+                     </tr>
+                   ) : (
+                     <tr className="hover:bg-white/5">
+                       <td className="p-3 font-semibold text-gray-400 flex items-center gap-2">
+                         <Ban size={14} className="text-gray-600" /> Fleet De-Registration / NOC
+                       </td>
+                       <td className="p-3 font-mono text-gray-500">-</td>
+                       <td className="p-3"><span className="px-2 py-0.5 rounded bg-gray-500/10 text-gray-500 text-[10px] font-bold">NOT CANCELLED</span></td>
+                       <td className="p-3 text-gray-500">Vehicle is currently active; no NOC has been requested or generated</td>
+                     </tr>
+                   )}
+                 </tbody>
+               </table>
+             </div>
+           </div>
+
+           {/* Bottom Section: Vehicle Trips */}
+           <div className="mb-8" id="vehicle-trips-section">
+             <div className="flex items-center justify-between mb-4">
                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                 <MapPin size={18} className="text-brand-400"/> Operational Trips & Movements
+                 <MapPin size={18} className="text-brand-400"/> Vehicle Trips
                </h3>
                <button
                  type="button"
                  onClick={handleDownloadTripAndFleetReport}
                  className="text-xs text-brand-300 hover:text-white flex items-center gap-1 bg-brand-500/10 hover:bg-brand-500/20 px-2.5 py-1 rounded-lg border border-brand-500/20 transition-all"
-                 title="Download Trip & Fleet Report for this vehicle"
+                 title="Download Trip Report for this vehicle"
                >
                  <Download size={12} /> Export Vehicle Trip Report
                </button>
              </div>
 
-             {vehicle.tripsHistory && vehicle.tripsHistory.length > 0 ? (
-               <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
-                 <table className="w-full text-left text-xs">
-                   <thead className="bg-white/5 text-gray-400 uppercase font-semibold border-b border-white/10">
-                     <tr>
-                       <th className="p-3">Case / Job Ref</th>
-                       <th className="p-3">Container No</th>
-                       <th className="p-3">Client</th>
-                       <th className="p-3">Route</th>
-                       <th className="p-3">Date</th>
-                       <th className="p-3">Status</th>
+             <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
+               <table className="w-full text-left text-xs">
+                 <thead className="bg-white/5 text-gray-400 uppercase font-semibold border-b border-white/10">
+                   <tr>
+                     <th className="p-3">Trip Date</th>
+                     <th className="p-3">Container Number</th>
+                     <th className="p-3">Driver Name</th>
+                     <th className="p-3">Importer Name</th>
+                     <th className="p-3">Client Name</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-white/5 text-gray-300">
+                   {trips.map((trip, idx) => (
+                     <tr key={idx} className="hover:bg-white/5">
+                       <td className="p-3 font-mono text-gray-400">{trip.date}</td>
+                       <td className="p-3 font-mono font-medium text-white">{trip.containerNumber || '-'}</td>
+                       <td className="p-3 text-gray-200">{trip.driverName || vehicle.driverName || '-'}</td>
+                       <td className="p-3 text-gray-300">{trip.importerName || 'N/A'}</td>
+                       <td className="p-3 text-gray-200 font-semibold">{trip.clientName}</td>
                      </tr>
-                   </thead>
-                   <tbody className="divide-y divide-white/5 text-gray-300">
-                     {vehicle.tripsHistory.map((trip, idx) => (
-                       <tr key={idx} className="hover:bg-white/5">
-                         <td className="p-3 font-mono font-medium text-white">{trip.caseNo}</td>
-                         <td className="p-3 font-mono text-gray-300">{trip.containerNumber || '-'}</td>
-                         <td className="p-3 text-gray-200">{trip.clientName}</td>
-                         <td className="p-3 text-gray-300">{trip.route}</td>
-                         <td className="p-3 text-gray-400">{trip.date}</td>
-                         <td className="p-3">
-                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                             {trip.status || 'Completed'}
-                           </span>
-                         </td>
-                       </tr>
-                     ))}
-                   </tbody>
-                 </table>
-               </div>
-             ) : (
-               <div className="glass-panel p-4 rounded-xl border border-white/10 flex items-center justify-between">
-                 <div className="text-xs text-gray-400">
-                   <p className="text-gray-200 font-medium">Assigned Corridor: {vehicle.stationRoutePreferences?.join(' | ') || 'Karachi - Inland Operations'}</p>
-                   <p className="text-[11px] text-gray-500 mt-0.5">Status: {vehicle.status.replace('_', ' ')} • Compatible: {vehicle.containerCompatibility?.join(', ') || vehicle.size}</p>
-                 </div>
-                 <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/20">
-                   {vehicle.status === 'ON_TRIP' ? 'Active In Transit' : 'Ready for Dispatch'}
-                 </span>
-               </div>
-             )}
-           </div>
-
-           <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Activity size={18}/> History Log</h3>
-           <div className="space-y-4">
-              {/* Mock History */}
-              <div className="border-l-2 border-brand-500 pl-4 py-1">
-                 <p className="text-sm text-white font-medium">Assigned to Case DPL-24-0042</p>
-                 <p className="text-xs text-gray-400">2024-05-20 • Trip to Lahore</p>
-              </div>
-              <div className="border-l-2 border-gray-700 pl-4 py-1">
-                 <p className="text-sm text-gray-300">Maintenance: Oil Change</p>
-                 <p className="text-xs text-gray-500">2024-04-15 • Workshop</p>
-              </div>
-              <div className="border-l-2 border-gray-700 pl-4 py-1">
-                 <p className="text-sm text-gray-300">Vehicle Registered</p>
-                 <p className="text-xs text-gray-500">{vehicle.createdAt} • System Entry</p>
-              </div>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
            </div>
         </div>
       </div>

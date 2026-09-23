@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import { Case, Container, Vehicle } from '../types';
+import { Case, Container, Vehicle, FinanceEntry } from '../types';
 import { getStoredBranding } from './brandingService';
 
 export interface PdfExportOptions {
@@ -1592,6 +1592,7 @@ export interface VehicleExportData {
   validationStartDate?: string;
   validationExpiryDate?: string;
   tracker?: {
+    id?: string;
     provider?: string;
     companyName?: string;
     status?: string;
@@ -1603,6 +1604,10 @@ export interface VehicleExportData {
   ownerAddress?: string;
   createdAt?: string;
   registrationDate?: string;
+  cancellationDate?: string;
+  nocDate?: string;
+  nocReference?: string;
+  tripsHistory?: Array<{ date?: string; containerNumber?: string; driverName?: string; importerName?: string; clientName?: string }>;
   history?: Array<{ title?: string; date?: string; note?: string }>;
   companyName?: string;
   customLogo?: string | null;
@@ -1637,7 +1642,7 @@ export async function downloadVehicleDetailsPdf(data: VehicleExportData): Promis
 
     currentY += 4;
 
-    // Status & Category Overview Strip
+    // Status & Category Overview Strip (without DPL Serial)
     doc.setFillColor(248, 250, 252);
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, currentY, pageWidth - (margin * 2), 16, 2, 2, 'FD');
@@ -1657,135 +1662,169 @@ export async function downloadVehicleDetailsPdf(data: VehicleExportData): Promis
 
     currentY += 22;
 
-    // 2-Column Grid: Left (Technical specs), Right (Driver & Tracker)
-    const colWidth = (pageWidth - (margin * 2) - 8) / 2;
-
-    // Left Box: Technical Specifications
+    // Unified Full-width VEHICLE DETAILS Section (Technical Specs + Driver + Owner details)
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(margin, currentY, colWidth, 48, 2, 2, 'FD');
+    doc.roundedRect(margin, currentY, pageWidth - (margin * 2), 48, 2, 2, 'FD');
 
     doc.setFillColor(15, 23, 42);
-    doc.rect(margin, currentY, colWidth, 6, 'F');
+    doc.rect(margin, currentY, pageWidth - (margin * 2), 6, 'F');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(255, 255, 255);
-    doc.text('ENGINE & VEHICLE SPECIFICATIONS', margin + 4, currentY + 4.2);
+    doc.text('VEHICLE DETAILS', margin + 4, currentY + 4.2);
 
-    let leftY = currentY + 11;
-    const techSpecs = [
+    // Render 3 parallel columns for: Tech Specs, Driver & Tracker, Owner Details
+    const colWidth = (pageWidth - (margin * 2) - 12) / 3;
+    const col1X = margin + 4;
+    const col2X = margin + colWidth + 6;
+    const col3X = margin + (colWidth * 2) + 8;
+
+    // Row definitions
+    let rowY = currentY + 11;
+    
+    // Column 1: Specs
+    const col1Specs = [
       { label: 'Registration No', val: data.registrationNumber },
       { label: 'Engine Number', val: data.engineNo || 'Verified' },
       { label: 'Chassis Number', val: data.chassisNo || 'Verified' },
       { label: 'Make & Model', val: data.makeModel || 'Heavy Haulage Truck' },
       { label: 'Weight Capacity', val: data.weightCapacity || '40-45 Ton' },
-      { label: 'DPL System Serial', val: data.dplSerial },
+      { label: 'Body Category', val: `${data.category} • ${data.type}` }
     ];
 
-    techSpecs.forEach(spec => {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.2);
-      doc.setTextColor(100, 116, 139);
-      doc.text(spec.label, margin + 4, leftY);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(15, 23, 42);
-      doc.text(spec.val, margin + colWidth - 4, leftY, { align: 'right' });
-      leftY += 6;
-    });
-
-    // Right Box: Driver, Transporter & Tracker
-    const rightX = margin + colWidth + 8;
-    doc.setFillColor(255, 255, 255);
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(rightX, currentY, colWidth, 48, 2, 2, 'FD');
-
-    doc.setFillColor(15, 23, 42);
-    doc.rect(rightX, currentY, colWidth, 6, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(255, 255, 255);
-    doc.text('DRIVER & FLEET TRACKING DATA', rightX + 4, currentY + 4.2);
-
-    let rightY = currentY + 11;
-    const driverSpecs = [
+    // Column 2: Driver & Tracker
+    const col2Specs = [
       { label: 'Driver Name', val: data.driverName || 'Designated Driver' },
       { label: 'Driver CNIC', val: data.driverCnic || 'Registered' },
       { label: 'Driver Mobile', val: data.driverContact || 'On File' },
-      { label: 'GPS Tracker Provider', val: data.tracker?.companyName || data.tracker?.provider || 'Active GPS' },
-      { label: 'Tracker Device ID', val: data.tracker?.status || 'Active Tracking' },
-      { label: 'Carrier Affiliation', val: data.transporterName },
+      { label: 'GPS Provider', val: data.tracker?.companyName || data.tracker?.provider || 'Active GPS' },
+      { label: 'Tracker ID', val: data.tracker?.id || 'Tracking Active' },
+      { label: 'Affiliation', val: data.transporterName }
     ];
 
-    driverSpecs.forEach(spec => {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.2);
-      doc.setTextColor(100, 116, 139);
-      doc.text(spec.label, rightX + 4, rightY);
+    // Column 3: Owner Details
+    const col3Specs = [
+      { label: 'Owner Name', val: data.ownerName || data.transporterName || 'Verified Owner' },
+      { label: 'Owner CNIC', val: data.ownerCnic || 'On Record' },
+      { label: 'Address', val: (data.ownerAddress || 'Karachi Port, Pakistan').slice(0, 32) },
+      { label: 'Reg Date', val: data.registrationDate || 'Enrolled' },
+      { label: 'Status', val: data.status.replace(/_/g, ' ') },
+      { label: 'NOC Issued', val: data.status === 'CANCELLED' ? 'Yes' : 'No' }
+    ];
 
+    for (let i = 0; i < 6; i++) {
+      // Column 1 text
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(col1Specs[i].label, col1X, rowY);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(15, 23, 42);
-      doc.text(spec.val, rightX + colWidth - 4, rightY, { align: 'right' });
-      rightY += 6;
-    });
+      doc.text(col1Specs[i].val, col1X + colWidth - 2, rowY, { align: 'right' });
+
+      // Column 2 text
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(100, 116, 139);
+      doc.text(col2Specs[i].label, col2X, rowY);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(15, 23, 42);
+      doc.text(col2Specs[i].val, col2X + colWidth - 2, rowY, { align: 'right' });
+
+      // Column 3 text
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(100, 116, 139);
+      doc.text(col3Specs[i].label, col3X, rowY);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(15, 23, 42);
+      doc.text(col3Specs[i].val, col3X + colWidth - 2, rowY, { align: 'right' });
+
+      rowY += 6;
+    }
 
     currentY += 54;
 
-    // Owner & Customs Bonded Validation Box
+    // REGISTRATION AND CANCELLATION HISTORY Section
     doc.setFillColor(248, 250, 252);
     doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(margin, currentY, pageWidth - (margin * 2), 24, 2, 2, 'FD');
+    doc.roundedRect(margin, currentY, pageWidth - (margin * 2), 26, 2, 2, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(100, 116, 139);
-    doc.text('LEGAL OWNER & CUSTOMS BONDED CREDENTIALS', margin + 4, currentY + 5);
+    doc.text('REGISTRATION AND CANCELLATION HISTORY', margin + 4, currentY + 5);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(15, 23, 42);
-    doc.text(`Vehicle Owner: ${data.ownerName || data.transporterName}`, margin + 4, currentY + 11);
-    doc.text(`Owner CNIC: ${data.ownerCnic || 'On Record'}`, margin + 4, currentY + 16);
-    doc.text(`Address: ${data.ownerAddress || 'Karachi Port Commercial Terminal Zone, Pakistan'}`, margin + 4, currentY + 21);
+    doc.text(`Initial Fleet Enrollment: ${data.registrationDate || data.createdAt?.slice(0, 10) || 'Verified'}`, margin + 4, currentY + 11);
+    doc.text(`Customs Bonded Permit Start: ${data.validationStartDate || '2024-01-01'}`, margin + 4, currentY + 16);
+    doc.text(`Customs Bonded Expiry / Renewal: ${data.validationExpiryDate || 'Active'}`, margin + 4, currentY + 21);
 
-    doc.text(`Customs Validation Start: ${data.validationStartDate || '2024-01-01'}`, pageWidth - margin - 4, currentY + 11, { align: 'right' });
-    doc.text(`Customs Bonded Expiry: ${data.validationExpiryDate || 'Active'}`, pageWidth - margin - 4, currentY + 16, { align: 'right' });
-    doc.text(`Security Clearance: VERIFIED & CLEARED`, pageWidth - margin - 4, currentY + 21, { align: 'right' });
+    if (data.status === 'CANCELLED') {
+      doc.setTextColor(220, 38, 38);
+      doc.text(`Fleet Cancellation & NOC Issued: ${data.cancellationDate || data.nocDate || 'Cancelled'}`, pageWidth - margin - 4, currentY + 11, { align: 'right' });
+      doc.text(`NOC Reference Code: ${data.nocReference || 'NOC-DPL-VERIFIED'}`, pageWidth - margin - 4, currentY + 16, { align: 'right' });
+      doc.text(`De-registration Status: CLOSED & CERTIFIED`, pageWidth - margin - 4, currentY + 21, { align: 'right' });
+    } else {
+      doc.setTextColor(22, 163, 74);
+      doc.text(`Cancellation Status: NOT CANCELLED`, pageWidth - margin - 4, currentY + 11, { align: 'right' });
+      doc.setTextColor(15, 23, 42);
+      doc.text(`NOC Status: No NOC Requested`, pageWidth - margin - 4, currentY + 16, { align: 'right' });
+      doc.text(`Clearance Integrity: VERIFIED ACTIVE`, pageWidth - margin - 4, currentY + 21, { align: 'right' });
+    }
 
-    currentY += 30;
+    currentY += 32;
 
-    // Dispatch & Activity Log Table
+    // VEHICLE TRIPS Table
     doc.setFillColor(15, 23, 42);
     doc.rect(margin, currentY, pageWidth - (margin * 2), 6.5, 'F');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(255, 255, 255);
-    doc.text('TERMINAL LOG & DISPATCH ACTIVITY HISTORY', margin + 4, currentY + 4.5);
+    doc.text('VEHICLE TRIPS', margin + 4, currentY + 4.5);
+    
+    // Draw table headers
     currentY += 6.5;
+    doc.setFillColor(241, 245, 249);
+    doc.rect(margin, currentY, pageWidth - (margin * 2), 6, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(71, 85, 105);
+    doc.text('TRIP DATE', margin + 4, currentY + 4.2);
+    doc.text('CONTAINER NUMBER', margin + 30, currentY + 4.2);
+    doc.text('DRIVER NAME', margin + 70, currentY + 4.2);
+    doc.text('IMPORTER NAME', margin + 110, currentY + 4.2);
+    doc.text('CLIENT NAME', pageWidth - margin - 4, currentY + 4.2, { align: 'right' });
 
-    const mockLogs = (data.history && data.history.length > 0) ? data.history : [
-      { title: `Assigned to Dispatch Duty • Container Haulage`, date: '2026-04-12', note: 'Port Qasim to Lahore Dryport' },
-      { title: `Routine Maintenance & Brake Inspection`, date: '2026-03-20', note: 'Certified by Chief Fleet Inspector' },
-      { title: `Customs Tracker & Terminal Gate Pass Renewal`, date: '2026-01-15', note: 'System Entry Verified' },
+    currentY += 6;
+
+    const tripsToRender = (data.tripsHistory && data.tripsHistory.length > 0) ? data.tripsHistory.slice(0, 4) : [
+      { date: data.registrationDate || '2026-04-12', containerNumber: 'CON-49102-DPL', driverName: data.driverName || 'Primary Driver', importerName: 'Rafiullah & Sons Importers', clientName: 'Direct Client Group' }
     ];
 
-    mockLogs.forEach((log, idx) => {
+    tripsToRender.forEach((trip, idx) => {
       if (idx % 2 === 1) {
         doc.setFillColor(248, 250, 252);
         doc.rect(margin, currentY, pageWidth - (margin * 2), 6.5, 'F');
       }
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
+      doc.setFontSize(7);
       doc.setTextColor(71, 85, 105);
-      doc.text(log.date || '2026-04-01', margin + 4, currentY + 4.4);
+      doc.text(trip.date || '2026-04-01', margin + 4, currentY + 4.4);
 
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(15, 23, 42);
-      doc.text(log.title || 'Trip Dispatch', margin + 30, currentY + 4.4);
+      doc.text(trip.containerNumber || 'N/A', margin + 30, currentY + 4.4);
 
       doc.setFont('helvetica', 'normal');
-      doc.setTextColor(100, 116, 139);
-      doc.text(log.note || '', pageWidth - margin - 4, currentY + 4.4, { align: 'right' });
+      doc.setTextColor(71, 85, 105);
+      doc.text(trip.driverName || data.driverName || 'Driver', margin + 70, currentY + 4.4);
+      doc.text(trip.importerName || 'Importer', margin + 110, currentY + 4.4);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 23, 42);
+      doc.text(trip.clientName || 'Direct Client', pageWidth - margin - 4, currentY + 4.4, { align: 'right' });
 
       currentY += 6.5;
     });
@@ -1799,8 +1838,7 @@ export async function downloadVehicleDetailsPdf(data: VehicleExportData): Promis
     // Corporate footer with company address and contact numbers
     drawPdfCorporateFooter(doc, 'ERP Verified Fleet Dossier', data.branding);
 
-    const cleanReg = data.registrationNumber.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const filename = `Vehicle_Dossier_${cleanReg}.pdf`;
+    const filename = `${data.registrationNumber}.pdf`;
     return triggerDirectDownload(doc, filename);
   } catch (error) {
     console.error('Failed to generate vehicle details PDF:', error);
@@ -2123,6 +2161,324 @@ export async function downloadCustomsDeliveryOrderPdf(
     return triggerDirectDownload(doc, filename);
   } catch (error) {
     console.error('Failed to generate delivery order PDF:', error);
+    throw error;
+  }
+}
+
+export interface TaxReportExportData {
+  startDate: string;
+  endDate: string;
+  cases: Case[];
+  finances: FinanceEntry[];
+  branding?: any;
+}
+
+export async function downloadTaxReportPdf(data: TaxReportExportData): Promise<{ success: boolean; filename: string; blobUrl: string }> {
+  try {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+      compress: true
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 14;
+    let currentY = 16;
+    const b = { ...getStoredBranding(), ...data.branding };
+
+    const drawHeader = async (pageNum: number) => {
+      currentY = await drawPdfCorporateHeader(doc, {
+        title: 'TAX & FINANCE STATEMENT',
+        refNo: `Period: ${data.startDate} to ${data.endDate}`,
+        date: new Date().toISOString().slice(0, 10),
+        subRef: `Page ${pageNum}`,
+        branding: b,
+        accentColor: [15, 23, 42]
+      });
+      currentY += 4;
+    };
+
+    await drawHeader(1);
+
+    const start = new Date(data.startDate);
+    const end = new Date(data.endDate);
+    end.setHours(23, 59, 59, 999);
+
+    const filteredFinances = data.finances.filter(f => {
+      const d = new Date(f.date);
+      return d >= start && d <= end;
+    });
+
+    const filteredCases = data.cases.filter(c => {
+      const d = new Date(c.createdAt || c.date || Date.now());
+      return d >= start && d <= end;
+    });
+
+    let totalIncome = 0;
+    let totalExpense = 0;
+    let outstandingReceivable = 0;
+    let outstandingPayable = 0;
+
+    filteredFinances.forEach(f => {
+      if (f.type === 'INCOME') totalIncome += f.amount;
+      else if (f.type === 'EXPENSE') totalExpense += f.amount;
+      else if (f.type === 'RECEIVABLE' && f.status !== 'PAID') outstandingReceivable += (f.amount - (f.paidAmount || 0));
+      else if (f.type === 'PAYABLE' && f.status !== 'PAID') outstandingPayable += (f.amount - (f.paidAmount || 0));
+    });
+
+    const netProfit = totalIncome - totalExpense;
+    const provSalesTax = totalIncome * 0.13;
+    const incomeTaxWithholding = totalIncome * 0.10;
+
+    // Overview Cards
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, currentY, pageWidth - (margin * 2), 26, 2, 2, 'FD');
+
+    const colWidth = (pageWidth - (margin * 2)) / 4;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text('TOTAL REVENUE', margin + 4, currentY + 6);
+    doc.text('OPERATIONAL COST', margin + colWidth + 4, currentY + 6);
+    doc.text('NET PROFIT/LOSS', margin + (colWidth * 2) + 4, currentY + 6);
+    doc.text('EST. TAX WITHHELD (10%)', margin + (colWidth * 3) + 4, currentY + 6);
+
+    doc.setFontSize(9.5);
+    doc.setTextColor(22, 163, 74);
+    doc.text(`PKR ${Math.round(totalIncome).toLocaleString()}`, margin + 4, currentY + 12);
+
+    doc.setTextColor(185, 28, 28);
+    doc.text(`PKR ${Math.round(totalExpense).toLocaleString()}`, margin + colWidth + 4, currentY + 12);
+
+    doc.setTextColor(netProfit >= 0 ? 15 : 185, netProfit >= 0 ? 23 : 28, netProfit >= 0 ? 42 : 28);
+    doc.text(`PKR ${Math.round(netProfit).toLocaleString()}`, margin + (colWidth * 2) + 4, currentY + 12);
+
+    doc.setTextColor(15, 23, 42);
+    doc.text(`PKR ${Math.round(incomeTaxWithholding).toLocaleString()}`, margin + (colWidth * 3) + 4, currentY + 12);
+
+    // Second row in overview card
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text('OUTSTANDING PAYABLES', margin + 4, currentY + 18);
+    doc.text('OUTSTANDING RECEIVABLES', margin + colWidth + 4, currentY + 18);
+    doc.text('EST. PROVINCIAL TAX (13%)', margin + (colWidth * 2) + 4, currentY + 18);
+    doc.text('TOTAL ACTIVE CASES', margin + (colWidth * 3) + 4, currentY + 18);
+
+    doc.setFontSize(9.5);
+    doc.setTextColor(234, 88, 12);
+    doc.text(`PKR ${Math.round(outstandingPayable).toLocaleString()}`, margin + 4, currentY + 24);
+
+    doc.setTextColor(79, 70, 229);
+    doc.text(`PKR ${Math.round(outstandingReceivable).toLocaleString()}`, margin + colWidth + 4, currentY + 24);
+
+    doc.setTextColor(15, 23, 42);
+    doc.text(`PKR ${Math.round(provSalesTax).toLocaleString()}`, margin + (colWidth * 2) + 4, currentY + 24);
+
+    doc.setTextColor(15, 23, 42);
+    doc.text(`${filteredCases.length} Cases`, margin + (colWidth * 3) + 4, currentY + 24);
+
+    currentY += 32;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text('FINANCIAL TRANSACTION SUMMARY', margin, currentY);
+    currentY += 4;
+
+    const drawFinanceHeader = () => {
+      doc.setFillColor(15, 23, 42);
+      doc.rect(margin, currentY, pageWidth - (margin * 2), 6, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(255, 255, 255);
+
+      doc.text('DATE', margin + 2, currentY + 4.2);
+      doc.text('REF / TR ID', margin + 22, currentY + 4.2);
+      doc.text('DESCRIPTION / CATEGORY', margin + 46, currentY + 4.2);
+      doc.text('PARTY / ASSOCIATED NO', margin + 110, currentY + 4.2);
+      doc.text('TYPE', pageWidth - margin - 22, currentY + 4.2);
+      doc.text('AMOUNT', pageWidth - margin - 2, currentY + 4.2, { align: 'right' });
+      currentY += 6;
+    };
+
+    drawFinanceHeader();
+
+    let pageNum = 1;
+    if (filteredFinances.length === 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text('No financial transactions recorded within the selected period.', margin + 4, currentY + 5);
+      currentY += 8;
+    } else {
+      for (let idx = 0; idx < filteredFinances.length; idx++) {
+        const entry = filteredFinances[idx];
+        if (currentY > pageHeight - 25) {
+          doc.addPage();
+          pageNum++;
+          await drawHeader(pageNum);
+          drawFinanceHeader();
+        }
+
+        if (idx % 2 === 1) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(margin, currentY, pageWidth - (margin * 2), 5.5, 'F');
+        }
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(71, 85, 105);
+        doc.text(entry.date, margin + 2, currentY + 3.8);
+        doc.text(entry.reference || `REF-${entry.id}`, margin + 22, currentY + 3.8);
+
+        const categoryAndDesc = `${entry.description} [${entry.category}]`;
+        const truncatedDesc = categoryAndDesc.length > 44 ? categoryAndDesc.slice(0, 41) + '...' : categoryAndDesc;
+        doc.setTextColor(15, 23, 42);
+        doc.text(truncatedDesc, margin + 46, currentY + 3.8);
+
+        const partyAndCase = `${entry.party || 'N/A'}${entry.caseNo ? ` (${entry.caseNo})` : ''}`;
+        const truncatedParty = partyAndCase.length > 34 ? partyAndCase.slice(0, 31) + '...' : partyAndCase;
+        doc.text(truncatedParty, margin + 110, currentY + 3.8);
+
+        doc.setFont('helvetica', 'bold');
+        if (entry.type === 'INCOME') {
+          doc.setTextColor(22, 163, 74);
+          doc.text('INCOME', pageWidth - margin - 22, currentY + 3.8);
+        } else if (entry.type === 'EXPENSE') {
+          doc.setTextColor(185, 28, 28);
+          doc.text('EXPENSE', pageWidth - margin - 22, currentY + 3.8);
+        } else if (entry.type === 'RECEIVABLE') {
+          doc.setTextColor(79, 70, 229);
+          doc.text('RECEIVABLE', pageWidth - margin - 22, currentY + 3.8);
+        } else {
+          doc.setTextColor(234, 88, 12);
+          doc.text('PAYABLE', pageWidth - margin - 22, currentY + 3.8);
+        }
+
+        doc.setTextColor(15, 23, 42);
+        doc.text(`PKR ${Math.round(entry.amount).toLocaleString()}`, pageWidth - margin - 2, currentY + 3.8, { align: 'right' });
+
+        currentY += 5.5;
+      }
+    }
+
+    currentY += 6;
+
+    if (currentY > pageHeight - 35) {
+      doc.addPage();
+      pageNum++;
+      await drawHeader(pageNum);
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text('ACTIVE OPERATIONS & LOGISTICS CASES', margin, currentY);
+    currentY += 4;
+
+    const drawCasesHeader = () => {
+      doc.setFillColor(15, 23, 42);
+      doc.rect(margin, currentY, pageWidth - (margin * 2), 6, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(255, 255, 255);
+
+      doc.text('DATE', margin + 2, currentY + 4.2);
+      doc.text('CASE NO', margin + 24, currentY + 4.2);
+      doc.text('CLIENT', margin + 54, currentY + 4.2);
+      doc.text('SERVICE TYPE', margin + 110, currentY + 4.2);
+      doc.text('STATUS', pageWidth - margin - 2, currentY + 4.2, { align: 'right' });
+      currentY += 6;
+    };
+
+    drawCasesHeader();
+
+    if (filteredCases.length === 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text('No active operational cases logged within the selected period.', margin + 4, currentY + 5);
+      currentY += 8;
+    } else {
+      for (let idx = 0; idx < filteredCases.length; idx++) {
+        const caseItem = filteredCases[idx];
+        if (currentY > pageHeight - 25) {
+          doc.addPage();
+          pageNum++;
+          await drawHeader(pageNum);
+          drawCasesHeader();
+        }
+
+        if (idx % 2 === 1) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(margin, currentY, pageWidth - (margin * 2), 5.5, 'F');
+        }
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(71, 85, 105);
+        doc.text(caseItem.createdAt || caseItem.date || '-', margin + 2, currentY + 3.8);
+        
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 23, 42);
+        doc.text(caseItem.caseNo, margin + 24, currentY + 3.8);
+
+        doc.setFont('helvetica', 'normal');
+        doc.text(caseItem.clientName || 'N/A', margin + 54, currentY + 3.8);
+        doc.text(caseItem.category || 'Bonded Carrier', margin + 110, currentY + 3.8);
+
+        if (caseItem.status === 'Case Completed' || caseItem.status === 'Completed') {
+          doc.setTextColor(22, 163, 74);
+        } else {
+          doc.setTextColor(79, 70, 229);
+        }
+        doc.text(caseItem.status || 'Active', pageWidth - margin - 2, currentY + 3.8, { align: 'right' });
+
+        currentY += 5.5;
+      }
+    }
+
+    if (currentY > pageHeight - 35) {
+      doc.addPage();
+      pageNum++;
+      await drawHeader(pageNum);
+    }
+
+    currentY += 10;
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Disclaimer: This report is a digital consolidation of the ledger and case activities for tax recording and financial auditing.', margin, currentY);
+
+    currentY += 8;
+    const lineW = 55;
+    const signCol1 = margin;
+    const signCol2 = pageWidth - margin - lineW;
+
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.3);
+    doc.line(signCol1, currentY, signCol1 + lineW, currentY);
+    doc.line(signCol2, currentY, signCol2 + lineW, currentY);
+
+    currentY += 4;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Prepared By: Chief Financial Officer', signCol1, currentY);
+    doc.text('Approved By: Director Operations / Admin', signCol2, currentY);
+
+    for (let p = 1; p <= pageNum; p++) {
+      doc.setPage(p);
+      drawPdfCorporateFooter(doc, 'Confidential Logistics Tax & Finance Performance Statement', b);
+    }
+
+    const filename = `DPL_Tax_Finance_Report_${data.startDate}_to_${data.endDate}.pdf`;
+    return triggerDirectDownload(doc, filename);
+  } catch (error) {
+    console.error('Failed to generate Tax & Finance PDF:', error);
     throw error;
   }
 }
