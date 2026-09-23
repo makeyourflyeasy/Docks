@@ -442,11 +442,45 @@ export async function authenticateDatabaseUser(
         const matchName = u.name && u.name.toLowerCase() === cleanId;
 
         if (matchUserId || matchEmail || matchName) {
-          matchedUser = { ...u, id: Number(docSnap.id) || Number(u.id) };
+          matchedUser = { ...u, id: Number(docSnap.id) || Number(u.id) || (docSnap.id as any) };
         }
       });
     } catch (dbErr: any) {
       console.log('Firestore offline / unreachable, falling back to local credentials catalog.');
+    }
+
+    // 1.5. If not matched, query Firestore clients collection (if loginEnabled)
+    if (!matchedUser) {
+      try {
+        const clientSnap = await getDocs(collection(db, 'clients'));
+        clientSnap.forEach((docSnap) => {
+          const client = docSnap.data();
+          if (client.loginEnabled) {
+            const matchUserId = client.userId && client.userId.toLowerCase() === cleanId;
+            const matchEmail = client.email && client.email.toLowerCase() === cleanId;
+            const matchName = client.name && client.name.toLowerCase() === cleanId;
+
+            if (matchUserId || matchEmail || matchName) {
+              matchedUser = {
+                id: docSnap.id as any,
+                userId: client.userId,
+                password: client.password,
+                name: client.name,
+                role: UserRole.CLIENT,
+                roles: [UserRole.CLIENT],
+                designation: 'Corporate Importer',
+                contact: client.contact || client.mobileNumber || '',
+                email: client.email || '',
+                status: 'ACTIVE',
+                clientName: client.name,
+                lastLogin: client.lastLogin || ''
+              } as unknown as AppUser;
+            }
+          }
+        });
+      } catch (dbErr: any) {
+        console.log('Error querying clients from Firestore:', dbErr);
+      }
     }
 
   // 2. Fallback to default catalog if database is offline or user not yet in Firestore
@@ -484,11 +518,21 @@ export async function authenticateDatabaseUser(
     };
 
     try {
-      await setDoc(
-        doc(db, 'users', String(updatedUser.id)),
-        sanitizeForFirestore(updatedUser),
-        { merge: true }
-      );
+      if (updatedUser.role === UserRole.CLIENT) {
+        await setDoc(
+          doc(db, 'clients', String(updatedUser.id)),
+          sanitizeForFirestore({
+            lastLogin: updatedUser.lastLogin
+          }),
+          { merge: true }
+        );
+      } else {
+        await setDoc(
+          doc(db, 'users', String(updatedUser.id)),
+          sanitizeForFirestore(updatedUser),
+          { merge: true }
+        );
+      }
     } catch (saveErr) {
       console.warn('Could not record lastLogin in Firestore:', saveErr);
     }

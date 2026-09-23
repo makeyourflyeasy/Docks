@@ -16,6 +16,7 @@ import SplashScreen from './components/SplashScreen';
 import LoginModeSelection, { SelectedModePayload } from './components/LoginModeSelection';
 import GoldenAmountWidget from './components/GoldenAmountWidget';
 import ClientPortal from './components/ClientPortal';
+import { LoadingPortStaffPortal } from './components/LoadingPortStaffPortal';
 import { ModeOption } from './components/TopModeSwitcher';
 import { AppNotification, UserRole } from './types';
 import NotificationModal from './components/NotificationModal';
@@ -160,7 +161,9 @@ const App: React.FC = () => {
 
     const hasCasesAccess = currentRoles.includes(UserRole.OPERATIONS_MANAGER) || 
                            currentRoles.includes(UserRole.LOADING_PORT_STAFF) || 
-                           currentRoles.includes(UserRole.UNLOADING_PORT_STAFF);
+                           currentRoles.includes(UserRole.UNLOADING_PORT_STAFF) ||
+                           currentRoles.includes(UserRole.DESTINATION_PORT_STAFF) ||
+                           currentRoles.includes(UserRole.OFFICE_STAFF);
     const hasFinanceAccess = currentRoles.includes(UserRole.FINANCE_MANAGER);
     const hasVehiclesAccess = currentRoles.includes(UserRole.VEHICLE_MANAGER);
 
@@ -297,6 +300,16 @@ const App: React.FC = () => {
             setCurrentRole(UserRole.ADMIN);
             setActiveView('dashboard');
           }} 
+        />
+      );
+    }
+
+    // Route Loading Port Staff directly to their dedicated workspace
+    if (currentRole === UserRole.LOADING_PORT_STAFF) {
+      return (
+        <LoadingPortStaffPortal 
+          onSignOut={handleSignOut}
+          userRoles={currentRoles}
         />
       );
     }

@@ -100,7 +100,7 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
         targetView = 'cases';
       } else if (lastLocationRole === userRole && lastLocationView) {
         targetView = lastLocationView;
-      } else if (userRoles.includes(UserRole.OPERATIONS_MANAGER) || userRoles.includes(UserRole.LOADING_PORT_STAFF) || userRoles.includes(UserRole.UNLOADING_PORT_STAFF)) {
+      } else if (userRoles.includes(UserRole.OPERATIONS_MANAGER) || userRoles.includes(UserRole.LOADING_PORT_STAFF) || userRoles.includes(UserRole.UNLOADING_PORT_STAFF) || userRoles.includes(UserRole.DESTINATION_PORT_STAFF) || userRoles.includes(UserRole.OFFICE_STAFF)) {
         targetView = 'cases';
       }
 

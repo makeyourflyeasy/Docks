@@ -25,6 +25,7 @@ import {
   generateCancellationLetterLetterheadDocx, 
   downloadDocxBlob 
 } from '../services/vehicleDocxService';
+import { compressAndPrepareFile } from '../services/fileUtils';
 
 // --- Clean Live Data ---
 
@@ -1561,8 +1562,18 @@ const AddTransporterModal = ({ onClose, onSave }: any) => {
               <input 
                 type="file" 
                 className="absolute inset-0 opacity-0 cursor-pointer" 
-                onChange={(e) => {
-                  setFormData({...formData, cnicDoc: 'uploaded'});
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    try {
+                      const processed = await compressAndPrepareFile(file);
+                      if (processed.dataUrl) {
+                        setFormData({...formData, cnicDoc: processed.dataUrl});
+                      }
+                    } catch (err) {
+                      console.warn(err);
+                    }
+                  }
                   try { e.target.value = ''; } catch (_) {}
                 }} 
               />
@@ -1572,8 +1583,18 @@ const AddTransporterModal = ({ onClose, onSave }: any) => {
               <input 
                 type="file" 
                 className="absolute inset-0 opacity-0 cursor-pointer" 
-                onChange={(e) => {
-                  setFormData({...formData, ntnDoc: 'uploaded'});
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    try {
+                      const processed = await compressAndPrepareFile(file);
+                      if (processed.dataUrl) {
+                        setFormData({...formData, ntnDoc: processed.dataUrl});
+                      }
+                    } catch (err) {
+                      console.warn(err);
+                    }
+                  }
                   try { e.target.value = ''; } catch (_) {}
                 }} 
               />
@@ -1586,6 +1607,58 @@ const AddTransporterModal = ({ onClose, onSave }: any) => {
               </p>
            </div>
         </div>
+
+        {/* Uploaded Files Ledger & Download links */}
+        {(formData.cnicDoc || formData.ntnDoc) && (
+          <div className="mb-6 p-4 bg-slate-900/90 rounded-xl border border-white/10 space-y-2">
+            <h5 className="text-[11px] font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Download size={13} className="text-brand-400" />
+              Uploaded Transporter Files Ledger
+            </h5>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {formData.cnicDoc && formData.cnicDoc.startsWith('data:') && (
+                <div className="flex items-center justify-between text-xs p-2 rounded-lg bg-black/40 border border-white/5">
+                  <span className="text-gray-200 font-medium">Transporter CNIC / ID Copy</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = formData.cnicDoc;
+                      const ext = formData.cnicDoc.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
+                      link.download = `Transporter_CNIC${ext}`;
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2.5 py-1 rounded text-[10px]"
+                  >
+                    <Download size={11} /> Download
+                  </button>
+                </div>
+              )}
+              {formData.ntnDoc && formData.ntnDoc.startsWith('data:') && (
+                <div className="flex items-center justify-between text-xs p-2 rounded-lg bg-black/40 border border-white/5">
+                  <span className="text-gray-200 font-medium">Transporter NTN Certificate</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = formData.ntnDoc;
+                      const ext = formData.ntnDoc.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
+                      link.download = `Transporter_NTN${ext}`;
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2.5 py-1 rounded text-[10px]"
+                  >
+                    <Download size={11} /> Download
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {extractedVehicles.length > 0 && (
           <div className="mb-6 bg-white/5 rounded-xl p-4 border border-white/10">
@@ -1806,6 +1879,37 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
                 </label>
               </div>
             </div>
+
+            {/* Uploaded Files Summary List with Download Option */}
+            {formData.ownerIdCardUrl && (
+              <div className="sm:col-span-2 p-3 bg-black/40 border border-white/10 rounded-xl space-y-1.5">
+                <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                  <Download size={11} className="text-brand-400" />
+                  Uploaded Vehicle Owner Files
+                </h5>
+                <div className="flex items-center justify-between text-xs p-1.5 rounded bg-black/20 border border-white/5">
+                  <span className="text-gray-200 font-medium truncate max-w-[150px] sm:max-w-none">
+                    {formData.ownerIdCardName || 'Owner_CNIC'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = formData.ownerIdCardUrl!;
+                      const ext = formData.ownerIdCardUrl!.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
+                      const defaultName = formData.ownerIdCardName || 'owner_id_card';
+                      link.download = defaultName.endsWith('.pdf') || defaultName.endsWith('.jpg') ? defaultName : `${defaultName}${ext}`;
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded text-[10px]"
+                  >
+                    <Download size={11} /> Download
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div>

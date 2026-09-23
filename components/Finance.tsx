@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import Logo from './Logo';
 import { PdfViewerModal } from './PdfViewerModal';
-import { FinanceEntry, Case, Client, LedgerEntry, AppUser, RecurringFinanceTemplate, UserRole, Vendor } from '../types';
+import { FinanceEntry, Case, Client, LedgerEntry, AppUser, RecurringFinanceTemplate, UserRole, Vendor, CaseStatus } from '../types';
 import { exportGeneralLedgerToExcel, exportClientLedgerToExcel } from '../services/excelExportService';
 import { 
   getStoredVendors, 
@@ -624,6 +624,15 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     // 2. Add Debits from Cases (Charges explicitly added per case & container)
     cases.forEach((c) => {
       if (c.clientName && c.clientName.trim().toLowerCase() === targetClient) {
+        // Invoice charges ledger mein use waqt chadenge jab loading mukmmal ho jayegi
+        const isPreTransit = c.status === CaseStatus.SHIPPING_LINE_DO || 
+                             c.status === CaseStatus.TP_FILING || 
+                             c.status === CaseStatus.EXCISE_PAYMENT || 
+                             c.status === CaseStatus.WHARFAGE_PAYMENT || 
+                             c.status === CaseStatus.VEHICLE_ASSIGNMENT || 
+                             c.status === CaseStatus.LOADING_PORT_PROCESSING;
+        if (isPreTransit) return; // Skip loading charges from ledger until loading is complete
+        
         const { total, breakdown } = getCaseTotalCharges(c);
         if (total > 0) {
           const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
@@ -817,6 +826,15 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     // A. Case Invoices (only cases with explicit charges)
     cases.forEach((c) => {
+      // Invoice charges ledger mein use waqt chadenge jab loading mukmmal ho jayegi
+      const isPreTransit = c.status === CaseStatus.SHIPPING_LINE_DO || 
+                           c.status === CaseStatus.TP_FILING || 
+                           c.status === CaseStatus.EXCISE_PAYMENT || 
+                           c.status === CaseStatus.WHARFAGE_PAYMENT || 
+                           c.status === CaseStatus.VEHICLE_ASSIGNMENT || 
+                           c.status === CaseStatus.LOADING_PORT_PROCESSING;
+      if (isPreTransit) return; // Skip loading charges from receivables until loading is complete
+
       const { total, breakdown } = getCaseTotalCharges(c);
       if (total > 0) {
         const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
@@ -1184,6 +1202,15 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     // All Client Case charges (Debits)
     cases.forEach((c) => {
+      // Invoice charges ledger mein use waqt chadenge jab loading mukmmal ho jayegi
+      const isPreTransit = c.status === CaseStatus.SHIPPING_LINE_DO || 
+                           c.status === CaseStatus.TP_FILING || 
+                           c.status === CaseStatus.EXCISE_PAYMENT || 
+                           c.status === CaseStatus.WHARFAGE_PAYMENT || 
+                           c.status === CaseStatus.VEHICLE_ASSIGNMENT || 
+                           c.status === CaseStatus.LOADING_PORT_PROCESSING;
+      if (isPreTransit) return; // Skip loading charges from GL until loading is complete
+
       const { total, breakdown } = getCaseTotalCharges(c);
       if (total > 0) {
         const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
@@ -5946,6 +5973,61 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                       {newTransaction.documentName ? `Document: ${newTransaction.documentName} ✅` : newTransaction.documentUrl ? 'Document Attached ✅' : 'Choose Bill / Document'}
                     </span>
                   </label>
+                </div>
+              )}
+
+              {/* Uploaded Files Summary List with Download Option (SRS) */}
+              {(newTransaction.slipUrl || newTransaction.documentUrl) && (
+                <div className="p-3 bg-black/40 rounded-xl border border-white/10 space-y-1.5 mt-3 animate-in fade-in">
+                  <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                    <Download size={11} className="text-brand-400" />
+                    Uploaded Transaction Documents / Receipts
+                  </h5>
+                  <div className="grid grid-cols-1 gap-2">
+                    {newTransaction.slipUrl && (
+                      <div className="flex items-center justify-between text-xs p-1.5 rounded bg-black/20 border border-white/5">
+                        <span className="text-gray-200 font-medium truncate max-w-[150px]">Deposit Slip / Receipt Photo</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const link = document.createElement('a');
+                            link.href = newTransaction.slipUrl!;
+                            const ext = newTransaction.slipUrl!.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
+                            link.download = `Deposit_Slip${ext}`;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }}
+                          className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded text-[10px]"
+                        >
+                          <Download size={11} /> Download
+                        </button>
+                      </div>
+                    )}
+                    {newTransaction.documentUrl && (
+                      <div className="flex items-center justify-between text-xs p-1.5 rounded bg-black/20 border border-white/5">
+                        <span className="text-gray-200 font-medium truncate max-w-[150px]">
+                          {newTransaction.documentName || 'Supporting Bill/Document'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const link = document.createElement('a');
+                            link.href = newTransaction.documentUrl!;
+                            const ext = newTransaction.documentUrl!.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
+                            const defaultName = newTransaction.documentName || 'supporting_doc';
+                            link.download = defaultName.endsWith('.pdf') || defaultName.endsWith('.jpg') ? defaultName : `${defaultName}${ext}`;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }}
+                          className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded text-[10px]"
+                        >
+                          <Download size={11} /> Download
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

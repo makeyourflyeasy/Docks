@@ -117,7 +117,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     }
 
     // Unloading Port Staff / Destination Officers: Unloading, Gate-in, Gate-out, Terminal DO, Empty Return
-    if (rolesList.includes(UserRole.UNLOADING_PORT_STAFF)) {
+    if (rolesList.includes(UserRole.UNLOADING_PORT_STAFF) || rolesList.includes(UserRole.DESTINATION_PORT_STAFF)) {
       if (stepIndex >= 5 || stepStr.includes('destination') || stepStr.includes('unload') || stepStr.includes('arrival') || stepStr.includes('gate') || stepStr.includes('return') || stepStr.includes('empty') || stepStr.includes('delivery')) {
         canEdit = true;
       }
@@ -772,7 +772,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                   <strong>Restricted Operational Stage:</strong> You are logged in as <strong>{userRole}</strong>. This stage is editable by authorized role personnel or Case Manager/Admin.
                 </span>
               </div>
-              {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
+              {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.DESTINATION_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
                 <button
                   type="button"
                   onClick={() => downloadCustomsDeliveryOrderPdf({ targetCase })}
@@ -2145,7 +2145,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
         {/* Footer */}
         <div className="p-4 border-t border-white/10 bg-slate-950/70 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
           <div>
-            {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
+            {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.DESTINATION_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
               formData.vehicleGateOutToggled || existingDetail.vehicleGateOutToggled || targetCase.status === CaseStatus.COMPLETED ? (
                 <button
                   type="button"

@@ -4,7 +4,7 @@ import {
   AlertTriangle, Eye, FileText, CreditCard, ChevronRight, Calendar, DollarSign, 
   Clock, Plus, Shield, Phone, MapPin, Building, Percent, Upload, Check, 
   Receipt, ArrowUpRight, ArrowDownLeft, LayoutGrid, List, Search, Mail, ChevronLeft,
-  Coffee, ShieldCheck, MapPinned, Lock, Unlock, Compass
+  Coffee, ShieldCheck, MapPinned, Lock, Unlock, Compass, Download
 } from 'lucide-react';
 import { 
   AppUser, UserRole, Case, FinanceEntry, Client, DestinationStaff, StaffLedgerEntry 
@@ -178,7 +178,7 @@ const UserManagement: React.FC = () => {
       return;
     }
     // Default office
-    setShowRoleSelectorModal(true);
+    handleSelectRoleType('STAFF');
   };
 
   const handleSelectRoleType = (roleType: 'STAFF' | 'TRANSPORTER') => {
@@ -1599,6 +1599,41 @@ const UserManagement: React.FC = () => {
                         </p>
                       </button>
 
+                      {/* DESTINATION PORT STAFF */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => {
+                            let r = prev.roles.filter(x => x !== UserRole.ADMIN);
+                            if (r.includes(UserRole.DESTINATION_PORT_STAFF)) {
+                              r = r.filter(x => x !== UserRole.DESTINATION_PORT_STAFF);
+                              if (r.length === 0) r = [UserRole.DESTINATION_PORT_STAFF];
+                            } else {
+                              r = [...r, UserRole.DESTINATION_PORT_STAFF];
+                            }
+                            return { ...prev, role: r[0] || UserRole.DESTINATION_PORT_STAFF, roles: r };
+                          });
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          !formData.roles.includes(UserRole.ADMIN) && formData.roles.includes(UserRole.DESTINATION_PORT_STAFF)
+                            ? 'bg-cyan-600/25 border-cyan-500 shadow-md shadow-cyan-500/20 ring-1 ring-cyan-400'
+                            : 'bg-black/30 border-white/10 hover:border-cyan-500/40 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_currentColor]"></span>
+                            Destination Port Staff
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-cyan-500/30 text-cyan-200">
+                            Customs DO
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+                          Handles port destination workflows, clearing agent coordination, and container returns.
+                        </p>
+                      </button>
+
                       {/* VEHICLE MANAGER */}
                       <button
                         type="button"
@@ -1631,6 +1666,41 @@ const UserManagement: React.FC = () => {
                         </div>
                         <p className="text-[11px] text-gray-400 mt-1 leading-tight">
                           Manages vehicle registrations, vehicle maintenance, carriers, and fleet management.
+                        </p>
+                      </button>
+
+                      {/* OFFICE STAFF */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => {
+                            let r = prev.roles.filter(x => x !== UserRole.ADMIN);
+                            if (r.includes(UserRole.OFFICE_STAFF)) {
+                              r = r.filter(x => x !== UserRole.OFFICE_STAFF);
+                              if (r.length === 0) r = [UserRole.OFFICE_STAFF];
+                            } else {
+                              r = [...r, UserRole.OFFICE_STAFF];
+                            }
+                            return { ...prev, role: r[0] || UserRole.OFFICE_STAFF, roles: r };
+                          });
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                          !formData.roles.includes(UserRole.ADMIN) && formData.roles.includes(UserRole.OFFICE_STAFF)
+                            ? 'bg-indigo-600/25 border-indigo-500 shadow-md shadow-indigo-500/20 ring-1 ring-indigo-400'
+                            : 'bg-black/30 border-white/10 hover:border-indigo-500/40 text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-indigo-400 shadow-[0_0_8px_currentColor]"></span>
+                            Office Staff
+                          </span>
+                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-indigo-500/30 text-indigo-200">
+                            Admin Staff
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-tight">
+                          Head office administrative coordinators and general support personnel.
                         </p>
                       </button>
                     </div>
@@ -1818,6 +1888,100 @@ const UserManagement: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* Unified Document Attachments Section (SRS compliance for file uploads / downloads / camera captures) */}
+            <div className="mt-5 p-4 bg-white/5 border border-white/10 rounded-2xl space-y-3.5">
+              <h4 className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                <FileText size={14} className="text-brand-400" />
+                Document Attachments & Verification Checklist
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* File Upload Inputs */}
+                <div className="space-y-1">
+                  <span className="text-gray-300 text-[11px] font-medium block">Profile Photo</span>
+                  <label className="flex flex-col items-center justify-center p-2 border border-dashed border-white/20 hover:border-brand-500 rounded-xl cursor-pointer bg-black/30 hover:bg-black/50 transition text-center">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, 'profilePicture')}
+                    />
+                    <Upload size={14} className="text-gray-400 mb-0.5" />
+                    <span className="text-[10px] text-gray-300 font-semibold truncate max-w-full">
+                      {formData.profilePicture ? 'Replace Photo' : 'Upload Photo'}
+                    </span>
+                  </label>
+                </div>
+
+                <div className="space-y-1">
+                  <span className="text-gray-300 text-[11px] font-medium block">CNIC Front / ID Copy</span>
+                  <label className="flex flex-col items-center justify-center p-2 border border-dashed border-white/20 hover:border-brand-500 rounded-xl cursor-pointer bg-black/30 hover:bg-black/50 transition text-center">
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, 'cnicFront')}
+                    />
+                    <Upload size={14} className="text-gray-400 mb-0.5" />
+                    <span className="text-[10px] text-gray-300 font-semibold truncate max-w-full">
+                      {formData.cnicFront ? 'Replace Front' : 'Upload Front'}
+                    </span>
+                  </label>
+                </div>
+
+                <div className="space-y-1">
+                  <span className="text-gray-300 text-[11px] font-medium block">CNIC Back / Reg Document</span>
+                  <label className="flex flex-col items-center justify-center p-2 border border-dashed border-white/20 hover:border-brand-500 rounded-xl cursor-pointer bg-black/30 hover:bg-black/50 transition text-center">
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, 'cnicBack')}
+                    />
+                    <Upload size={14} className="text-gray-400 mb-0.5" />
+                    <span className="text-[10px] text-gray-300 font-semibold truncate max-w-full">
+                      {formData.cnicBack ? 'Replace Back / Doc' : 'Upload Back / Doc'}
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Uploaded Files Summary List with Download Option */}
+              {((formData.profilePicture) || (formData.cnicFront) || (formData.cnicBack)) && (
+                <div className="p-3 bg-black/40 rounded-xl border border-white/5 space-y-1.5 animate-in fade-in">
+                  <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                    <Download size={11} className="text-emerald-400" />
+                    Uploaded Files Ledger (Click Download to Save)
+                  </h5>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      { label: 'Profile Photo', url: formData.profilePicture, name: 'Profile_Photo' },
+                      { label: 'CNIC Front / ID Copy', url: formData.cnicFront, name: 'CNIC_Front' },
+                      { label: 'CNIC Back / Reg Document', url: formData.cnicBack, name: 'CNIC_Back' }
+                    ].filter(f => f.url).map((file, fIdx) => (
+                      <div key={fIdx} className="flex items-center justify-between text-xs p-1.5 rounded bg-black/20 border border-white/5 hover:border-white/10 transition-colors">
+                        <span className="text-gray-200 font-medium truncate max-w-[120px]">{file.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const link = document.createElement('a');
+                            link.href = file.url!;
+                            const ext = file.url!.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
+                            link.download = `${file.name}${ext}`;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }}
+                          className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded text-[10px]"
+                        >
+                          <Download size={11} /> Download
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Actions */}
             <div className="flex justify-end gap-3 mt-6 pt-3 border-t border-white/10">

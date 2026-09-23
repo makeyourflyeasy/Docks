@@ -1372,8 +1372,9 @@ export async function downloadClientLedgerPdf(data: ClientLedgerExportData): Pro
       doc.text(entry.date, margin + 3, currentY + 4.4);
       doc.text(entry.reference || '-', margin + 24, currentY + 4.4);
 
-      // Truncate long descriptions
-      const desc = entry.description.length > 40 ? entry.description.substring(0, 38) + '...' : entry.description;
+      // Split and truncate description to fit exactly within the available column width (approx 75mm)
+      const descLines = doc.splitTextToSize(entry.description, 75);
+      const desc = descLines.length > 1 ? descLines[0] + '...' : descLines[0];
       doc.setTextColor(15, 23, 42);
       doc.text(desc, margin + 50, currentY + 4.4);
 

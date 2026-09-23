@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Building, User, Phone, Mail, MapPin, FileText, DollarSign, Plus, Trash2, 
   Check, X, Upload, Eye, Search, AlertCircle, Shield, CheckCircle2, ChevronRight, 
-  CreditCard, Sparkles, Key, Lock, FileCheck
+  CreditCard, Sparkles, Key, Lock, FileCheck, Download
 } from 'lucide-react';
 import { Client, ClientDefaultCharge, CaseCharge, UNIVERSAL_CHARGE_TYPES } from '../types';
 import { 
@@ -700,6 +700,43 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
                   </label>
                 </div>
               </div>
+
+              {/* Uploaded Files Summary List with Download Option */}
+              {((businessCardUrl) || (contractLetterUrl) || (nicDocUrl) || (ntnDocUrl)) && (
+                <div className="mt-4 p-3.5 bg-slate-900/90 rounded-xl border border-white/10 space-y-2">
+                  <h5 className="text-[11px] font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Download size={13} className="text-brand-400" />
+                    Uploaded Documents Ledger / Files
+                  </h5>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      { label: 'Business Card', url: businessCardUrl, name: businessCardName || 'Business_Card' },
+                      { label: 'Contract Letter', url: contractLetterUrl, name: contractLetterName || 'Contract_Letter' },
+                      { label: 'Owner CNIC Copy', url: nicDocUrl, name: nicDocName || 'CNIC_Copy' },
+                      { label: 'NTN Certificate', url: ntnDocUrl, name: ntnDocName || 'NTN_Certificate' }
+                    ].filter(f => f.url).map((file, fIdx) => (
+                      <div key={fIdx} className="flex items-center justify-between text-xs p-2 rounded-lg bg-black/40 border border-white/5 hover:border-white/10 transition-colors">
+                        <span className="text-gray-200 font-medium truncate max-w-[120px] sm:max-w-none">{file.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const link = document.createElement('a');
+                            link.href = file.url!;
+                            const ext = file.url!.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
+                            link.download = file.name.endsWith('.pdf') || file.name.endsWith('.jpg') ? file.name : `${file.name}${ext}`;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }}
+                          className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2 py-1 rounded text-[10px]"
+                        >
+                          <Download size={11} /> Download
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

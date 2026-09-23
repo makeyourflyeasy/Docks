@@ -14,6 +14,7 @@ import {
   FileCheck
 } from 'lucide-react';
 import { CaseStepDetail, StepFileItem } from '../types';
+import { convertImageToPdf } from '../services/fileUtils';
 
 interface WorkflowMultiUploaderProps {
   label: string;
@@ -121,16 +122,33 @@ export const WorkflowMultiUploader: React.FC<WorkflowMultiUploaderProps> = ({
   };
 
   // Process raw files into StepFileItem
-  const processFiles = (files: FileList | File[], isReplacing: boolean = false, targetIdx?: number) => {
+  const processFiles = (files: FileList | File[], isReplacing: boolean = false, targetIdx?: number, isFromCamera: boolean = false) => {
     if (!files || files.length === 0) return;
 
     const fileList = Array.from(files);
     const readPromises = fileList.map(file => {
       return new Promise<StepFileItem>((resolve) => {
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
           const result = e.target?.result as string;
           const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+          
+          if (isFromCamera && !isPdf) {
+            try {
+              const converted = await convertImageToPdf(result, file.name);
+              resolve({
+                id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                url: converted.pdfDataUrl,
+                name: converted.name,
+                type: 'pdf',
+                uploadedAt: new Date().toISOString()
+              });
+              return;
+            } catch (err) {
+              console.error("Camera capture to PDF conversion failed:", err);
+            }
+          }
+
           resolve({
             id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             url: result,
@@ -172,7 +190,7 @@ export const WorkflowMultiUploader: React.FC<WorkflowMultiUploaderProps> = ({
 
   const handleCameraInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      processFiles(e.target.files, replaceIndex !== null, replaceIndex ?? undefined);
+      processFiles(e.target.files, replaceIndex !== null, replaceIndex ?? undefined, true);
       e.target.value = '';
     }
   };
@@ -244,7 +262,7 @@ export const WorkflowMultiUploader: React.FC<WorkflowMultiUploaderProps> = ({
   };
 
   // Capture photo from Live Webcam Video
-  const captureWebcamPhoto = () => {
+  const captureWebcamPhoto = async () => {
     if (!videoRef.current) return;
     const video = videoRef.current;
     const canvas = document.createElement('canvas');
@@ -256,21 +274,44 @@ export const WorkflowMultiUploader: React.FC<WorkflowMultiUploaderProps> = ({
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
-    const newItem: StepFileItem = {
-      id: `cam-${Date.now()}`,
-      url: dataUrl,
-      name: `Camera_Capture_${currentFiles.length + 1}_${new Date().toLocaleTimeString().replace(/:/g, '-')}.jpg`,
-      type: 'image',
-      uploadedAt: new Date().toISOString()
-    };
+    try {
+      const baseName = `Camera_Capture_${currentFiles.length + 1}_${new Date().toLocaleTimeString().replace(/:/g, '-')}`;
+      const converted = await convertImageToPdf(dataUrl, `${baseName}.jpg`);
+      
+      const newItem: StepFileItem = {
+        id: `cam-${Date.now()}`,
+        url: converted.pdfDataUrl,
+        name: converted.name,
+        type: 'pdf',
+        uploadedAt: new Date().toISOString()
+      };
 
-    if (replaceIndex !== null && replaceIndex >= 0) {
-      const updated = [...currentFiles];
-      updated[replaceIndex] = newItem;
-      syncFiles(updated);
-      setReplaceIndex(null);
-    } else {
-      syncFiles([...currentFiles, newItem]);
+      if (replaceIndex !== null && replaceIndex >= 0) {
+        const updated = [...currentFiles];
+        updated[replaceIndex] = newItem;
+        syncFiles(updated);
+        setReplaceIndex(null);
+      } else {
+        syncFiles([...currentFiles, newItem]);
+      }
+    } catch (err) {
+      console.error("Webcam snap to PDF conversion failed, fallback to original image:", err);
+      const newItem: StepFileItem = {
+        id: `cam-${Date.now()}`,
+        url: dataUrl,
+        name: `Camera_Capture_${currentFiles.length + 1}_${new Date().toLocaleTimeString().replace(/:/g, '-')}.jpg`,
+        type: 'image',
+        uploadedAt: new Date().toISOString()
+      };
+
+      if (replaceIndex !== null && replaceIndex >= 0) {
+        const updated = [...currentFiles];
+        updated[replaceIndex] = newItem;
+        syncFiles(updated);
+        setReplaceIndex(null);
+      } else {
+        syncFiles([...currentFiles, newItem]);
+      }
     }
 
     closeLiveWebcam();

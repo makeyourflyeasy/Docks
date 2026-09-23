@@ -473,7 +473,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
   const hasOpsRole = hasAdminRole || effectiveRoles.includes(UserRole.OPERATIONS_MANAGER);
   const hasFinanceRole = hasAdminRole || effectiveRoles.includes(UserRole.FINANCE_MANAGER);
   const hasLoadingRole = hasAdminRole || effectiveRoles.includes(UserRole.LOADING_PORT_STAFF);
-  const hasUnloadingRole = hasAdminRole || effectiveRoles.includes(UserRole.UNLOADING_PORT_STAFF);
+  const hasUnloadingRole = hasAdminRole || effectiveRoles.includes(UserRole.UNLOADING_PORT_STAFF) || effectiveRoles.includes(UserRole.DESTINATION_PORT_STAFF);
 
   // Approval request state for finished cases
   const [showApprovalPromptModal, setShowApprovalPromptModal] = useState(false);
@@ -2689,7 +2689,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                 ) : (
                    <>
                       {/* Print Delivery Order (DO) button for Destination Staff, Case Manager, and Admin */}
-                      {(effectiveRole === UserRole.UNLOADING_PORT_STAFF || effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.OPERATIONS_MANAGER) && (
+                      {(effectiveRole === UserRole.UNLOADING_PORT_STAFF || effectiveRole === UserRole.DESTINATION_PORT_STAFF || effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.OPERATIONS_MANAGER) && (
                         <button 
                           onClick={() => handleDownloadDeliveryOrder(targetCase)} 
                           className="bg-amber-600 hover:bg-amber-500 active:scale-95 text-white px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm shadow-lg shadow-amber-600/20 transition-all font-medium"

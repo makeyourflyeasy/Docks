@@ -2,6 +2,7 @@
  * Secure and memory-efficient file utilities for document handling,
  * image compression, and Base64 conversion.
  */
+import { jsPDF } from 'jspdf';
 
 export interface ProcessedDocument {
   name: string;
@@ -10,6 +11,40 @@ export interface ProcessedDocument {
   dataUrl: string;
   base64: string;
   isImage: boolean;
+}
+
+/**
+ * Converts a base64 or raw image Data URL into a high-fidelity scanned PDF document
+ */
+export async function convertImageToPdf(imageSrc: string, filename: string): Promise<{ pdfDataUrl: string, pdfBase64: string, name: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = imageSrc;
+    img.onload = () => {
+      try {
+        // Build document matching exact image dimensions (prevents pixel scaling blurring)
+        const doc = new jsPDF({
+          orientation: img.width > img.height ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [img.width, img.height]
+        });
+        doc.addImage(imageSrc, 'JPEG', 0, 0, img.width, img.height);
+        
+        const pdfDataUrl = doc.output('datauristring');
+        const pdfBase64 = pdfDataUrl.split(',')[1] || '';
+        const pdfFilename = filename.replace(/\.[^/.]+$/, "") + ".pdf";
+        
+        resolve({
+          pdfDataUrl,
+          pdfBase64,
+          name: pdfFilename
+        });
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = (e) => reject(new Error('Failed to load image for PDF conversion'));
+  });
 }
 
 /**
