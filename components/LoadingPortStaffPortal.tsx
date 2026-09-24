@@ -6,8 +6,9 @@ import {
 } from 'lucide-react';
 import { Case, Container, CaseStatus, CaseCharge, UserRole } from '../types';
 import { subscribeToCases, saveCaseToFirestore } from '../services/dbService';
-import { compressAndPrepareFile } from '../services/fileUtils';
+import { compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
 import { useBranding } from '../services/brandingService';
+import Logo from './Logo';
 
 interface LoadingPortStaffPortalProps {
   onSignOut: () => void;
@@ -207,15 +208,19 @@ export const LoadingPortStaffPortal: React.FC<LoadingPortStaffPortalProps> = ({ 
     }
   };
 
-  // Process and convert uploaded photo to PDF / Base64 Data URL
+  // Process and convert captured camera photo to PDF
   const handleSealPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setIsUploadingPhoto(true);
       try {
-        const processed = await compressAndPrepareFile(file);
-        if (processed.dataUrl) {
-          setUploadedSealPhoto(processed.dataUrl);
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        if (!isPdf) {
+          const converted = await convertImageToPdf(file, `Seal_Photo_Verification_${file.name}`, true);
+          setUploadedSealPhoto(converted.pdfDataUrl);
+        } else {
+          const processed = await compressAndPrepareFile(file);
+          setUploadedSealPhoto(processed.dataUrl || (processed.base64 ? `data:application/pdf;base64,${processed.base64}` : ''));
         }
       } catch (err) {
         console.warn(err);
@@ -281,11 +286,7 @@ export const LoadingPortStaffPortal: React.FC<LoadingPortStaffPortalProps> = ({ 
       {/* High-Fidelity Header */}
       <header className="bg-slate-900/90 border-b border-white/10 px-6 py-4 sticky top-0 z-20 backdrop-blur-md flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {customLogo ? (
-            <img src={customLogo} alt="DPL Logo" className="h-9 w-auto max-w-[150px] object-contain" />
-          ) : (
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-amber-500 flex items-center justify-center font-bold text-white shadow-lg">D</div>
-          )}
+          <Logo className="h-9 w-auto max-w-[150px]" />
           <div>
             <h1 className="text-base font-bold text-white tracking-wide">DPL Loading Staff Portal</h1>
             <span className="text-[10px] text-brand-300 font-mono tracking-widest uppercase">Karachi Port Terminals Node</span>

@@ -10,7 +10,7 @@ import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
 import { downloadContainerInvoicePdf, downloadCasePdf, downloadClientLedgerPdf } from '../services/pdfExportService';
 import { Case, CaseStatus, Container, FinanceEntry, ExtractedData, MockDocument, UserRole, Client, CaseCharge } from '../types';
-import { compressAndPrepareFile } from '../services/fileUtils';
+import { compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
 import TopModeSwitcher, { ModeOption } from './TopModeSwitcher';
 import GoldenAmountWidget from './GoldenAmountWidget';
 import { safeAppStorage } from '../services/storage';
@@ -261,13 +261,13 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
     }
   };
 
-  const capturePhoto = () => {
+  const capturePhoto = async () => {
     if (videoRef.current) {
       try {
         const canvas = document.createElement('canvas');
-        const maxDim = 1200;
-        let w = videoRef.current.videoWidth || 640;
-        let h = videoRef.current.videoHeight || 480;
+        const maxDim = 1920;
+        let w = videoRef.current.videoWidth || 1280;
+        let h = videoRef.current.videoHeight || 720;
         if (w > maxDim || h > maxDim) {
           if (w > h) {
             h = Math.round((h * maxDim) / w);
@@ -282,8 +282,9 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(videoRef.current, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
-          setPaymentForm(prev => ({ ...prev, slipUrl: dataUrl }));
+          const rawDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          const converted = await convertImageToPdf(rawDataUrl, `Payment_Slip_Scan_${Date.now()}.pdf`, true);
+          setPaymentForm(prev => ({ ...prev, slipUrl: converted.pdfDataUrl }));
           stopCamera();
         }
       } catch (err) {
@@ -306,8 +307,14 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
     const file = e.target.files?.[0];
     if (file) {
       try {
-        const processed = await compressAndPrepareFile(file);
-        setPaymentForm(prev => ({ ...prev, slipUrl: processed.dataUrl }));
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        if (!isPdf) {
+          const converted = await convertImageToPdf(file, file.name, true);
+          setPaymentForm(prev => ({ ...prev, slipUrl: converted.pdfDataUrl }));
+        } else {
+          const processed = await compressAndPrepareFile(file);
+          setPaymentForm(prev => ({ ...prev, slipUrl: processed.dataUrl || (processed.base64 ? `data:application/pdf;base64,${processed.base64}` : '') }));
+        }
       } catch (err) {
         console.warn("Slip upload warning:", err);
       } finally {

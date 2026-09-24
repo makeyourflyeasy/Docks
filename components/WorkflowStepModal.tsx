@@ -222,6 +222,14 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     driverGateOutPhotoUrl: existingDetail.driverGateOutPhotoUrl || '',
     driverGateOutPhotoName: existingDetail.driverGateOutPhotoName || '',
 
+    // Client-Arranged DO at Loading
+    clientDoPhotoUrl: existingDetail.clientDoPhotoUrl || '',
+    clientDoPhotoName: existingDetail.clientDoPhotoName || '',
+    clientDoFavorOf: existingDetail.clientDoFavorOf || '',
+    clientDoShippingLine: existingDetail.clientDoShippingLine || '',
+    clientDoNumber: existingDetail.clientDoNumber || '',
+    clientDoDate: existingDetail.clientDoDate || '',
+
     // Step 7
     inTransitActive: existingDetail.inTransitActive || false,
     incidentReported: existingDetail.incidentReported || false,
@@ -960,6 +968,44 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
           {/* STEP 1: SHIPPING LINE DO */}
           {stepIndex === 0 && (
             <div className="space-y-4">
+              {/* Client-Arranged vs DPL-Arranged Operational Rule Card */}
+              {formData.doDueChargesArrangedBy === 'Client' ? (
+                <div className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/30 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sky-400 font-bold text-sm">
+                      <User size={16} />
+                      <span>Shipping Line DO: Arranged Directly by Client</span>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                      Client Responsibility
+                    </span>
+                  </div>
+                  <p className="text-xs text-sky-200/90 leading-relaxed">
+                    Client manages and settles DO charges directly with the shipping line. DPL operational staff is not required to deposit funds or make payments at this stage.
+                  </p>
+                  <div className="p-3 rounded-xl bg-black/40 border border-sky-500/20 text-xs text-gray-300 space-y-1">
+                    <span className="font-semibold text-amber-300 flex items-center gap-1.5">
+                      <AlertCircle size={13} /> Loading Port Handover Rule:
+                    </span>
+                    <p className="text-[11px] text-gray-300">
+                      During <strong>Step 6: Loading Port Processing</strong>, loading staff will simply upload the physical DO picture, specify whose name the DO was issued in, and enter the shipping line name.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
+                    <span className="text-emerald-300 font-medium">
+                      <strong>Arranged by DPL:</strong> Case Manager, Admin, or Operations Manager handles DO payment receipts & refundable security deposit.
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                    DPL Managed
+                  </span>
+                </div>
+              )}
+
               {/* Receipt Upload/Download */}
               <WorkflowMultiUploader
                 label="DO Receipt Document"
@@ -1630,6 +1676,108 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
           {/* STEP 6: LOADING PORT PROCESSING */}
           {stepIndex === 5 && (
             <div className="space-y-4">
+              {/* Delivery Order (DO) Verification & Loading Handover */}
+              <div className="p-4 rounded-2xl bg-sky-950/30 border border-sky-500/30 space-y-3.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-sky-500/20 text-sky-400">
+                      <FileText size={16} />
+                    </div>
+                    <div>
+                      <span className="font-bold text-white text-sm block">
+                        Shipping Line Delivery Order (DO) Verification at Loading
+                      </span>
+                      <span className="text-gray-400 text-[11px]">
+                        Loading team: upload DO picture, select shipping line, and record whom the DO was issued in favor of
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                    Loading Gate
+                  </span>
+                </div>
+
+                {/* DO Picture Upload */}
+                <WorkflowMultiUploader
+                  label="Delivery Order (DO) Document / Photo"
+                  sublabel="Upload or take photo of physical Delivery Order issued by shipping line"
+                  urlField="clientDoPhotoUrl"
+                  nameField="clientDoPhotoName"
+                  allowCamera={true}
+                  compact={true}
+                  formData={formData}
+                  setFormData={setFormData}
+                  onPreview={setActivePdfPreview}
+                />
+
+                {/* Shipping Line & Issued In Favor Of */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-gray-300 block mb-1 text-xs">
+                      Shipping Line Name (Kaun si shipping line ka DO hai)
+                    </label>
+                    <input
+                      type="text"
+                      list="shippingLineOptions"
+                      value={formData.clientDoShippingLine || ''}
+                      onChange={(e) => setFormData({ ...formData, clientDoShippingLine: e.target.value })}
+                      placeholder="e.g. Maersk, MSC, CMA CGM, COSCO, Hapag-Lloyd"
+                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
+                    />
+                    <datalist id="shippingLineOptions">
+                      <option value="Maersk Line" />
+                      <option value="MSC (Mediterranean Shipping Company)" />
+                      <option value="CMA CGM" />
+                      <option value="COSCO Shipping Lines" />
+                      <option value="Hapag-Lloyd" />
+                      <option value="ONE (Ocean Network Express)" />
+                      <option value="Evergreen Marine" />
+                      <option value="OOCL" />
+                      <option value="Yang Ming" />
+                      <option value="Wan Hai Lines" />
+                      <option value="Hyundai Merchant Marine (HMM)" />
+                      <option value="PIL (Pacific International Lines)" />
+                    </datalist>
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-gray-300 block mb-1 text-xs">
+                      DO Issued In Name Of (Kiske naam per DO utha hai)
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.clientDoFavorOf || ''}
+                      onChange={(e) => setFormData({ ...formData, clientDoFavorOf: e.target.value })}
+                      placeholder="e.g. Consignee / Clearing Agent Name"
+                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Optional DO Number */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-gray-400 block mb-1 text-xs">DO Reference / Number (Optional)</label>
+                    <input
+                      type="text"
+                      value={formData.clientDoNumber || ''}
+                      onChange={(e) => setFormData({ ...formData, clientDoNumber: e.target.value })}
+                      placeholder="e.g. DO-99201"
+                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-1.5 text-white font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-400 block mb-1 text-xs">DO Date (Optional)</label>
+                    <input
+                      type="date"
+                      value={formData.clientDoDate || ''}
+                      onChange={(e) => setFormData({ ...formData, clientDoDate: e.target.value })}
+                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-1.5 text-white text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* Media & Document Uploads */}
               <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
                 <label className="font-bold text-white text-sm block">Media & Document Uploads</label>

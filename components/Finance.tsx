@@ -32,7 +32,7 @@ import {
   DEFAULT_CLIENTS,
   syncMonthlyStaffSalariesToPayables
 } from '../services/dbService';
-import { exportCSVFile, compressAndPrepareFile } from '../services/fileUtils';
+import { exportCSVFile, compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
 import { safeAppStorage } from '../services/storage';
 import { useBranding } from '../services/brandingService';
 import { 
@@ -704,7 +704,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         if (c.status === 'CANCELLED') return;
 
         const charges = getCaseChargesList(c);
-        const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
+        // Rule: Case number is identical to invoice number
+        const invNo = c.invoiceNo || c.caseNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.id}`);
         const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
         const cntrInfo = cntrNumbers ? `[${(c.containers || []).length} Cntr: ${cntrNumbers}]` : '';
 
@@ -758,7 +759,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         entries.push({
           id: `recv_${r.id}`,
           date: r.date,
-          reference: r.reference || (r.caseNo ? `INV-${r.caseNo}` : `INV-${r.id}`),
+          reference: r.reference || r.caseNo || `INV-${r.id}`,
           description: `Invoice: ${r.description}${r.caseNo ? ` - Case ${r.caseNo}` : ''} (${r.category})`,
           debit: Number(r.amount) || 0,
           credit: 0,
@@ -924,7 +925,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       const { total, breakdown } = getCaseTotalCharges(c);
       if (total > 0) {
         const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
-        const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
+        const invNo = c.invoiceNo || c.caseNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.id}`);
         allInvoices.push({
           id: typeof c.id === 'number' ? c.id : Number(String(c.id).replace(/\D/g, '').slice(0, 9)) || 1000 + Math.floor(Math.random() * 8000),
           date: c.createdAt || c.registrationDate || new Date().toISOString().split('T')[0],
@@ -1293,7 +1294,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       const { total, breakdown } = getCaseTotalCharges(c);
       if (total > 0) {
         const cntrNumbers = (c.containers || []).map(cntr => cntr.number).filter(Boolean).join(', ');
-        const invNo = c.invoiceNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.caseNo}`);
+        const invNo = c.invoiceNo || c.caseNo || (c.extractedData && c.extractedData.blNumber ? `INV-${c.extractedData.blNumber}` : `INV-${c.id}`);
         const refParts = [invNo, `Case: ${c.caseNo}`, cntrNumbers ? `Cntr: ${cntrNumbers}` : ''].filter(Boolean);
 
         glEntries.push({
@@ -1418,14 +1419,20 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     };
   }, [generalLedgerEntries]);
 
-  // Handle File upload for receipt/slip
+  // Handle File upload for receipt/slip (scans image to PDF if from camera)
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       try {
-        const processed = await compressAndPrepareFile(file);
-        if (processed.dataUrl) {
-          setNewTransaction(prev => ({ ...prev, slipUrl: processed.dataUrl }));
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        if (!isPdf) {
+          const converted = await convertImageToPdf(file, file.name || `Receipt_${Date.now()}.pdf`, true);
+          setNewTransaction(prev => ({ ...prev, slipUrl: converted.pdfDataUrl }));
+        } else {
+          const processed = await compressAndPrepareFile(file);
+          if (processed.dataUrl || processed.base64) {
+            setNewTransaction(prev => ({ ...prev, slipUrl: processed.dataUrl || `data:application/pdf;base64,${processed.base64}` }));
+          }
         }
       } catch (err) {
         console.warn("Slip processing notice:", err);
@@ -1437,18 +1444,28 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     }
   };
 
-  // Handle Document upload for Payable / Receivable
+  // Handle Document upload for Payable / Receivable (scans image to PDF if image)
   const handleDocumentChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       try {
-        const processed = await compressAndPrepareFile(file);
-        if (processed.dataUrl) {
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        if (!isPdf) {
+          const converted = await convertImageToPdf(file, file.name || `Document_${Date.now()}.pdf`, true);
           setNewTransaction(prev => ({ 
             ...prev, 
-            documentUrl: processed.dataUrl,
-            documentName: file.name
+            documentUrl: converted.pdfDataUrl,
+            documentName: converted.name
           }));
+        } else {
+          const processed = await compressAndPrepareFile(file);
+          if (processed.dataUrl || processed.base64) {
+            setNewTransaction(prev => ({ 
+              ...prev, 
+              documentUrl: processed.dataUrl || `data:application/pdf;base64,${processed.base64}`,
+              documentName: file.name
+            }));
+          }
         }
       } catch (err) {
         console.warn("Document processing notice:", err);

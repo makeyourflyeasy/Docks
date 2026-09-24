@@ -12,6 +12,7 @@ import {
   generateLeaseAgreementDocx,
   generateLeaseTerminationAgreementDocx,
   generateCancellationLetterLetterheadDocx,
+  generateVehicleNocDocx,
   downloadDocxBlob,
   formatSlashDate,
   formatDotDate,
@@ -21,6 +22,7 @@ import {
   extractVehicleFields,
   DOCKS_COMPANY
 } from '../services/vehicleDocxService';
+import { downloadCustomsVehicleListPdf } from '../services/pdfExportService';
 
 export type DocumentType = 
   | 'REG_LETTER'        // Letter 10 Vehicles registration letter (Company Letterhead)
@@ -225,17 +227,49 @@ export const OfficialDocumentsModal: React.FC<OfficialDocumentsModalProps> = ({
         setLastGeneratedMsg(`Downloaded Lease Cancellation & Termination Agreement(s) on Stamp Paper.`);
       } 
       else if (activeTab === 'CANCELLATION_NOC') {
+        // Generate the combined Customs Cancellation Letter
         const doc = await generateCancellationLetterLetterheadDocx(selectedVehicles, {
           letterDate: dateObj,
           leaveLetterheadSpace: leaveHeaderMargin
         });
         const filename = `Customs_Panel_Cancellation_Letter_${formatDashDate(dateObj)}.docx`;
         await downloadDocxBlob(doc, filename);
-        setLastGeneratedMsg(`Downloaded Customs Panel Cancellation Letter for Letterhead.`);
+
+        // Also generate individual official NOC (.docx) for each vehicle without logo (for letterhead/stamp paper)
+        for (const v of selectedVehicles) {
+          const nocDoc = await generateVehicleNocDocx(v, {
+            nocDate: dateObj,
+            leaveLetterheadSpace: leaveHeaderMargin
+          });
+          const nocFilename = `Vehicle_NOC_${v.registrationNumber.replace(/\s+/g, '_')}_Letterhead.docx`;
+          await downloadDocxBlob(nocDoc, nocFilename);
+        }
+
+        setLastGeneratedMsg(`Downloaded Customs Cancellation Letter & Individual Vehicle NOCs (.docx) for Letterhead/Stamp Paper.`);
       }
     } catch (err) {
       console.error('Document generation error:', err);
       alert('Failed to generate document: ' + (err as Error).message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Dedicated Official Customs Vehicle List (PDF) generator - exact reproduction of Customs House format
+  const handleDownloadCustomsPdf = async () => {
+    if (selectedVehicles.length === 0) return;
+    setIsGenerating(true);
+    try {
+      const dateObj = new Date(letterDate || todayStr);
+      await downloadCustomsVehicleListPdf({
+        vehicles: selectedVehicles,
+        letterDate: formatDotDate(dateObj),
+        permitNo: permitRefNo
+      });
+      setLastGeneratedMsg(`Downloaded Official Customs Directorate Vehicle List (${selectedVehicles.length} vehicles) in PDF.`);
+    } catch (err) {
+      console.error('Failed to generate Customs PDF:', err);
+      alert('Failed to generate Customs PDF: ' + (err as Error).message);
     } finally {
       setIsGenerating(false);
     }
@@ -456,6 +490,19 @@ export const OfficialDocumentsModal: React.FC<OfficialDocumentsModalProps> = ({
                 >
                   <Layers size={15} />
                   <span>Download Both Cancellation Docs (.docx)</span>
+                </button>
+              )}
+
+              {activeTab === 'CUSTOMS_PERMIT' && (
+                <button
+                  type="button"
+                  onClick={handleDownloadCustomsPdf}
+                  disabled={selectedVehicles.length === 0 || isGenerating}
+                  className="bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg shadow-red-600/30 transition-all"
+                  title="Generates official Pakistan Customs Directorate General of Transit Trade Permit Letter & Vehicle Table as PDF"
+                >
+                  <FileCheck size={15} />
+                  <span>Download Customs List (PDF)</span>
                 </button>
               )}
 
@@ -906,6 +953,17 @@ export const OfficialDocumentsModal: React.FC<OfficialDocumentsModalProps> = ({
             >
               Close
             </button>
+            {activeTab === 'CUSTOMS_PERMIT' && (
+              <button
+                type="button"
+                onClick={handleDownloadCustomsPdf}
+                disabled={selectedVehicles.length === 0 || isGenerating}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white flex items-center gap-2 transition-colors shadow-lg shadow-red-600/30"
+              >
+                <FileCheck size={14} />
+                <span>Download Customs List (PDF)</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleDownloadCurrentDoc}

@@ -283,6 +283,14 @@ export interface CaseStepDetail {
   driverGateOutPhotoUrl?: string;
   driverGateOutPhotoName?: string;
 
+  // Delivery Order (DO) Details at Loading (for Client-arranged DO or verification)
+  clientDoPhotoUrl?: string;
+  clientDoPhotoName?: string;
+  clientDoFavorOf?: string; // Kiske naam per DO utha hai (Favor of Consignee / Clearing Agent / Client)
+  clientDoShippingLine?: string; // Kaun si shipping line ka DO hai (Maersk, MSC, CMA CGM, COSCO, etc.)
+  clientDoNumber?: string; // DO Number
+  clientDoDate?: string;
+
   // Step 7: In Transit & Emergency Exception
   inTransitActive?: boolean;
   incidentReported?: boolean;

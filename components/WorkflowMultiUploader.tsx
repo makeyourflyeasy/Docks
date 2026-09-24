@@ -126,29 +126,29 @@ export const WorkflowMultiUploader: React.FC<WorkflowMultiUploaderProps> = ({
     if (!files || files.length === 0) return;
 
     const fileList = Array.from(files);
-    const readPromises = fileList.map(file => {
+    const readPromises = fileList.map(async file => {
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      
+      // If captured from camera, automatically scan and convert to high-fidelity PDF
+      if (isFromCamera && !isPdf) {
+        try {
+          const converted = await convertImageToPdf(file, file.name, true);
+          return {
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            url: converted.pdfDataUrl,
+            name: converted.name,
+            type: 'pdf' as const,
+            uploadedAt: new Date().toISOString()
+          };
+        } catch (err) {
+          console.error("Camera capture to PDF conversion fallback:", err);
+        }
+      }
+
       return new Promise<StepFileItem>((resolve) => {
         const reader = new FileReader();
-        reader.onload = async (e) => {
+        reader.onload = (e) => {
           const result = e.target?.result as string;
-          const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-          
-          if (isFromCamera && !isPdf) {
-            try {
-              const converted = await convertImageToPdf(result, file.name);
-              resolve({
-                id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                url: converted.pdfDataUrl,
-                name: converted.name,
-                type: 'pdf',
-                uploadedAt: new Date().toISOString()
-              });
-              return;
-            } catch (err) {
-              console.error("Camera capture to PDF conversion failed:", err);
-            }
-          }
-
           resolve({
             id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             url: result,
@@ -275,8 +275,8 @@ export const WorkflowMultiUploader: React.FC<WorkflowMultiUploaderProps> = ({
     const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
 
     try {
-      const baseName = `Camera_Capture_${currentFiles.length + 1}_${new Date().toLocaleTimeString().replace(/:/g, '-')}`;
-      const converted = await convertImageToPdf(dataUrl, `${baseName}.jpg`);
+      const baseName = `Scanned_Camera_${currentFiles.length + 1}_${new Date().toLocaleTimeString().replace(/:/g, '-')}`;
+      const converted = await convertImageToPdf(dataUrl, `${baseName}.pdf`, true);
       
       const newItem: StepFileItem = {
         id: `cam-${Date.now()}`,

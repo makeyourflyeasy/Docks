@@ -11,7 +11,7 @@ import { useBranding } from '../services/brandingService';
 import { autoFillCaseData, downloadFile, docDataCache, detectShippingDocumentType } from '../services/geminiService';
 import { downloadCasePdf, sharePdfFile, downloadCustomsDeliveryOrderPdf } from '../services/pdfExportService';
 import { PdfViewerModal } from './PdfViewerModal';
-import { detectMimeType, compressAndPrepareFile } from '../services/fileUtils';
+import { detectMimeType, compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
 import { Container, ExtractedData, CaseStatus, Case, MockDocument, UserRole, CaseCharge, Client, ClientDefaultCharge, CaseStepDetail, WORKFLOW_8_STEPS, Vehicle } from '../types';
 import { WorkflowStepModal } from './WorkflowStepModal';
 import { CompletedCaseDossier } from './CompletedCaseDossier';
@@ -43,6 +43,7 @@ import {
 import { ClientRegistrationModal } from './ClientRegistrationModal';
 import { SmartCaseSearchModal } from './SmartCaseSearchModal';
 import { logActivity } from '../services/activityLogService';
+import { generateDplCaseNumber, getDestinationCode, getCaseInvoiceNumber } from '../services/caseNumberService';
 
 export interface UploadedDocRecord {
   id: string;
@@ -1119,28 +1120,43 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     return path.split('.').reduce((acc, part) => acc && acc[part], obj);
   };
 
-  // Generate strictly sequential case number from current active cases
-  const generateCaseNumber = (customList?: Case[]) => {
-    const listToScan = customList || cases;
-    let maxSeq = 0;
-    listToScan.forEach(c => {
-      if (c.caseNo) {
-        const match = c.caseNo.match(/DPL-(\d+)/i);
-        if (match) {
-          const seq = parseInt(match[1], 10);
-          if (seq > maxSeq) maxSeq = seq;
-        } else {
-          // Fallback parsing for legacy formats like DPL-26-000001
-          const parts = c.caseNo.split('-');
-          const last = parts[parts.length - 1];
-          const seq = parseInt(last, 10);
-          if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
-        }
-      }
-    });
-    const nextSeq = maxSeq + 1;
-    return `DPL-${String(nextSeq).padStart(4, '0')}`;
+  // Generate strictly sequential case number: DPL-[DEST]-[YY]-[MMM]-[SERIAL]
+  // Serial resets ONLY on Year change. Month changes dynamically.
+  // Invoice Number is identical to Case Number.
+  const generateCaseNumber = (customList?: Case[], destination?: string) => {
+    const dest = destination || formData.pod || formData.extractedData?.dropoffDestination;
+    return generateDplCaseNumber(customList || cases, dest);
   };
+
+  // Keep generatedCaseNo synchronized with chosen POD / destination during registration
+  useEffect(() => {
+    if (view === 'register') {
+      const dest = formData.pod || formData.extractedData?.dropoffDestination;
+      if (dest) {
+        const destCode = getDestinationCode(dest);
+        setGeneratedCaseNo(prev => {
+          if (!prev) {
+            const fresh = generateDplCaseNumber(cases, dest);
+            safeAppStorage.setItem('dpl_reg_caseno', fresh);
+            return fresh;
+          }
+          const parts = prev.split('-');
+          if (parts.length === 5 && parts[0] === 'DPL') {
+            if (parts[1] !== destCode) {
+              const updated = `DPL-${destCode}-${parts[2]}-${parts[3]}-${parts[4]}`;
+              safeAppStorage.setItem('dpl_reg_caseno', updated);
+              return updated;
+            }
+          } else {
+            const fresh = generateDplCaseNumber(cases, dest);
+            safeAppStorage.setItem('dpl_reg_caseno', fresh);
+            return fresh;
+          }
+          return prev;
+        });
+      }
+    }
+  }, [formData.pod, formData.extractedData?.dropoffDestination, view, cases]);
 
   const handleResumeDraft = () => {
     const savedStep = parseInt(safeAppStorage.getItem('dpl_reg_step') || '1', 10);
@@ -1545,13 +1561,13 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     setShowCamera(false);
   };
 
-  const captureImage = () => {
+  const captureImage = async () => {
     if (videoRef.current) {
       try {
         const canvas = document.createElement('canvas');
-        const maxDim = 1200;
-        let w = videoRef.current.videoWidth || 640;
-        let h = videoRef.current.videoHeight || 480;
+        const maxDim = 1920;
+        let w = videoRef.current.videoWidth || 1280;
+        let h = videoRef.current.videoHeight || 720;
         if (w > maxDim || h > maxDim) {
           if (w > h) {
             h = Math.round((h * maxDim) / w);
@@ -1566,18 +1582,48 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(videoRef.current, 0, 0, w, h);
-          canvas.toBlob((blob) => {
-            if (blob) {
-              const file = new File([blob], `scanned_doc_${Date.now()}.jpg`, { type: 'image/jpeg' });
-              processFiles([file]);
-              stopCamera();
-            }
-          }, 'image/jpeg', 0.85);
+          const rawDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          const baseName = `Camera_Scan_${Date.now()}`;
+          const converted = await convertImageToPdf(rawDataUrl, `${baseName}.pdf`, true);
+          processFiles([converted.file]);
+          stopCamera();
         }
       } catch (camErr) {
         console.warn("Camera capture error:", camErr);
         stopCamera();
       }
+    }
+  };
+
+  const handleCameraFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const inputEl = e.target;
+    try {
+      if (inputEl && inputEl.files && inputEl.files.length > 0) {
+        const selected = Array.from(inputEl.files);
+        inputEl.value = '';
+        setIsAttachingFiles(true);
+        const pdfFiles: File[] = [];
+        for (const file of selected) {
+          try {
+            const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+            if (!isPdf) {
+              const converted = await convertImageToPdf(file, file.name || `Scanned_Doc_${Date.now()}.pdf`, true);
+              pdfFiles.push(converted.file);
+            } else {
+              pdfFiles.push(file);
+            }
+          } catch (err) {
+            console.warn("Camera scan to PDF conversion fallback:", err);
+            pdfFiles.push(file);
+          }
+        }
+        processFiles(pdfFiles).finally(() => {
+          setIsAttachingFiles(false);
+        });
+      }
+    } catch (err) {
+      console.warn("Camera file upload error:", err);
+      setIsAttachingFiles(false);
     }
   };
 
@@ -3266,7 +3312,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                         </div>
                       </div>
                       <div className="text-right text-xs text-gray-700 shrink-0">
-                        <p className="font-mono font-bold text-sm text-black">INV-{targetCase.caseNo}</p>
+                        <p className="font-mono font-bold text-sm text-black">{targetCase.caseNo}</p>
                         <p>Date: {targetCase.createdAt || new Date().toLocaleDateString()}</p>
                         <p>Client: <span className="font-semibold text-black">{targetCase.clientName}</span></p>
                       </div>
@@ -3814,10 +3860,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             ref={cameraInputRef}
             type="file"
             accept="image/*"
+            capture="environment"
             className="sr-only"
             tabIndex={-1}
             aria-hidden="true"
-            onChange={handleFileUpload}
+            onChange={handleCameraFileUpload}
           />
 
           {/* Dropzone container */}

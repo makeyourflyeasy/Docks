@@ -22,9 +22,11 @@ import { parseVehicleFile, isCorruptedVehicleRecord } from '../services/document
 import { OfficialDocumentsModal, DocumentType } from './OfficialDocumentsModal';
 import { 
   generateLeaseTerminationAgreementDocx, 
-  generateCancellationLetterLetterheadDocx, 
+  generateCancellationLetterLetterheadDocx,
+  generateVehicleNocDocx,
   downloadDocxBlob 
 } from '../services/vehicleDocxService';
+import { downloadCustomsVehicleListPdf } from '../services/pdfExportService';
 import { compressAndPrepareFile } from '../services/fileUtils';
 
 // --- Clean Live Data ---
@@ -280,6 +282,34 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
       });
     } catch (err) {
       console.error('Failed to download NOC:', err);
+    }
+  };
+
+  // Download official NOC in Word (.docx) format for pre-printed letterhead / stamp paper (NO company logo on top)
+  const handleDownloadNocDocx = async (v: Vehicle) => {
+    try {
+      const doc = await generateVehicleNocDocx(v, {
+        nocReference: v.nocReference || `NOC-DPL-${v.id}`,
+        nocDate: v.cancellationDate || new Date().toISOString().split('T')[0],
+        reason: v.cancellationReason || 'Fleet Release & Operational De-Registration',
+        leaveLetterheadSpace: true
+      });
+      const filename = `Vehicle_NOC_${v.registrationNumber.replace(/\s+/g, '_')}_Letterhead.docx`;
+      await downloadDocxBlob(doc, filename);
+    } catch (err) {
+      console.error('Failed to download NOC DOCX:', err);
+    }
+  };
+
+  // Download official Pakistan Customs Directorate General of Transit Trade Vehicle List (PDF)
+  const handleDownloadCustomsListPdf = async () => {
+    try {
+      const activeList = vehicles.filter(v => v.status !== 'CANCELLED');
+      await downloadCustomsVehicleListPdf({
+        vehicles: activeList.length > 0 ? activeList : vehicles
+      });
+    } catch (err) {
+      console.error('Failed to download Customs List PDF:', err);
     }
   };
 
@@ -758,6 +788,13 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
             <FileText size={15} /> Customs & Legal Docs (.docx)
           </button>
           <button 
+            onClick={handleDownloadCustomsListPdf}
+            className="bg-red-600/20 hover:bg-red-600 border border-red-500/30 text-red-300 hover:text-white px-3.5 py-2 rounded-lg flex items-center gap-2 text-xs font-semibold transition-all shadow-sm"
+            title="Download official Pakistan Customs Directorate General of Transit Trade Vehicle List (PDF)"
+          >
+            <FileText size={15} /> Customs List (PDF)
+          </button>
+          <button 
             onClick={handleExportAllVehiclesList}
             className="bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/30 text-emerald-300 hover:text-white px-3.5 py-2 rounded-lg flex items-center gap-2 text-xs font-semibold transition-all shadow-sm"
             title="Download formatted Excel (.xlsx) workbook of all entered commercial vehicles"
@@ -986,6 +1023,14 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
                   {v.status === 'CANCELLED' ? (
                     <>
                       <button
+                        onClick={() => handleDownloadNocDocx(v)}
+                        className="bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-semibold px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all"
+                        title="Download De-registration NOC Word Document (.docx) for Pre-printed Letterhead or Stamp Paper"
+                      >
+                        <FileText size={13} />
+                        <span>NOC (.docx)</span>
+                      </button>
+                      <button
                         onClick={() => handleDirectDownloadNoc(v)}
                         className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold px-2.5 py-1 rounded-lg flex items-center gap-1 transition-all"
                         title="Download De-registration NOC PDF"
@@ -1140,6 +1185,14 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
                         {/* Vehicle Cancellation & NOC Actions */}
                         {v.status === 'CANCELLED' ? (
                           <>
+                            <button
+                              onClick={() => handleDownloadNocDocx(v)}
+                              className="bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1 transition-all"
+                              title="Download De-registration NOC Word Document (.docx) for Pre-printed Letterhead or Stamp Paper"
+                            >
+                              <FileText size={13} />
+                              <span>NOC (.docx)</span>
+                            </button>
                             <button
                               onClick={() => handleDirectDownloadNoc(v)}
                               className="bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1 transition-all"

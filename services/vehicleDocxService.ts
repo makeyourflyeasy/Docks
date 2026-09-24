@@ -1387,3 +1387,237 @@ export async function generateCancellationLetterLetterheadDocx(
 
   return doc;
 }
+
+// ============================================================================
+// 6. OFFICIAL VEHICLE NO OBJECTION CERTIFICATE (NOC) (.DOCX)
+// Printed on Pre-printed Company Letterhead or Government Stamp Paper
+// (Strict Rule: NO Company Logo or Header Banner at top of page)
+// ============================================================================
+export interface VehicleNocOptions {
+  nocReference?: string;
+  nocDate?: string | Date;
+  reason?: string;
+  leaveLetterheadSpace?: boolean; // defaults to true (2.2 inches blank space on top)
+  useStampPaperSpace?: boolean;   // if true, leaves 3.5 inches blank space for stamp
+}
+
+export async function generateVehicleNocDocx(
+  vehicle: Vehicle,
+  options: VehicleNocOptions = {}
+): Promise<Document> {
+  const dateObj = getCleanDate(options.nocDate || vehicle.nocDate);
+  const formattedDate = formatSlashDate(dateObj);
+  const nocRef = options.nocReference || vehicle.nocReference || `NOC-DPL-${vehicle.dplSerial || vehicle.registrationNumber.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const reason = options.reason || vehicle.cancellationReason || 'Fleet Release & Operational De-Registration';
+
+  const topMargin = options.useStampPaperSpace
+    ? convertInchesToTwip(3.5)
+    : options.leaveLetterheadSpace !== false
+      ? convertInchesToTwip(2.2)
+      : convertInchesToTwip(1.0);
+
+  const { maker, model, mra, tare, owner, ownerCnic } = extractVehicleFields(vehicle);
+
+  const tableHeaderRow = new TableRow({
+    tableHeader: true,
+    children: [
+      new TableCell({
+        children: [new Paragraph({ text: 'Vehicle No.', alignment: AlignmentType.CENTER, run: { bold: true, size: 18 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: 'Chassis No.', alignment: AlignmentType.CENTER, run: { bold: true, size: 18 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: 'Engine No.', alignment: AlignmentType.CENTER, run: { bold: true, size: 18 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: 'Maker / Model', alignment: AlignmentType.CENTER, run: { bold: true, size: 18 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: 'M.R.A.', alignment: AlignmentType.CENTER, run: { bold: true, size: 18 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: 'Tare Weight', alignment: AlignmentType.CENTER, run: { bold: true, size: 18 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: 'Registered Owner', alignment: AlignmentType.CENTER, run: { bold: true, size: 18 } })],
+        borders: tableBorders
+      })
+    ]
+  });
+
+  const tableDataRow = new TableRow({
+    children: [
+      new TableCell({
+        children: [new Paragraph({ text: vehicle.registrationNumber || '-', alignment: AlignmentType.CENTER, run: { bold: true, size: 17 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: vehicle.chassisNo || '-', alignment: AlignmentType.CENTER, run: { size: 17 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: vehicle.engineNo || '-', alignment: AlignmentType.CENTER, run: { size: 17 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: `${maker || ''} ${model || ''}`.trim() || '-', alignment: AlignmentType.CENTER, run: { size: 17 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: mra || '-', alignment: AlignmentType.CENTER, run: { size: 17 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: tare || '-', alignment: AlignmentType.CENTER, run: { size: 17 } })],
+        borders: tableBorders
+      }),
+      new TableCell({
+        children: [new Paragraph({ text: `${owner}\nCNIC: ${ownerCnic}`, alignment: AlignmentType.CENTER, run: { size: 16 } })],
+        borders: tableBorders
+      })
+    ]
+  });
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: {
+              top: topMargin,
+              bottom: convertInchesToTwip(1.0),
+              left: convertInchesToTwip(1.0),
+              right: convertInchesToTwip(1.0)
+            }
+          }
+        },
+        children: [
+          // Reference & Date Row
+          new Paragraph({
+            spacing: { after: 240 },
+            children: [
+              new TextRun({ text: `Ref: ${nocRef}`, bold: true, size: 21 }),
+              new TextRun({ text: `\t\t\t\t\tDate: ${formattedDate}`, bold: true, size: 21 })
+            ]
+          }),
+
+          // Recipient Address
+          new Paragraph({
+            spacing: { line: 260, after: 260 },
+            children: [
+              new TextRun({ text: 'TO WHOM IT MAY CONCERN / MOTOR REGISTERING AUTHORITY,\n', bold: true, size: 22 }),
+              new TextRun({ text: 'Directorate General of Transit Trade / Pakistan Customs,\n', size: 21 }),
+              new TextRun({ text: 'Karachi, Pakistan.', bold: true, size: 21 })
+            ]
+          }),
+
+          // Subject Line
+          new Paragraph({
+            spacing: { before: 120, after: 240 },
+            children: [
+              new TextRun({ text: 'Subject:\t', bold: true, size: 22 }),
+              new TextRun({
+                text: 'NO OBJECTION CERTIFICATE (NOC) FOR DE-REGISTRATION & FLEET RELEASE',
+                bold: true,
+                underline: {},
+                size: 22
+              })
+            ]
+          }),
+
+          // Body Paragraph 1
+          new Paragraph({
+            spacing: { line: 280, after: 220 },
+            children: [
+              new TextRun({
+                text: `This is to certify that `,
+                size: 21
+              }),
+              new TextRun({
+                text: `M/s. DOCKS (PVT) LTD `,
+                bold: true,
+                size: 21
+              }),
+              new TextRun({
+                text: `(Customs Bonded Carrier License No. 3997968 / NTN 5064083-8) has `,
+                size: 21
+              }),
+              new TextRun({
+                text: `NO OBJECTION `,
+                bold: true,
+                underline: {},
+                size: 21
+              }),
+              new TextRun({
+                text: `to the de-registration, release, and cancellation of the vehicle described below from our active customs bonded and domestic transport fleet:`,
+                size: 21
+              })
+            ]
+          }),
+
+          // Vehicle Specs Table
+          new Table({
+            rows: [tableHeaderRow, tableDataRow],
+            width: { size: 100, type: WidthType.PERCENTAGE }
+          }),
+
+          // Verification & Clearance Clauses
+          new Paragraph({
+            spacing: { before: 240, line: 280, after: 200 },
+            children: [
+              new TextRun({
+                text: `1.  All customs port gate passes, GPS tracking devices, container chassis locks, and customs bonded documents issued under the authority of M/s. DOCKS (PVT) LTD have been surrendered, audited, and returned.\n`,
+                size: 20
+              }),
+              new TextRun({
+                text: `2.  All operational dues, demurrage, wharfage, tolls, driver compensation, and vehicle rent liabilities up to `,
+                size: 20
+              }),
+              new TextRun({
+                text: `${formattedDate} `,
+                bold: true,
+                size: 20
+              }),
+              new TextRun({
+                text: `have been fully cleared, reconciled, and settled.\n`,
+                size: 20
+              }),
+              new TextRun({
+                text: `3.  Reason for NOC / De-registration: `,
+                bold: true,
+                size: 20
+              }),
+              new TextRun({
+                text: `${reason}.\n`,
+                size: 20
+              }),
+              new TextRun({
+                text: `4.  The vehicle is unconditionally released to its lawful registered owner. The licensing authority may de-register the vehicle from the customs carrier registry without any hindrance.`,
+                size: 20
+              })
+            ]
+          }),
+
+          // Signatures block
+          new Paragraph({
+            spacing: { before: 360, line: 260 },
+            children: [
+              new TextRun({ text: '___________________________\t\t\t\t___________________________\n', size: 21 }),
+              new TextRun({ text: 'Authorized Signatory\t\t\t\t\tManager Operations & Fleet\n', bold: true, size: 21 }),
+              new TextRun({ text: 'M/s. DOCKS (PVT) LTD.\t\t\t\t\tM/s. DOCKS (PVT) LTD.\n', bold: true, size: 21 })
+            ]
+          })
+        ]
+      }
+    ]
+  });
+
+  return doc;
+}

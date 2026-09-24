@@ -14,37 +14,184 @@ export interface ProcessedDocument {
 }
 
 /**
- * Converts a base64 or raw image Data URL into a high-fidelity scanned PDF document
+ * Scans and cleans an image using canvas document enhancement:
+ * - Balances lighting & removes shadow casts (paper whitening)
+ * - Enhances contrast so text, signatures and stamps are crisp and vivid
+ * - Preserves ink and stamp color saturation while whitening grayish paper
  */
-export async function convertImageToPdf(imageSrc: string, filename: string): Promise<{ pdfDataUrl: string, pdfBase64: string, name: string }> {
+export async function scanAndEnhanceDocumentImage(imageSource: string | HTMLCanvasElement): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 2048;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            const ratio = Math.min(maxDim / w, maxDim / h);
+            w = Math.round(w * ratio);
+            h = Math.round(h * ratio);
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, w);
+          canvas.height = Math.max(1, h);
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) {
+            resolve(typeof imageSource === 'string' ? imageSource : imageSource.toDataURL('image/jpeg', 0.92));
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, w, h);
+
+          // Get image data for document scan enhancement filter
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const d = imgData.data;
+
+          // Sample luminance to determine exposure
+          let totalLum = 0;
+          const sampleStep = 8;
+          let sampleCount = 0;
+          for (let i = 0; i < d.length; i += 4 * sampleStep) {
+            const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            totalLum += lum;
+            sampleCount++;
+          }
+          const avgLum = sampleCount > 0 ? totalLum / sampleCount : 128;
+
+          // Document scan filter:
+          // Boost contrast so text/signatures stand out crisply
+          const contrast = 1.20;
+          const intercept = 128 * (1 - contrast);
+          const brightnessOffset = avgLum < 110 ? 24 : 12;
+
+          for (let i = 0; i < d.length; i += 4) {
+            let r = d[i];
+            let g = d[i + 1];
+            let b = d[i + 2];
+
+            // Apply contrast & brightness
+            r = contrast * r + intercept + brightnessOffset;
+            g = contrast * g + intercept + brightnessOffset;
+            b = contrast * b + intercept + brightnessOffset;
+
+            // Highlight clipping for document paper background whitening:
+            // if all channels are bright (>180), gently lift towards 255
+            const minCh = Math.min(r, g, b);
+            if (minCh > 180) {
+              const boost = (minCh - 180) * 0.5;
+              r += boost;
+              g += boost;
+              b += boost;
+            }
+
+            d[i] = Math.min(255, Math.max(0, r));
+            d[i + 1] = Math.min(255, Math.max(0, g));
+            d[i + 2] = Math.min(255, Math.max(0, b));
+          }
+
+          ctx.putImageData(imgData, 0, 0);
+          const enhancedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          resolve(enhancedDataUrl);
+        } catch (e) {
+          console.warn("Scan enhancement notice:", e);
+          resolve(typeof imageSource === 'string' ? imageSource : imageSource.toDataURL('image/jpeg', 0.92));
+        }
+      };
+      img.onerror = () => {
+        resolve(typeof imageSource === 'string' ? imageSource : '');
+      };
+      img.src = typeof imageSource === 'string' ? imageSource : imageSource.toDataURL('image/jpeg', 0.92);
+    } catch {
+      resolve(typeof imageSource === 'string' ? imageSource : '');
+    }
+  });
+}
+
+/**
+ * Converts a camera capture, base64 image, or File into a high-fidelity scanned PDF document
+ */
+export async function convertImageToPdf(
+  imageSrc: string | File | Blob, 
+  filename: string = 'scanned_doc.pdf',
+  enhanceScan: boolean = true
+): Promise<{ 
+  pdfDataUrl: string; 
+  pdfBase64: string; 
+  name: string; 
+  file: File; 
+  size: number;
+}> {
+  // If imageSrc is File or Blob, convert to Data URL first
+  let rawDataUrl: string;
+  if (typeof imageSrc === 'string') {
+    rawDataUrl = imageSrc;
+  } else {
+    rawDataUrl = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as string) || '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(imageSrc);
+    });
+  }
+
+  // Pre-process & enhance document scan (whitening paper, sharpening ink & stamps)
+  const processedImageSrc = enhanceScan ? await scanAndEnhanceDocumentImage(rawDataUrl) : rawDataUrl;
+
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = imageSrc;
+    img.src = processedImageSrc;
     img.onload = () => {
       try {
+        const isLandscape = img.width > img.height;
+        const orientation = isLandscape ? 'landscape' : 'portrait';
+
         // Build document matching exact image dimensions (prevents pixel scaling blurring)
         const doc = new jsPDF({
-          orientation: img.width > img.height ? 'landscape' : 'portrait',
+          orientation,
           unit: 'px',
           format: [img.width, img.height]
         });
-        doc.addImage(imageSrc, 'JPEG', 0, 0, img.width, img.height);
+        doc.addImage(processedImageSrc, 'JPEG', 0, 0, img.width, img.height);
         
         const pdfDataUrl = doc.output('datauristring');
-        const pdfBase64 = pdfDataUrl.split(',')[1] || '';
-        const pdfFilename = filename.replace(/\.[^/.]+$/, "") + ".pdf";
+        const pdfBlob = doc.output('blob');
+        const commaIdx = pdfDataUrl.indexOf(',');
+        const pdfBase64 = commaIdx >= 0 ? pdfDataUrl.substring(commaIdx + 1) : '';
+        
+        // Ensure clean .pdf filename
+        let cleanName = filename.replace(/\.[^/.]+$/, "");
+        if (!cleanName.toLowerCase().startsWith('scanned_') && !cleanName.toLowerCase().includes('scan')) {
+          cleanName = `Scanned_${cleanName}`;
+        }
+        const pdfFilename = `${cleanName}.pdf`;
+        const pdfFile = new File([pdfBlob], pdfFilename, { type: 'application/pdf' });
         
         resolve({
           pdfDataUrl,
           pdfBase64,
-          name: pdfFilename
+          name: pdfFilename,
+          file: pdfFile,
+          size: pdfBlob.size
         });
       } catch (err) {
         reject(err);
       }
     };
-    img.onerror = (e) => reject(new Error('Failed to load image for PDF conversion'));
+    img.onerror = () => reject(new Error('Failed to load image for PDF conversion'));
   });
+}
+
+/**
+ * Universal Scanner: Scans any camera picture and outputs a compiled PDF File and Data URL
+ */
+export async function scanCameraCaptureToPdf(
+  input: string | File | Blob, 
+  suggestedName?: string
+): Promise<{ file: File; pdfDataUrl: string; pdfBase64: string; name: string; size: number }> {
+  const baseName = suggestedName || `Scanned_Doc_${Date.now()}`;
+  return await convertImageToPdf(input, baseName, true);
 }
 
 /**

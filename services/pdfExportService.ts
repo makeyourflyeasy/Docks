@@ -590,7 +590,7 @@ export async function downloadCasePdf(
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(9);
       doc.setTextColor(15, 23, 42);
-      doc.text(`INVOICE NO: INV-${targetCase.caseNo}`, margin + 4, currentY + 6);
+      doc.text(`INVOICE NO: ${targetCase.caseNo}`, margin + 4, currentY + 6);
       doc.text(`BILL TO: ${targetCase.clientName || 'General Freight Client'}`, margin + 4, currentY + 12);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
@@ -2509,6 +2509,259 @@ export async function downloadTaxReportPdf(data: TaxReportExportData): Promise<{
     return triggerDirectDownload(doc, filename);
   } catch (error) {
     console.error('Failed to generate Tax & Finance PDF:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// OFFICIAL GOVERNMENT OF PAKISTAN CUSTOMS VEHICLE LIST (PDF EXPORT)
+// Faithful reproduction of the official Customs House Karachi Directorate General
+// of Transit Trade provisional vehicle permit letter & vehicle list table
+// ============================================================================
+export interface CustomsVehicleListPdfOptions {
+  vehicles: Vehicle[];
+  letterDate?: string;
+  applicationDate?: string;
+  permitNo?: string;
+  periodMonths?: number;
+}
+
+export async function downloadCustomsVehicleListPdf(
+  options: CustomsVehicleListPdfOptions
+): Promise<{ filename: string; blobUrl: string }> {
+  try {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 14;
+    const contentWidth = pageWidth - (margin * 2);
+
+    const now = new Date();
+    const formattedLetterDate = options.letterDate || `${String(now.getDate()).padStart(2, '0')}.${String(now.getMonth() + 1).padStart(2, '0')}.${now.getFullYear()}`;
+    const formattedAppDate = options.applicationDate || formattedLetterDate;
+    const permitNo = options.permitNo || 'No. SI/Mics./01/2021–(Licensing)';
+    const vehicleCount = options.vehicles.length;
+
+    let currentY = 16;
+    let pageNum = 1;
+
+    // Helper: Draw official Customs Government header
+    const drawGovtHeader = () => {
+      doc.setFont('times', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(0, 0, 0);
+      doc.text('Government of Pakistan', pageWidth / 2, currentY, { align: 'center' });
+      currentY += 5;
+
+      doc.setFontSize(12);
+      doc.text('Directorate General of Transit Trade', pageWidth / 2, currentY, { align: 'center' });
+      currentY += 4.5;
+
+      doc.setFont('times', 'normal');
+      doc.setFontSize(10.5);
+      doc.text('Custom House', pageWidth / 2, currentY, { align: 'center' });
+      currentY += 4.5;
+
+      doc.setFont('times', 'bold');
+      doc.setFontSize(11);
+      doc.text('Karachi', pageWidth / 2, currentY, { align: 'center' });
+      currentY += 4;
+
+      doc.setFont('times', 'normal');
+      doc.setFontSize(10);
+      doc.text('****', pageWidth / 2, currentY, { align: 'center' });
+      currentY += 7;
+    };
+
+    drawGovtHeader();
+
+    // Reference & Date row
+    doc.setFont('times', 'bold');
+    doc.setFontSize(9.5);
+    doc.text(permitNo, margin, currentY);
+    doc.text(`Dated: ${formattedLetterDate}`, pageWidth - margin, currentY, { align: 'right' });
+    currentY += 8;
+
+    // Addressee Block
+    doc.setFont('times', 'bold');
+    doc.setFontSize(10);
+    doc.text('M/s. Docks (Pvt.) Ltd', margin, currentY);
+    currentY += 4.5;
+
+    doc.setFont('times', 'normal');
+    doc.setFontSize(9.5);
+    doc.text('Office No. 13 First Floor State Life Building No. 7', margin, currentY);
+    currentY += 4;
+    doc.text('G-Allana Road Tower,', margin, currentY);
+    currentY += 4;
+    doc.setFont('times', 'bold');
+    doc.text('Karachi.', margin, currentY);
+    currentY += 7;
+
+    // Subject Line
+    doc.setFont('times', 'bold');
+    doc.setFontSize(9.5);
+    const subjectPrefix = 'Subject: - ';
+    doc.text(subjectPrefix, margin, currentY);
+    const subjX = margin + doc.getTextWidth(subjectPrefix);
+    const subjText = 'PERMIT FOR RENEWAL / FRESH REGISTRATION OF VEHICLES IN THE SYSTEM AS PRIVATE BONDED CARRIER / TRANSPORT OPERATOR';
+    const splitSubj = doc.splitTextToSize(subjText, contentWidth - doc.getTextWidth(subjectPrefix));
+    doc.text(splitSubj, subjX, currentY);
+    // Draw underline under subject
+    const subjH = splitSubj.length * 4.2;
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.2);
+    doc.line(subjX, currentY + 1, subjX + doc.getTextWidth(splitSubj[0]), currentY + 1);
+    currentY += subjH + 3;
+
+    // Reference clause
+    doc.setFont('times', 'normal');
+    doc.setFontSize(9);
+    const refText = `Please refer to your application dated ${formattedAppDate} on the subject cited above.`;
+    doc.text(refText, margin, currentY);
+    currentY += 5.5;
+
+    // Paragraph 2 Body Text
+    doc.setFont('times', 'normal');
+    doc.setFontSize(9);
+    const para2Text = `2.  The request for renewal of vehicles and fresh registration of ${vehicleCount} vehicles in terms of Rule 329 (5) & (6) of Chapter XIV, Rule 478 (d) of Chapter XXI and Rule 639 (d) of Customs Rules, 2001 notified vide SRO 450(I)/2001 dated 18.06.2001 acceded to and total ${vehicleCount} vehicles, particulars of which indicated in the table below are hereby provisionally registered in the system with M/s. Docks (Pvt.) Ltd. Karachi for providing transport facility to the transhipments to and from upcountry Customs Dry Ports as well as transit goods for a period of six months. The Customs House, however, reserves the right to revoke / suspend this provisional registration fully or partially at any time during the period of its validity without any prior notice.`;
+    const splitPara2 = doc.splitTextToSize(para2Text, contentWidth);
+    doc.text(splitPara2, margin, currentY);
+    currentY += (splitPara2.length * 4.1) + 4;
+
+    // Vehicle Table Header
+    const colWidths = [10, 24, 40, 32, 28, 16, 18, 20]; // Total: 188mm
+    const colX: number[] = [];
+    let accX = margin;
+    for (const w of colWidths) {
+      colX.push(accX);
+      accX += w;
+    }
+
+    const drawTableHeader = () => {
+      doc.setFillColor(245, 245, 245);
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.25);
+      doc.rect(margin, currentY, contentWidth, 7, 'FD');
+
+      doc.setFont('times', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(0, 0, 0);
+
+      const headers = ['S #', 'Reg. No.', 'Chassis No.', 'Engine No.', 'Make', 'Model', 'MRA', 'Expiry'];
+      headers.forEach((h, idx) => {
+        const xPos = colX[idx] + (colWidths[idx] / 2);
+        doc.text(h, xPos, currentY + 4.8, { align: 'center' });
+        if (idx > 0) {
+          doc.line(colX[idx], currentY, colX[idx], currentY + 7);
+        }
+      });
+      currentY += 7;
+    };
+
+    drawTableHeader();
+
+    // Table Data Rows
+    options.vehicles.forEach((v, index) => {
+      if (currentY > pageHeight - 35) {
+        doc.addPage();
+        pageNum++;
+        currentY = 16;
+        drawGovtHeader();
+        drawTableHeader();
+      }
+
+      const rowHeight = 6.2;
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.18);
+      doc.rect(margin, currentY, contentWidth, rowHeight);
+
+      doc.setFont('times', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(0, 0, 0);
+
+      const makeStr = (v.maker || v.makeModel || '').trim();
+      const modelStr = (v.model || '').trim();
+      const mraStr = (v.mra || '').trim();
+      const expStr = v.validationExpiryDate || '-';
+
+      const cells = [
+        String(index + 1),
+        v.registrationNumber || '-',
+        v.chassisNo || '-',
+        v.engineNo || '-',
+        makeStr || '-',
+        modelStr || '-',
+        mraStr || '-',
+        expStr
+      ];
+
+      cells.forEach((text, cIdx) => {
+        const xPos = colX[cIdx] + (colWidths[cIdx] / 2);
+        doc.text(text, xPos, currentY + 4.2, { align: 'center' });
+        if (cIdx > 0) {
+          doc.line(colX[cIdx], currentY, colX[cIdx], currentY + rowHeight);
+        }
+      });
+
+      currentY += rowHeight;
+    });
+
+    currentY += 5;
+
+    // Check if space remains for closing and signature
+    if (currentY > pageHeight - 55) {
+      doc.addPage();
+      pageNum++;
+      currentY = 16;
+      drawGovtHeader();
+    }
+
+    // Paragraph 3 Body Text
+    doc.setFont('times', 'normal');
+    doc.setFontSize(9);
+    const para3Text = `3.  Appropriate Customs Officer assigned the job of issuing sealing certificate at exit point of Port / Airport must ensure the fulfilment of conditions in terms of Rule 327, 328 and 329 of Chapter XIV and Rule 477, 478 and 479 of Chapter XXI of Customs Rules, 2001 notified vide SRO 450(I)/2001 dated 18.06.2001 besides other conditions contained in the said rules. The Trackers in these vehicles may also be checked by the concerned Customs staff of tracking, sealing and monitoring at the time of exit of vehicles with goods from port.`;
+    const splitPara3 = doc.splitTextToSize(para3Text, contentWidth);
+    doc.text(splitPara3, margin, currentY);
+    currentY += (splitPara3.length * 4.1) + 10;
+
+    // Deputy Director Signature Block (Right aligned)
+    doc.setFont('times', 'bold');
+    doc.setFontSize(10);
+    doc.text('(Deputy Director)', pageWidth - margin - 8, currentY, { align: 'right' });
+    currentY += 4.5;
+    doc.text('(Licensing)', pageWidth - margin - 8, currentY, { align: 'right' });
+    currentY += 10;
+
+    // Distribution / Copy to block
+    doc.setFont('times', 'bold');
+    doc.setFontSize(8.5);
+    doc.text('Copy to:', margin, currentY);
+    currentY += 4;
+
+    doc.setFont('times', 'normal');
+    doc.setFontSize(8);
+    const copies = [
+      '1.  The Member (Customs), FBR, Islamabad.',
+      '2.  The Director General, Directorate of Transit Trade, Karachi.',
+      '3.  The Collector of Customs (Appraisement East / West / Port Qasim), Karachi.',
+      '4.  Project Director, PRAL, Custom House, Karachi (for electronic system profiling).',
+      '5.  Office Record.'
+    ];
+    copies.forEach(c => {
+      doc.text(c, margin, currentY);
+      currentY += 3.8;
+    });
+
+    const filename = `Customs_Vehicle_List_${formattedLetterDate.replace(/\./g, '_')}.pdf`;
+    return triggerDirectDownload(doc, filename);
+  } catch (error) {
+    console.error('Failed to generate Customs Vehicle List PDF:', error);
     throw error;
   }
 }

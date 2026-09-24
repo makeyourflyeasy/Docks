@@ -24,6 +24,7 @@ import {
 } from '../services/googleDriveService';
 import Logo from './Logo';
 import GoogleDriveManager from './GoogleDriveManager';
+import { convertImageToPdf } from '../services/fileUtils';
 
 interface AppSettingsProps {
   onReplaySplash?: () => void;
@@ -590,7 +591,23 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
                                      accept="image/*" 
                                      capture="environment" 
                                      className="hidden" 
-                                     onChange={e => setSelectedFile(e.target.files?.[0] || null)}
+                                     onChange={async (e) => {
+                                       const file = e.target.files?.[0];
+                                       if (file) {
+                                         try {
+                                           const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+                                           if (!isPdf) {
+                                             const converted = await convertImageToPdf(file, file.name || 'Company_Document.pdf', true);
+                                             setSelectedFile(converted.file);
+                                           } else {
+                                             setSelectedFile(file);
+                                           }
+                                         } catch (err) {
+                                           console.warn("Scan notice:", err);
+                                           setSelectedFile(file);
+                                         }
+                                       }
+                                     }}
                                    />
                                    <Camera className="text-brand-400 group-hover:scale-110 transition-transform" size={24} />
                                    <span className="text-[10px] text-center text-gray-300 font-sans">Camera / Photo</span>
