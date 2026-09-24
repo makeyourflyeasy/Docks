@@ -1339,12 +1339,12 @@ export async function downloadClientLedgerPdf(data: ClientLedgerExportData): Pro
       doc.setFontSize(7.5);
       doc.setTextColor(255, 255, 255);
 
-      doc.text('DATE', margin + 3, currentY + 4.8);
-      doc.text('REF / CASE', margin + 24, currentY + 4.8);
-      doc.text('DESCRIPTION / NARRATION', margin + 50, currentY + 4.8);
-      doc.text('DEBIT (PKR)', pageWidth - margin - 52, currentY + 4.8, { align: 'right' });
-      doc.text('CREDIT (PKR)', pageWidth - margin - 26, currentY + 4.8, { align: 'right' });
-      doc.text('BALANCE', pageWidth - margin - 4, currentY + 4.8, { align: 'right' });
+      doc.text('DATE', margin + 2, currentY + 4.8);
+      doc.text('REF / VOUCHER', 35, currentY + 4.8);
+      doc.text('DESCRIPTION / NARRATION', 66, currentY + 4.8);
+      doc.text('DEBIT (PKR)', 148, currentY + 4.8, { align: 'right' });
+      doc.text('CREDIT (PKR)', 172, currentY + 4.8, { align: 'right' });
+      doc.text('BALANCE', pageWidth - margin - 2, currentY + 4.8, { align: 'right' });
       currentY += 7;
     };
 
@@ -1354,7 +1354,14 @@ export async function downloadClientLedgerPdf(data: ClientLedgerExportData): Pro
 
     for (let idx = 0; idx < data.entries.length; idx++) {
       const entry = data.entries[idx];
-      if (currentY > pageHeight - 25) {
+
+      // Cleanly wrap reference and description with strict boundary widths
+      const refLines = doc.splitTextToSize(entry.reference || '-', 28);
+      const descLines = doc.splitTextToSize(entry.description || '-', 58);
+      const lineCount = Math.min(2, Math.max(refLines.length, descLines.length));
+      const rowHeight = lineCount > 1 ? 9.5 : 6.5;
+
+      if (currentY + rowHeight > pageHeight - 25) {
         doc.addPage();
         pageNum++;
         await drawHeader(pageNum);
@@ -1363,45 +1370,68 @@ export async function downloadClientLedgerPdf(data: ClientLedgerExportData): Pro
 
       if (idx % 2 === 1) {
         doc.setFillColor(248, 250, 252);
-        doc.rect(margin, currentY, pageWidth - (margin * 2), 6.5, 'F');
+        doc.rect(margin, currentY, pageWidth - (margin * 2), rowHeight, 'F');
       }
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(7.5);
       doc.setTextColor(71, 85, 105);
-      doc.text(entry.date, margin + 3, currentY + 4.4);
-      doc.text(entry.reference || '-', margin + 24, currentY + 4.4);
+      doc.text(entry.date, margin + 2, currentY + 4.4);
 
-      // Split and truncate description to fit exactly within the available column width (approx 75mm)
-      const descLines = doc.splitTextToSize(entry.description, 75);
-      const desc = descLines.length > 1 ? descLines[0] + '...' : descLines[0];
+      // REF / VOUCHER (Wrapped, max 28mm width, strictly separated from Description)
+      doc.setTextColor(30, 41, 59);
+      if (lineCount > 1 && refLines.length > 1) {
+        doc.text(refLines[0], 35, currentY + 3.8);
+        doc.text(refLines[1], 35, currentY + 7.5);
+      } else {
+        doc.text(refLines[0] || '-', 35, currentY + (lineCount > 1 ? 5.5 : 4.4));
+      }
+
+      // DESCRIPTION / NARRATION (Wrapped, max 58mm width, strictly separated from Debit)
       doc.setTextColor(15, 23, 42);
-      doc.text(desc, margin + 50, currentY + 4.4);
+      if (lineCount > 1 && descLines.length > 1) {
+        doc.text(descLines[0], 66, currentY + 3.8);
+        const secondLine = descLines.length > 2 
+          ? (descLines[1].length > 30 ? descLines[1].substring(0, 28) + '...' : descLines[1] + '...')
+          : descLines[1];
+        doc.text(secondLine, 66, currentY + 7.5);
+      } else {
+        doc.text(descLines[0] || '-', 66, currentY + (lineCount > 1 ? 5.5 : 4.4));
+      }
 
+      const numY = currentY + (lineCount > 1 ? 5.5 : 4.4);
+
+      // DEBIT
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(entry.debit > 0 ? 185 : 156, entry.debit > 0 ? 28 : 163, entry.debit > 0 ? 28 : 175);
-      doc.text(entry.debit > 0 ? Number(entry.debit).toLocaleString() : '-', pageWidth - margin - 52, currentY + 4.4, { align: 'right' });
+      doc.text(entry.debit > 0 ? Number(entry.debit).toLocaleString() : '-', 148, numY, { align: 'right' });
 
+      // CREDIT
       doc.setTextColor(entry.credit > 0 ? 22 : 156, entry.credit > 0 ? 163 : 163, entry.credit > 0 ? 74 : 175);
-      doc.text(entry.credit > 0 ? Number(entry.credit).toLocaleString() : '-', pageWidth - margin - 26, currentY + 4.4, { align: 'right' });
+      doc.text(entry.credit > 0 ? Number(entry.credit).toLocaleString() : '-', 172, numY, { align: 'right' });
 
+      // BALANCE
       doc.setTextColor(15, 23, 42);
-      doc.text(Number(entry.balance).toLocaleString(), pageWidth - margin - 4, currentY + 4.4, { align: 'right' });
+      doc.text(Number(entry.balance).toLocaleString(), pageWidth - margin - 2, numY, { align: 'right' });
 
-      currentY += 6.5;
+      currentY += rowHeight;
     }
 
-    currentY += 8;
-    if (currentY < pageHeight - 30) {
-      doc.setFillColor(241, 245, 249);
-      doc.rect(margin, currentY, pageWidth - (margin * 2), 8, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(15, 23, 42);
-      doc.text('OUTSTANDING CLOSING BALANCE:', margin + 4, currentY + 5.5);
-      doc.setTextColor(185, 28, 28);
-      doc.text(`PKR ${Number(data.summary.netBalance).toLocaleString()}`, pageWidth - margin - 4, currentY + 5.5, { align: 'right' });
+    currentY += 6;
+    if (currentY > pageHeight - 30) {
+      doc.addPage();
+      pageNum++;
+      await drawHeader(pageNum);
+      currentY += 4;
     }
+    doc.setFillColor(241, 245, 249);
+    doc.rect(margin, currentY, pageWidth - (margin * 2), 8, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text('OUTSTANDING CLOSING BALANCE:', margin + 4, currentY + 5.5);
+    doc.setTextColor(data.summary.netBalance > 0 ? 185 : 22, data.summary.netBalance > 0 ? 28 : 163, data.summary.netBalance > 0 ? 28 : 74);
+    doc.text(`PKR ${Number(data.summary.netBalance).toLocaleString()}`, pageWidth - margin - 2, currentY + 5.5, { align: 'right' });
 
     // Corporate footer with company address and contact numbers
     drawPdfCorporateFooter(doc, 'ERP Verified Client Statement', data.branding);

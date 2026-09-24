@@ -712,12 +712,11 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           // Add each itemized charge line as its own debit entry so payments against specific charges (e.g. AGAINST TP CHARGES) reconcile cleanly
           charges.forEach((ch, idx) => {
             const chargeDate = (ch as any).date || c.createdAt || c.registrationDate || new Date().toISOString().split('T')[0];
-            const refParts = [invNo, `Case: ${c.caseNo}`, cntrNumbers ? `Cntr: ${cntrNumbers}` : ''].filter(Boolean);
             entries.push({
               id: `case_${c.id}_ch_${idx}_${ch.id || idx}`,
               date: chargeDate,
-              reference: refParts.join(' | '),
-              description: `Invoice Charge: ${ch.description} - Case ${c.caseNo}${cntrInfo ? ' ' + cntrInfo : ''} (${c.pol || 'POL'} to ${c.pod || 'POD'})`,
+              reference: invNo,
+              description: `Invoice: ${ch.description} - Case ${c.caseNo}${cntrInfo ? ' ' + cntrInfo : ''}`,
               debit: Number(ch.amount) || 0,
               credit: 0,
               balance: 0,
@@ -729,12 +728,11 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         } else if (charges.length === 1) {
           const ch = charges[0];
           const chargeDate = (ch as any).date || c.createdAt || c.registrationDate || new Date().toISOString().split('T')[0];
-          const refParts = [invNo, `Case: ${c.caseNo}`, cntrNumbers ? `Cntr: ${cntrNumbers}` : ''].filter(Boolean);
           entries.push({
             id: `case_${c.id}`,
             date: chargeDate,
-            reference: refParts.join(' | '),
-            description: `Invoice: ${ch.description} - Case ${c.caseNo}${cntrInfo ? ' ' + cntrInfo : ''} (${c.pol || 'POL'} to ${c.pod || 'POD'})`,
+            reference: invNo,
+            description: `Invoice: ${ch.description} - Case ${c.caseNo}${cntrInfo ? ' ' + cntrInfo : ''}`,
             debit: Number(ch.amount) || 0,
             credit: 0,
             balance: 0,
@@ -757,17 +755,11 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         );
         if (isAlreadyAdded) return;
 
-        const refParts = [
-          r.reference || `INV-${r.id}`,
-          r.caseNo ? `Case: ${r.caseNo}` : '',
-          r.containerNumber ? `Cntr: ${r.containerNumber}` : ''
-        ].filter(Boolean);
-
         entries.push({
           id: `recv_${r.id}`,
           date: r.date,
-          reference: refParts.join(' | '),
-          description: `Invoice: ${r.description} (${r.category})`,
+          reference: r.reference || (r.caseNo ? `INV-${r.caseNo}` : `INV-${r.id}`),
+          description: `Invoice: ${r.description}${r.caseNo ? ` - Case ${r.caseNo}` : ''} (${r.category})`,
           debit: Number(r.amount) || 0,
           credit: 0,
           balance: 0,
@@ -783,16 +775,11 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
         const methodInfo = f.paymentMethod === 'BANK' 
           ? `Bank Transfer (${f.bankName || 'HBL'} Trx #${f.transactionId || 'Direct'})` 
           : 'Cash Receipt';
-        const refParts = [
-          f.reference || f.transactionId || `REC-${f.id}`,
-          f.caseNo ? `Case: ${f.caseNo}` : '',
-          f.containerNumber ? `Cntr: ${f.containerNumber}` : ''
-        ].filter(Boolean);
 
         entries.push({
           id: `pay_${f.id}`,
           date: f.date,
-          reference: refParts.join(' | '),
+          reference: f.reference || (f.transactionId ? `#${f.transactionId}` : `REC-${f.id}`),
           description: `Payment Received: ${f.description} [${methodInfo}]`,
           debit: 0,
           credit: Number(f.amount) || 0,
