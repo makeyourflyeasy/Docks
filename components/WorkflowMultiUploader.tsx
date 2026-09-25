@@ -595,7 +595,7 @@ export const WorkflowMultiUploader: React.FC<WorkflowMultiUploaderProps> = ({
 
       {/* Live Webcam Modal */}
       {showWebcamModal && (
-        <div className="fixed inset-0 bg-black/85 z-[120] flex items-center justify-center p-4 backdrop-blur-md animate-fade-in">
+        <div className="fixed inset-0 bg-black/85 z-[120] flex items-start justify-center pt-8 sm:pt-14 p-4 backdrop-blur-md overflow-y-auto animate-fade-in">
           <div className="bg-slate-900 rounded-2xl border border-white/15 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col">
             {/* Modal Header */}
             <div className="p-4 border-b border-white/10 bg-slate-950/60 flex items-center justify-between">

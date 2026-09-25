@@ -268,18 +268,19 @@ export async function drawPdfCorporateHeader(
  */
 export function drawPdfCorporateFooter(
   doc: jsPDF,
-  rightText: string = 'ERP Verified Document',
+  rightText: string = '',
   branding?: BrandingInfo
 ): void {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 14;
   const b = { ...getStoredBranding(), ...branding };
-  const companyName = cleanPdfText(b.companyName) || 'DOCKS (PVT) LTD.';
   const address = cleanPdfText(b.address) || 'Office No. 14-B, First Floor, State Life Building No. 7, G-Allana Road Tower, Karachi.';
   const phone = cleanPdfText(b.phone) || '+92-21-32330103, +92-21-32330104';
-  const cell = cleanPdfText(b.cell) || '+92-321-9222883, +92-321-8496006';
-  const email = cleanPdfText(b.email) || 'director@dockspk.com';
+  let email = cleanPdfText(b.email) || 'info@dockspk.com';
+  if (email.toLowerCase().includes('director@')) {
+    email = email.replace(/director@/gi, 'info@');
+  }
   const web = cleanPdfText(b.web) || 'www.dockspk.com';
 
   const cleanRight = cleanPdfText(rightText);
@@ -291,30 +292,31 @@ export function drawPdfCorporateFooter(
   doc.setLineWidth(0.35);
   doc.line(margin, dividerY, pageWidth - margin, dividerY);
 
-  // Line 1: Company Legal Name & Office Address (CENTERED)
+  // Line 1: Office Address only (starts directly with Office Address, no company legal name prefix)
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.2);
+  doc.setFontSize(6.3);
   doc.setTextColor(51, 65, 85);
-  const addrText = `${companyName}  •  Office Address: ${address}`;
-  doc.text(addrText, centerX, dividerY + 3.8, { align: 'center', maxWidth: pageWidth - (margin * 2) });
+  const addrText = `Office Address: ${address}`;
+  doc.text(addrText, centerX, dividerY + 4.2, { align: 'center', maxWidth: pageWidth - (margin * 2) });
 
-  // Line 2: All contact numbers, cell phones, email & website (CENTERED)
+  // Line 2: Phone, Email (info@), Web (Cell number removed completely)
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(5.9);
   doc.setTextColor(100, 116, 139);
   const phonePart = phone ? `Phone: ${phone}` : '';
-  const cellPart = cell ? `Cell: ${cell}` : '';
   const emailPart = email ? `Email: ${email}` : '';
   const webPart = web ? `Web: ${web}` : '';
-  const contactText = [phonePart, cellPart, emailPart, webPart].filter(Boolean).join('  |  ');
-  doc.text(contactText, centerX, dividerY + 7.4, { align: 'center', maxWidth: pageWidth - (margin * 2) });
+  const contactText = [phonePart, emailPart, webPart].filter(Boolean).join('  |  ');
+  doc.text(contactText, centerX, dividerY + 8.0, { align: 'center', maxWidth: pageWidth - (margin * 2) });
 
-  // Line 3: Page Number / Status (CENTERED UNDERNEATH ADDRESS & CONTACT INFO)
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(5.8);
-  doc.setTextColor(148, 163, 184);
-  const pageText = cleanRight || 'Page 1 of 1';
-  doc.text(pageText, centerX, dividerY + 11.0, { align: 'center' });
+  // Line 3: Page Number ONLY if more than 1 page! (Omit if Page 1 of 1 or totalPages <= 1)
+  const isSinglePage = !cleanRight || cleanRight.toLowerCase() === 'page 1 of 1' || cleanRight.toLowerCase().endsWith('of 1');
+  if (!isSinglePage) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.8);
+    doc.setTextColor(148, 163, 184);
+    doc.text(cleanRight, centerX, dividerY + 11.5, { align: 'center' });
+  }
 }
 
 /**
@@ -465,121 +467,164 @@ export async function downloadCasePdf(
     if (!options.onlyInvoice) {
       await renderHeader('CASE DETAILS');
 
-      // Case Meta Box
+      // Thank you message before case detail section
       doc.setFillColor(248, 250, 252);
       doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(margin, currentY, pageWidth - (margin * 2), 28, 2, 2, 'FD');
-
+      doc.roundedRect(margin, currentY, pageWidth - (margin * 2), 6.5, 1.5, 1.5, 'FD');
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.setTextColor(15, 23, 42);
-      doc.text('CASE IDENTIFICATION & ROUTE', margin + 4, currentY + 6);
+      doc.setFontSize(7.5);
+      doc.setTextColor(180, 83, 9); // warm gold/amber
+      doc.text('THANK YOU FOR DOING BUSINESS WITH US! WE SINCERELY APPRECIATE YOUR PARTNERSHIP.', pageWidth / 2, currentY + 4.4, { align: 'center' });
+      currentY += 9.5;
 
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(71, 85, 105);
-
-      const col1X = margin + 4;
-      const col2X = margin + 65;
-      const col3X = margin + 125;
-
-      doc.text(`Case No: ${targetCase.caseNo}`, col1X, currentY + 12);
-      doc.text(`Client: ${targetCase.clientName || 'N/A'}`, col1X, currentY + 17);
-      doc.text(`Status: ${targetCase.status || 'Active'}`, col1X, currentY + 22);
-
-      doc.text(`Category: ${targetCase.category || 'Transit'}`, col2X, currentY + 12);
-      doc.text(`Port of Loading (POL): ${targetCase.pol || 'N/A'}`, col2X, currentY + 17);
-      doc.text(`Port of Destination (POD): ${targetCase.pod || 'N/A'}`, col2X, currentY + 22);
-
-      doc.text(`BL / AWB: ${targetCase.extractedData?.blNumber || 'N/A'}`, col3X, currentY + 12);
-      doc.text(`GD No: ${targetCase.extractedData?.gdNo || 'N/A'}`, col3X, currentY + 17);
-      doc.text(`Containers: ${targetCase.containers?.length || 0}`, col3X, currentY + 22);
-
-      currentY += 34;
-
-      // Containers Table
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(15, 23, 42);
-      doc.text('MANIFEST & CONTAINERS', margin, currentY);
-      currentY += 4;
-
-      // Table Header
-      doc.setFillColor(241, 245, 249);
+      // Section 1: CASE DETAIL (Clean Form Format)
+      doc.setFillColor(15, 23, 42); // slate-900
       doc.rect(margin, currentY, pageWidth - (margin * 2), 6, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
-      doc.setTextColor(71, 85, 105);
-
-      doc.text('#', margin + 2, currentY + 4);
-      doc.text('CONTAINER NO.', margin + 10, currentY + 4);
-      doc.text('SIZE / TYPE', margin + 50, currentY + 4);
-      doc.text('SEAL NUMBER', margin + 85, currentY + 4);
-      doc.text('WEIGHT (KG)', margin + 125, currentY + 4);
-      doc.text('STATUS', margin + 155, currentY + 4);
+      doc.setTextColor(255, 255, 255);
+      doc.text('CASE DETAIL', margin + 4, currentY + 4.2);
       currentY += 6;
 
-      // Table Rows
-      doc.setFont('helvetica', 'normal');
+      const formBoxY = currentY;
+      const formBoxHeight = 35;
+      doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(margin, formBoxY, pageWidth - (margin * 2), formBoxHeight, 1.5, 1.5, 'FD');
+
+      const col1X = margin + 4;
+      const col2X = margin + ((pageWidth - margin * 2) / 2) + 2;
+      const maxValWidth = ((pageWidth - margin * 2) / 2) - 42;
+
+      const fieldsCol1 = [
+        { label: 'CATEGORY:', value: targetCase.category || 'Bonded Carrier' },
+        { label: 'SUB-CATEGORY:', value: targetCase.subCategory || 'Standard Container / General Cargo' },
+        { label: 'PORT OF LOADING (POL):', value: targetCase.pol || targetCase.extractedData?.pol || 'N/A' },
+        { label: 'PORT OF DESTINATION (POD):', value: targetCase.pod || targetCase.extractedData?.pod || targetCase.extractedData?.dropoffDestination || 'N/A' },
+        { label: 'OPERATIONAL STATUS:', value: targetCase.status || 'Active' },
+        { label: 'CONSIGNEE / IMPORTER:', value: targetCase.extractedData?.consigneeName || targetCase.importer || 'N/A' }
+      ];
+
+      const containerSummary = targetCase.containers && targetCase.containers.length > 0
+        ? `${targetCase.containers.length} Unit(s) [${targetCase.containers.map(c => c.number || c.size || 'CNTR').join(', ')}]`
+        : (targetCase.containerNumber || 'N/A');
+
+      const weightSummary = targetCase.extractedData?.totalWeight 
+        ? `${Number(targetCase.extractedData.totalWeight).toLocaleString()} KG` 
+        : (targetCase.containers?.[0]?.weight ? `${Number(targetCase.containers[0].weight).toLocaleString()} KG` : 'N/A');
+
+      const fieldsCol2 = [
+        { label: 'BL / AWB NO:', value: targetCase.extractedData?.blNumber || targetCase.blNumber || 'N/A' },
+        { label: 'GD NO (CUSTOMS):', value: targetCase.extractedData?.gdNo || targetCase.gdNumber || 'N/A' },
+        { label: 'CONTAINERS:', value: containerSummary },
+        { label: 'CONTAINER SIZE & TYPE:', value: targetCase.containers?.[0]?.size || '40ft Standard' },
+        { label: 'TOTAL CARGO WEIGHT:', value: weightSummary },
+        { label: 'SHIPPING LINE / AGENT:', value: targetCase.extractedData?.shippingLine || targetCase.shippingAgent || targetCase.shippingLine || 'N/A' }
+      ];
+
+      let rowY = formBoxY + 4;
+      for (let i = 0; i < 6; i++) {
+        // Column 1
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.2);
+        doc.setTextColor(100, 116, 139);
+        doc.text(fieldsCol1[i].label, col1X, rowY);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.2);
+        doc.setTextColor(15, 23, 42);
+        const c1Val = doc.splitTextToSize(fieldsCol1[i].value, maxValWidth)[0] || 'N/A';
+        doc.text(c1Val, col1X + 38, rowY);
+
+        // Column 2
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.2);
+        doc.setTextColor(100, 116, 139);
+        doc.text(fieldsCol2[i].label, col2X, rowY);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.2);
+        doc.setTextColor(15, 23, 42);
+        const c2Val = doc.splitTextToSize(fieldsCol2[i].value, maxValWidth)[0] || 'N/A';
+        doc.text(c2Val, col2X + 38, rowY);
+
+        rowY += 5.3;
+      }
+
+      currentY = formBoxY + formBoxHeight + 5;
+
+      // Section 2: INVOICE (Itemized Service Charges & Bottom Total Amount)
+      doc.setFillColor(15, 23, 42); // slate-900
+      doc.rect(margin, currentY, pageWidth - (margin * 2), 6, 'F');
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
+      doc.setTextColor(255, 255, 255);
+      doc.text('INVOICE', margin + 4, currentY + 4.2);
+      doc.text('AMOUNT (PKR)', pageWidth - margin - 4, currentY + 4.2, { align: 'right' });
+      currentY += 6;
+
+      const charges = targetCase.charges && targetCase.charges.length > 0
+        ? targetCase.charges
+        : [
+            { description: 'Terminal Handling & Customs Examination Charges', amount: 45000 },
+            { description: 'Bonded Transportation & Transit Clearance Fee', amount: 85000 },
+            { description: 'Port Documentation, EDI & Gate Pass Surcharge', amount: 12500 }
+          ];
+
+      let totalAmount = 0;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.2);
       doc.setTextColor(30, 41, 59);
 
-      if (targetCase.containers && targetCase.containers.length > 0) {
-        targetCase.containers.forEach((cnt: Container, idx: number) => {
-          if (idx % 2 === 1) {
-            doc.setFillColor(250, 250, 250);
-            doc.rect(margin, currentY, pageWidth - (margin * 2), 6, 'F');
-          }
-          doc.text(String(idx + 1), margin + 2, currentY + 4);
-          doc.text(cnt.number || 'N/A', margin + 10, currentY + 4);
-          doc.text(cnt.size || '40ft', margin + 50, currentY + 4);
-          doc.text(cnt.sealNo || 'N/A', margin + 85, currentY + 4);
-          doc.text(cnt.weight ? cnt.weight.toLocaleString() : 'N/A', margin + 125, currentY + 4);
-          doc.text(cnt.status || 'In Transit', margin + 155, currentY + 4);
-          currentY += 6;
+      charges.slice(0, 4).forEach((ch: any, idx: number) => {
+        totalAmount += Number(ch.amount) || 0;
+        if (idx % 2 === 1) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(margin, currentY, pageWidth - (margin * 2), 5, 'F');
+        }
+        doc.text(String(idx + 1), margin + 3, currentY + 3.6);
+        doc.text(ch.description || 'Logistics Service', margin + 10, currentY + 3.6);
+        doc.text(Number(ch.amount || 0).toLocaleString(), pageWidth - margin - 4, currentY + 3.6, { align: 'right' });
+        currentY += 5;
+      });
+
+      if (charges.length > 4) {
+        charges.slice(4).forEach((ch: any) => {
+          totalAmount += Number(ch.amount) || 0;
         });
-      } else {
-        doc.text('No container records filed.', margin + 10, currentY + 4);
-        currentY += 6;
       }
 
-      currentY += 8;
-
-      // Tracking / Status Summary
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(15, 23, 42);
-      doc.text('CLEARANCE & LOGISTICS STATUS', margin, currentY);
-      currentY += 4;
-
-      doc.setFillColor(248, 250, 252);
-      doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(margin, currentY, pageWidth - (margin * 2), 16, 2, 2, 'FD');
-
+      // Total Row (at bottom of invoice section)
+      doc.setFillColor(241, 245, 249);
+      doc.rect(margin, currentY, pageWidth - (margin * 2), 6.5, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
-      doc.setTextColor(180, 83, 9);
-      doc.text(`Current Active State: ${targetCase.status || 'Active'}`, margin + 4, currentY + 6);
+      doc.setTextColor(15, 23, 42);
+      doc.text('TOTAL INVOICE AMOUNT DUE:', margin + 4, currentY + 4.5);
+      doc.setTextColor(180, 83, 9); // gold / amber
+      doc.text(`PKR ${totalAmount.toLocaleString()}`, pageWidth - margin - 4, currentY + 4.5, { align: 'right' });
+      currentY += 9.5;
 
+      // Invoice details & terms in short
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(71, 85, 105);
-      doc.text(`Consignee: ${targetCase.extractedData?.consigneeName || 'N/A'}`, margin + 4, currentY + 11);
-      doc.text(`Shipper: ${targetCase.extractedData?.shipperName || 'N/A'}`, margin + 75, currentY + 11);
-      doc.text(`Vessel: ${targetCase.extractedData?.vesselName || 'N/A'}`, margin + 140, currentY + 11);
+      doc.setFontSize(6.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(
+        `Invoice Ref: INV-${targetCase.caseNo}  •  Terms: Immediate upon receipt  •  Currency: PKR  •  Status: ${targetCase.status === 'Completed' ? 'Fully Settled' : 'Payment Due'}`,
+        margin + 4,
+        currentY
+      );
+      currentY += 3;
 
-      currentY += 24;
+      // Official Company Seal Stamp
+      const sigX = pageWidth - margin - 52;
+      drawOfficialCompanyStampOnly(doc, sigX, currentY, 'OFFICIAL INVOICE STAMP');
 
-      const totalPagesCount = options.onlyCaseDetails ? 1 : (options.withInvoice ? 2 : 1);
-      renderFooter(1, totalPagesCount);
+      renderFooter(1, 1);
     }
 
-    // --- INVOICE PAGE ---
-    if (!options.onlyCaseDetails && (options.onlyInvoice || options.withInvoice)) {
-      if (!options.onlyInvoice) {
-        doc.addPage();
-      }
-
+    // --- STANDALONE INVOICE PAGE (Only when user explicitly requests standalone Commercial Invoice) ---
+    if (options.onlyInvoice) {
       await renderHeader('INVOICE');
 
       // Invoice Details Header Box
@@ -652,11 +697,11 @@ export async function downloadCasePdf(
       doc.text(`PKR ${totalAmount.toLocaleString()}`, pageWidth - margin - 4, currentY + 5.5, { align: 'right' });
       currentY += 16;
 
-      // Official Company Stamp Only (SRS: All non-payment receipts carry stamp only)
+      // Official Company Stamp Only
       const sigX = pageWidth - margin - 60;
       drawOfficialCompanyStampOnly(doc, sigX, currentY, 'OFFICIAL INVOICE STAMP');
 
-      renderFooter(options.onlyInvoice ? 1 : 2, options.onlyInvoice ? 1 : 2);
+      renderFooter(1, 1);
     }
 
     // Generate output blob and trigger browser download
@@ -2762,6 +2807,240 @@ export async function downloadCustomsVehicleListPdf(
     return triggerDirectDownload(doc, filename);
   } catch (error) {
     console.error('Failed to generate Customs Vehicle List PDF:', error);
+    throw error;
+  }
+}
+
+export interface LoadingBillItem {
+  head: string;
+  amount: number;
+  receiptName?: string;
+  receiptUrl?: string;
+  remarks?: string;
+}
+
+export interface LoadingBillData {
+  billNo: string;
+  caseNo: string;
+  clientName?: string;
+  containerNo?: string;
+  vehicleNo?: string;
+  driverName?: string;
+  portTerminal: string;
+  date: string;
+  items: LoadingBillItem[];
+  totalAmount: number;
+  remarks?: string;
+  officerName?: string;
+  branding?: BrandingInfo;
+}
+
+export async function downloadLoadingBillPdf(data: LoadingBillData): Promise<{ success: boolean; filename: string; blobUrl?: string }> {
+  try {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+      compress: true
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 14;
+
+    let currentY = await drawPdfCorporateHeader(doc, {
+      title: 'PORT LOADING BILL',
+      refNo: `Bill No: ${data.billNo}`,
+      date: data.date,
+      subRef: `Case: ${data.caseNo}`,
+      branding: data.branding,
+      accentColor: [14, 165, 233] // Sky blue accent
+    });
+
+    currentY += 4;
+
+    // Thank you / Notice line
+    doc.setFillColor(240, 249, 255);
+    doc.setDrawColor(186, 230, 253);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(margin, currentY, pageWidth - margin * 2, 8, 2, 2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(3, 105, 161);
+    doc.text('OFFICIAL PORT TERMINAL LOADING & DISBURSEMENT BILL', margin + 4, currentY + 5.2);
+    currentY += 12;
+
+    // Case & Terminal Particulars Box
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, currentY, pageWidth - margin * 2, 28, 2, 2, 'FD');
+
+    const colW = (pageWidth - margin * 2) / 3;
+
+    // Col 1
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('CASE NUMBER', margin + 4, currentY + 5);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(data.caseNo || 'N/A', margin + 4, currentY + 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('CLIENT NAME', margin + 4, currentY + 17);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(data.clientName || 'Valued Client', margin + 4, currentY + 22);
+
+    // Col 2
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('PORT / TERMINAL', margin + colW + 4, currentY + 5);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(14, 165, 233);
+    doc.text(data.portTerminal || 'Karachi Port Terminal', margin + colW + 4, currentY + 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('CONTAINER NUMBER', margin + colW + 4, currentY + 17);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(data.containerNo || 'N/A', margin + colW + 4, currentY + 22);
+
+    // Col 3
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('ASSIGNED VEHICLE', margin + colW * 2 + 4, currentY + 5);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(data.vehicleNo || 'N/A', margin + colW * 2 + 4, currentY + 10);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('DRIVER PARTICULAR', margin + colW * 2 + 4, currentY + 17);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text(data.driverName || 'N/A', margin + colW * 2 + 4, currentY + 22);
+
+    currentY += 34;
+
+    // Itemized Charges Table Header
+    doc.setFillColor(15, 23, 42);
+    doc.rect(margin, currentY, pageWidth - margin * 2, 7, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text('SR#', margin + 3, currentY + 4.8);
+    doc.text('LOADING / TERMINAL CHARGE DESCRIPTION', margin + 18, currentY + 4.8);
+    doc.text('SUPPORTING RECEIPT', margin + 115, currentY + 4.8);
+    doc.text('AMOUNT (PKR)', pageWidth - margin - 4, currentY + 4.8, { align: 'right' });
+    currentY += 7;
+
+    // Table rows
+    const items = data.items && data.items.length > 0 ? data.items : [
+      { head: 'Terminal Wharfage Payment', amount: 0 },
+      { head: 'Additional Wharfage Payment', amount: 0 },
+      { head: 'Satellite GPS Tracker Fee', amount: 0 },
+      { head: 'Port Gate Delivery Charges', amount: 0 }
+    ];
+
+    let rowIdx = 1;
+    let runningTotal = 0;
+
+    for (const item of items) {
+      const isAlt = rowIdx % 2 === 0;
+      doc.setFillColor(isAlt ? 248 : 255, isAlt ? 250 : 255, isAlt ? 252 : 255);
+      doc.rect(margin, currentY, pageWidth - margin * 2, 7, 'F');
+      doc.setDrawColor(241, 245, 249);
+      doc.line(margin, currentY + 7, pageWidth - margin, currentY + 7);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(String(rowIdx).padStart(2, '0'), margin + 3, currentY + 4.8);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text(item.head, margin + 18, currentY + 4.8);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      if (item.receiptName || item.receiptUrl) {
+        doc.setTextColor(16, 185, 129);
+        doc.text('Attached (Verified)', margin + 115, currentY + 4.8);
+      } else {
+        doc.setTextColor(148, 163, 184);
+        doc.text('System Disbursed', margin + 115, currentY + 4.8);
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(Number(item.amount || 0).toLocaleString('en-PK'), pageWidth - margin - 4, currentY + 4.8, { align: 'right' });
+
+      runningTotal += Number(item.amount || 0);
+      currentY += 7;
+      rowIdx++;
+    }
+
+    const finalTotal = data.totalAmount > 0 ? data.totalAmount : runningTotal;
+
+    // Total Row
+    doc.setFillColor(241, 245, 249);
+    doc.setDrawColor(203, 213, 225);
+    doc.rect(margin, currentY, pageWidth - margin * 2, 8, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(15, 23, 42);
+    doc.text('TOTAL LOADING BILL AMOUNT DUE:', margin + 18, currentY + 5.5);
+    doc.setFontSize(10.5);
+    doc.setTextColor(14, 165, 233);
+    doc.text(`PKR ${finalTotal.toLocaleString('en-PK')}`, pageWidth - margin - 4, currentY + 5.5, { align: 'right' });
+    currentY += 14;
+
+    // Remarks & Authorized Seal Stamp
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('OPERATIONAL REMARKS:', margin, currentY);
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    doc.text(data.remarks || 'All terminal handling, wharfage and vehicle gate out charges verified at port of loading.', margin, currentY + 4.5);
+
+    // Official Stamp / Signature block
+    const stampX = pageWidth - margin - 50;
+    doc.setDrawColor(203, 213, 225);
+    doc.line(stampX, currentY + 18, pageWidth - margin, currentY + 18);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+    doc.text('PORT OPERATIONS OFFICER', stampX + 25, currentY + 22, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text(data.officerName || 'Karachi Port Terminal Desk', stampX + 25, currentY + 26, { align: 'center' });
+
+    // Corporate Footer
+    drawPdfCorporateFooter(doc, 'Page 1 of 1', data.branding);
+
+    const cleanBillNo = (data.billNo || 'LB-' + Date.now()).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `Loading_Bill_${cleanBillNo}.pdf`;
+    return triggerDirectDownload(doc, filename);
+  } catch (error) {
+    console.error('Failed to generate Loading Bill PDF:', error);
     throw error;
   }
 }

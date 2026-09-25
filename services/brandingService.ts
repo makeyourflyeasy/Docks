@@ -25,7 +25,7 @@ export const DEFAULT_BRANDING: CompanyBranding = {
   address: 'Office No. 14-B, First Floor, State Life Building No. 7, G-Allana Road Tower, Karachi.',
   phone: '+92-21-32330103, +92-21-32330104',
   cell: '+92-321-9222883, +92-321-8496006',
-  email: 'director@dockspk.com',
+  email: 'info@dockspk.com',
   web: 'www.dockspk.com',
   directorName: 'Arbab Khan',
   directorTitle: 'Director',
@@ -44,6 +44,10 @@ export function getStoredBranding(): CompanyBranding {
     ? 'DOCKS PRIVATE LIMITED'
     : rawCompanyName;
 
+  const resolvedEmail = stored.email && !stored.email.toLowerCase().includes('director@')
+    ? stored.email
+    : 'info@dockspk.com';
+
   return {
     ...DEFAULT_BRANDING,
     ...stored,
@@ -52,7 +56,7 @@ export function getStoredBranding(): CompanyBranding {
     address: stored.address || DEFAULT_BRANDING.address,
     phone: stored.phone || DEFAULT_BRANDING.phone,
     cell: stored.cell || DEFAULT_BRANDING.cell,
-    email: stored.email || DEFAULT_BRANDING.email,
+    email: resolvedEmail,
     web: stored.web || DEFAULT_BRANDING.web,
     directorName: stored.directorName || DEFAULT_BRANDING.directorName,
     directorTitle: stored.directorTitle || DEFAULT_BRANDING.directorTitle,

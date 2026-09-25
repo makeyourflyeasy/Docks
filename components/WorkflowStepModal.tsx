@@ -22,7 +22,9 @@ import {
   RotateCcw,
   Sparkles,
   AlertCircle,
-  User
+  User,
+  Search,
+  Receipt
 } from 'lucide-react';
 import { 
   Case, 
@@ -39,11 +41,13 @@ import {
   getCategoryWorkflow, 
   getWorkflowStepIndex, 
   normalizeCategoryName, 
-  supportsSubCategories 
+  supportsSubCategories,
+  isDestinationUnloadedAndGateOut 
 } from '../services/workflowConfig';
 import { PdfViewerModal } from './PdfViewerModal';
 import { WorkflowMultiUploader } from './WorkflowMultiUploader';
 import { downloadCasePdf, downloadCustomsDeliveryOrderPdf } from '../services/pdfExportService';
+import { LoadingBillModal } from './LoadingBillModal';
 import { CustomsClearanceSteps } from './workflowSteps/CustomsClearanceSteps';
 import { AfghanTransitSteps } from './workflowSteps/AfghanTransitSteps';
 import { TirSteps } from './workflowSteps/TirSteps';
@@ -109,10 +113,27 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
 
     const stepStr = String(stepStatus).toLowerCase();
 
-    // Loading Port Staff: Terminal Wharfage, Port dispatch, Stuffing, Sealing, Weighbridge, Loading
+    // Loading Port Staff: Loading Port Processing & Shipping Line DO (when arranged by client)
     if (rolesList.includes(UserRole.LOADING_PORT_STAFF)) {
-      if (stepIndex === 3 || stepIndex === 4 || stepIndex === 5 || stepStr.includes('loading') || stepStr.includes('dispatch') || stepStr.includes('wharfage') || stepStr.includes('stuff') || stepStr.includes('vessel')) {
+      if (
+        stepIndex === 4 || 
+        stepIndex === 3 || 
+        stepStr.includes('loading') || 
+        stepStr.includes('dispatch') || 
+        stepStr.includes('wharfage') || 
+        stepStr.includes('stuff') || 
+        stepStr.includes('vessel')
+      ) {
         canEdit = true;
+      }
+      // Also can edit Shipping Line DO if arranged by client!
+      if (stepIndex === 0 || stepStatus === CaseStatus.SHIPPING_LINE_DO) {
+        const isClientDo = targetCase.serviceArrangements?.['delivery_order']?.arrangedBy === 'Client' ||
+                           targetCase.workflowDetails?.[CaseStatus.SHIPPING_LINE_DO]?.doDueChargesArrangedBy === 'Client' ||
+                           !targetCase.workflowDetails?.[CaseStatus.SHIPPING_LINE_DO]?.doDueChargesArrangedBy;
+        if (isClientDo) {
+          canEdit = true;
+        }
       }
     }
 
@@ -124,7 +145,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     }
 
     return canEdit;
-  }, [rolesList, targetCase.status, stepIndex, stepStatus]);
+  }, [rolesList, targetCase.status, stepIndex, stepStatus, targetCase.serviceArrangements, targetCase.workflowDetails]);
 
   const isReadOnly = !canEditStep || targetCase.status === CaseStatus.COMPLETED;
 
@@ -141,17 +162,25 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     remarks: existingDetail.remarks || '',
     updatedAt: existingDetail.updatedAt || '',
 
-    // Step 1
+    // Step 1: Shipping Line DO
     doReceiptUrl: existingDetail.doReceiptUrl || '',
     doReceiptName: existingDetail.doReceiptName || '',
     doReferenceNo: existingDetail.doReferenceNo || existingDetail.referenceNo || '',
-    doIssueDate: existingDetail.doIssueDate || existingDetail.date || '',
+    doIssueDate: existingDetail.doIssueDate || existingDetail.date || new Date().toISOString().split('T')[0],
+    shippingLine: existingDetail.shippingLine || targetCase.shippingLine || targetCase.extractedData?.shippingLine || '',
+    shippingAgent: existingDetail.shippingAgent || '',
+    containerRentalPeriod: existingDetail.containerRentalPeriod || '14 Days',
+    shippingLinePaidByDpl: existingDetail.shippingLinePaidByDpl ?? true,
+    shippingAgentPaidByDpl: existingDetail.shippingAgentPaidByDpl ?? true,
+    doDepositPaidByDpl: existingDetail.doDepositPaidByDpl ?? (existingDetail.doDepositArrangedBy === 'DPL'),
+    doChargesPaidByDpl: existingDetail.doChargesPaidByDpl ?? (existingDetail.doDueChargesArrangedBy === 'DPL'),
+    containerRentalPaidByDpl: existingDetail.containerRentalPaidByDpl ?? true,
     doDueChargesArrangedBy: existingDetail.doDueChargesArrangedBy || (targetCase.serviceArrangements?.['delivery_order']?.arrangedBy || 'Client'),
     doDueChargesAmount: existingDetail.doDueChargesAmount || (targetCase.serviceArrangements?.['delivery_order']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['delivery_order'].amount || 0) : 0),
-    doDueChargesCommission: existingDetail.doDueChargesCommission || 0,
+    doDueChargesCommission: 0,
     doDepositArrangedBy: existingDetail.doDepositArrangedBy || (targetCase.serviceArrangements?.['security_deposit']?.arrangedBy || 'Client'),
     doDepositAmount: existingDetail.doDepositAmount || (targetCase.serviceArrangements?.['security_deposit']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['security_deposit'].amount || 0) : 0),
-    doDepositCommission: existingDetail.doDepositCommission || 0,
+    doDepositCommission: 0,
 
     // Step 2
     tpGdPrintUrl: existingDetail.tpGdPrintUrl || '',
@@ -170,15 +199,15 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     excisePaymentDate: existingDetail.excisePaymentDate || existingDetail.date || '',
     exciseHandledBy: existingDetail.exciseHandledBy || (targetCase.serviceArrangements?.['customs_clearance']?.arrangedBy || 'Client'),
 
-    // Step 4
+    // Step 4 (Wharfage integrated into Loading Bill)
     wharfageReceiptUrl: existingDetail.wharfageReceiptUrl || '',
     wharfageReceiptName: existingDetail.wharfageReceiptName || '',
     wharfageReceiptDate: existingDetail.wharfageReceiptDate || existingDetail.date || '',
     wharfageAmount: existingDetail.wharfageAmount || (targetCase.serviceArrangements?.['terminal_handling']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['terminal_handling'].amount || 0) : 0),
     wharfagePaymentEntity: existingDetail.wharfagePaymentEntity || (targetCase.serviceArrangements?.['terminal_handling']?.arrangedBy || 'Client'),
-    wharfageCommission: existingDetail.wharfageCommission || 0,
+    wharfageCommission: 0,
 
-    // Step 5
+    // Step 5: Vehicle Assignment
     assignedVehicleNo: existingDetail.assignedVehicleNo || targetCase.containers?.[0]?.vehicleNo || '',
     vehicleVerifiedInDb: existingDetail.vehicleVerifiedInDb || false,
     registrationBookUrl: existingDetail.registrationBookUrl || '',
@@ -197,9 +226,9 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     driverLicenseName: existingDetail.driverLicenseName || '',
     vehicleRentAmount: existingDetail.vehicleRentAmount || (targetCase.serviceArrangements?.['transportation']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['transportation'].amount || 0) : 0),
     vehicleRentArrangedBy: existingDetail.vehicleRentArrangedBy || (targetCase.serviceArrangements?.['transportation']?.arrangedBy || 'Client'),
-    vehicleRentCommission: existingDetail.vehicleRentCommission || 0,
+    vehicleRentCommission: 0,
 
-    // Step 6
+    // Step 6: Loading Port Processing
     vehiclePhotoUrl: existingDetail.vehiclePhotoUrl || '',
     vehiclePhotoName: existingDetail.vehiclePhotoName || '',
     portGatePassUrl: existingDetail.portGatePassUrl || '',
@@ -207,10 +236,10 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     trackerStatus: existingDetail.trackerStatus || 'Not Installed',
     trackerArrangedBy: existingDetail.trackerArrangedBy || (targetCase.serviceArrangements?.['tracker_security']?.arrangedBy || 'Client'),
     trackerAmount: existingDetail.trackerAmount || (targetCase.serviceArrangements?.['tracker_security']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['tracker_security'].amount || 0) : 0),
-    trackerCommission: existingDetail.trackerCommission || 0,
+    trackerCommission: 0,
     loadingChargesArrangedBy: existingDetail.loadingChargesArrangedBy || (targetCase.serviceArrangements?.['loading_unloading']?.arrangedBy || 'Client'),
     loadingChargesAmount: existingDetail.loadingChargesAmount || (targetCase.serviceArrangements?.['loading_unloading']?.arrangedBy === 'DPL' ? (targetCase.serviceArrangements['loading_unloading'].amount || 0) : 0),
-    loadingChargesCommission: existingDetail.loadingChargesCommission || 0,
+    loadingChargesCommission: 0,
     weightSlipUrl: existingDetail.weightSlipUrl || '',
     weightSlipName: existingDetail.weightSlipName || '',
     sealSlipUrl: existingDetail.sealSlipUrl || '',
@@ -254,7 +283,6 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     vehicleGateOutToggled: existingDetail.vehicleGateOutToggled || false
   });
 
-  const [stepAction, setStepAction] = useState<'advance' | 'set_current' | 'keep'>('advance');
   const [activePdfPreview, setActivePdfPreview] = useState<{ url: string; title: string } | null>(null);
   const [showIncidentModal, setShowIncidentModal] = useState(false);
   const [incidentForm, setIncidentForm] = useState({
@@ -263,6 +291,20 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     date: new Date().toISOString().split('T')[0],
     contact: ''
   });
+
+  // Vehicle Assignment modal states
+  const [showVehicleValidateModal, setShowVehicleValidateModal] = useState(false);
+  const [vehicleValidationResult, setVehicleValidationResult] = useState<{
+    valid: boolean;
+    reason: string;
+    vehicle?: Vehicle;
+  } | null>(null);
+  const [showVehicleSearchModal, setShowVehicleSearchModal] = useState(false);
+  const [vehicleSearchQuery, setVehicleSearchQuery] = useState('');
+
+  // Loading Bill modal state
+  const [showLoadingBillModal, setShowLoadingBillModal] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   // Load vehicles from storage if availableVehicles is empty
   const allVehicles = useMemo(() => {
@@ -297,12 +339,179 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
     }
   }, [matchedVehicle]);
 
-  // Validation rules per step
-  const validateStep = (): { valid: boolean; error?: string } => {
+  // Validate vehicle registration against database
+  const handleValidateVehicle = (vehNoToCheck?: string) => {
+    const rawNo = (vehNoToCheck || formData.assignedVehicleNo || '').trim();
+    if (!rawNo) {
+      alert('Please enter a vehicle registration number to validate');
+      return;
+    }
+
+    const cleanInput = rawNo.toUpperCase().replace(/\s+/g, '');
+    const found = allVehicles.find(v => 
+      v.registrationNumber.toUpperCase().replace(/\s+/g, '') === cleanInput
+    );
+
+    if (!found) {
+      setVehicleValidationResult({
+        valid: false,
+        reason: `Vehicle "${rawNo}" was not found in our registered fleet list. Please search from registered vehicles list or register the vehicle first.`
+      });
+      setShowVehicleValidateModal(true);
+      return;
+    }
+
+    const stat = (found.status || 'Active').toLowerCase();
+    if (stat === 'expired' || stat === 'cancelled' || stat === 'suspended' || stat === 'inactive') {
+      setVehicleValidationResult({
+        valid: false,
+        reason: `Vehicle ${found.registrationNumber} status is ${found.status.toUpperCase()}. Expired or cancelled vehicles cannot be assigned.`,
+        vehicle: found
+      });
+      setShowVehicleValidateModal(true);
+      return;
+    }
+
+    // Check expiry date
+    if (found.validationExpiryDate) {
+      const exp = new Date(found.validationExpiryDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (exp < today) {
+        setVehicleValidationResult({
+          valid: false,
+          reason: `Vehicle ${found.registrationNumber} tax token / fitness expired on ${found.validationExpiryDate}. Vehicle must be active & valid.`,
+          vehicle: found
+        });
+        setShowVehicleValidateModal(true);
+        return;
+      }
+    }
+
+    setVehicleValidationResult({
+      valid: true,
+      reason: `Vehicle ${found.registrationNumber} is VALID & ACTIVE in registered fleet.`,
+      vehicle: found
+    });
+    setShowVehicleValidateModal(true);
+  };
+
+  const handleApplyValidatedVehicle = (veh: Vehicle) => {
+    setFormData(prev => ({
+      ...prev,
+      assignedVehicleNo: veh.registrationNumber,
+      driverName: prev.driverName || veh.driverName || '',
+      driverCnic: prev.driverCnic || veh.driverCnic || '',
+      vehicleVerifiedInDb: true
+    }));
+    setShowVehicleValidateModal(false);
+  };
+
+  const filteredVehiclesList = useMemo(() => {
+    if (!vehicleSearchQuery.trim()) return allVehicles;
+    const q = vehicleSearchQuery.toLowerCase().trim();
+    return allVehicles.filter(v => 
+      (v.registrationNumber && v.registrationNumber.toLowerCase().includes(q)) ||
+      (v.transporterName && v.transporterName.toLowerCase().includes(q)) ||
+      (v.driverName && v.driverName.toLowerCase().includes(q)) ||
+      (v.category && v.category.toLowerCase().includes(q))
+    );
+  }, [allVehicles, vehicleSearchQuery]);
+
+  const handleSelectVehicleFromList = (veh: Vehicle) => {
+    const stat = (veh.status || 'Active').toLowerCase();
+    if (stat === 'expired' || stat === 'cancelled' || stat === 'suspended' || stat === 'inactive') {
+      alert(`Cannot assign vehicle ${veh.registrationNumber}: status is ${veh.status.toUpperCase()}. Only active/valid vehicles are allowed.`);
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      assignedVehicleNo: veh.registrationNumber,
+      driverName: prev.driverName || veh.driverName || '',
+      driverCnic: prev.driverCnic || veh.driverCnic || '',
+      vehicleVerifiedInDb: true
+    }));
+    setShowVehicleSearchModal(false);
+  };
+
+  // Helper: Extract all uploaded files/receipts from step detail
+  const extractDocsFromStep = (detail: CaseStepDetail): any[] => {
+    const docs: any[] = [];
+    const addDoc = (url?: string, name?: string, type?: string) => {
+      if (url && url.trim()) {
+        docs.push({
+          id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          name: name || 'Document',
+          url: url,
+          type: type || 'Workflow Document',
+          uploadedAt: new Date().toISOString()
+        });
+      }
+    };
+
+    addDoc(detail.doReceiptUrl, detail.doReceiptName, 'Delivery Order (DO) Document');
+    addDoc(detail.tpGdPrintUrl, detail.tpGdPrintName, 'Customs TP / GD Print');
+    addDoc(detail.exciseReceiptUrl, detail.exciseReceiptName, 'Excise Payment Voucher');
+    addDoc(detail.wharfageReceiptUrl, detail.wharfageReceiptName, 'Wharfage Terminal Receipt');
+    addDoc(detail.registrationBookUrl, detail.registrationBookName, 'Vehicle Registration Book');
+    addDoc(detail.ownerCnicUrl, detail.ownerCnicName, 'Vehicle Owner CNIC');
+    addDoc(detail.driverCnicFrontUrl, detail.driverCnicFrontName, 'Driver CNIC Front');
+    addDoc(detail.driverCnicBackUrl, detail.driverCnicBackName, 'Driver CNIC Back');
+    addDoc(detail.driverLicenseUrl, detail.driverLicenseName, 'Driver Heavy License');
+    addDoc(detail.vehiclePhotoUrl, detail.vehiclePhotoName, 'Vehicle Photo at Port');
+    addDoc(detail.portGatePassUrl, detail.portGatePassName, 'Port Gate Pass Slip');
+    addDoc(detail.weightSlipUrl, detail.weightSlipName, 'Port Weight Slip');
+    addDoc(detail.sealSlipUrl, detail.sealSlipName, 'Customs Seal Slip');
+    addDoc(detail.customsSealPhotoUrl, detail.customsSealPhotoName, 'Customs Seal Photo');
+    addDoc(detail.driverGateOutPhotoUrl, detail.driverGateOutPhotoName, 'Driver Live Gate-Out Photo');
+    addDoc(detail.clientDoPhotoUrl, detail.clientDoPhotoName, 'Shipping Line DO Photo');
+    addDoc(detail.portGateArrivalPhotoUrl, detail.portGateArrivalPhotoName, 'Port Gate Arrival Photo');
+    addDoc(detail.secondaryCustomsSealPhotoUrl, detail.secondaryCustomsSealPhotoName, 'Secondary Customs Seal Photo');
+    addDoc(detail.destinationWeightSlipUrl, detail.destinationWeightSlipName, 'Destination Weighbridge Slip');
+    addDoc(detail.finalSignedTransportNoteUrl, detail.finalSignedTransportNoteName, 'Signed Consignment Transport Note');
+    addDoc(detail.dryPortGatePassUrl, detail.dryPortGatePassName, 'Dry Port Gate Pass');
+
+    if (detail.multiFiles) {
+      Object.entries(detail.multiFiles).forEach(([fieldKey, files]) => {
+        if (Array.isArray(files)) {
+          files.forEach(f => {
+            if (f.url) {
+              docs.push({
+                id: f.id || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+                name: f.name || fieldKey,
+                url: f.url,
+                type: 'Workflow Upload',
+                uploadedAt: f.uploadedAt || new Date().toISOString()
+              });
+            }
+          });
+        }
+      });
+    }
+
+    return docs;
+  };
+
+  // Strict validation rules when clicking [Completed]
+  const validateStepStrict = (): { valid: boolean; error?: string } => {
     if (normCategory === 'Bonded Carrier') {
       if (stepIndex === 0) { // Step 1: Shipping Line DO
-        if (formData.doDepositArrangedBy === 'DPL' && (!formData.doDepositCommission || formData.doDepositCommission <= 0)) {
-          return { valid: false, error: 'Compulsory Rule: Please enter the DPL Commission Amount for DO Deposit.' };
+        if (formData.doDueChargesArrangedBy === 'DPL') {
+          if (!formData.doReceiptUrl && (!formData.multiFiles || Object.keys(formData.multiFiles).length === 0)) {
+            return { valid: false, error: 'Document Required: Please upload the Delivery Order document or receipt before marking this step as completed.' };
+          }
+          if (!formData.shippingLine?.trim()) {
+            return { valid: false, error: 'Field Required: Please enter the Shipping Line name.' };
+          }
+        }
+      }
+
+      if (stepIndex === 1) { // Step 2: TP Filing
+        if (!formData.tpGdPrintUrl) {
+          return { valid: false, error: 'Document Required: Please upload Customs TP / GD Print document.' };
+        }
+        if (!formData.tpGdNumber?.trim()) {
+          return { valid: false, error: 'Field Required: Please enter the TP / GD Reference Number.' };
         }
       }
 
@@ -310,188 +519,150 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
         if (!formData.exciseRegion) {
           return { valid: false, error: 'Excise Region is mandatory. Please select a Pakistan administrative region.' };
         }
-      }
-
-      if (stepIndex === 3) { // Step 4: Wharfage Payment
-        if (formData.wharfagePaymentEntity === 'DPL' && (!formData.wharfageCommission || formData.wharfageCommission <= 0)) {
-          return { valid: false, error: 'Compulsory Rule: Please enter the DPL Commission Amount for Wharfage payment.' };
+        if (!formData.exciseReceiptUrl) {
+          return { valid: false, error: 'Receipt Required: Please upload the Provincial Excise Duty Payment voucher.' };
         }
       }
 
-      if (stepIndex === 4) { // Step 5: Vehicle Assignment
+      if (stepIndex === 3) { // Step 4: Vehicle Assignment
         if (!formData.assignedVehicleNo?.trim()) {
-          return { valid: false, error: 'Vehicle Registration Number is required.' };
+          return { valid: false, error: 'Vehicle Required: Please validate and assign a registered vehicle.' };
         }
-
-        // If not in database or missing docs, require both Registration Book and Owner CNIC
-        const hasDbDocs = matchedVehicle?.registrationBook;
-        if (!hasDbDocs && (!formData.registrationBookUrl || !formData.ownerCnicUrl)) {
-          return { 
-            valid: false, 
-            error: 'Compulsory Vehicle Lock: Vehicle registration book and owner CNIC must be uploaded before advancing.' 
-          };
+        if (!formData.driverName?.trim()) {
+          return { valid: false, error: 'Driver Name is required.' };
         }
-
-        // Dual-sided Driver CNIC compulsory
+        if (!formData.driverCnic?.trim()) {
+          return { valid: false, error: 'Driver CNIC Number is required.' };
+        }
         if (!formData.driverCnicFrontUrl || !formData.driverCnicBackUrl) {
-          return {
-            valid: false,
-            error: 'Compulsory Driver Verification: Dual-sided Driver CNIC (Front & Back) uploads are required.'
-          };
+          return { valid: false, error: 'Driver CNIC Verification: Dual-sided Driver CNIC (Front & Back) uploads are compulsory.' };
         }
-
-        if (formData.vehicleRentArrangedBy === 'DPL' && (!formData.vehicleRentCommission || formData.vehicleRentCommission <= 0)) {
-          return { valid: false, error: 'Compulsory Rule: Please enter DPL Commission Amount for Vehicle Rent.' };
+        if (formData.vehicleRentArrangedBy === 'DPL' && (!formData.vehicleRentAmount || Number(formData.vehicleRentAmount) <= 0)) {
+          return { valid: false, error: 'Vehicle Rent Amount (PKR) is required when arranged by DPL.' };
         }
       }
 
-      if (stepIndex === 5) { // Step 6: Loading Port Processing
-        if (stepAction === 'advance') {
-          if (!formData.customsSealPhotoUrl || !formData.customsSealNumber?.trim()) {
-            return { valid: false, error: 'Customs Seal Verification Required: Both Customs Seal Photo and Customs Seal Number are mandatory.' };
-          }
-          if (!formData.gateOutToggled) {
-            return { valid: false, error: 'Completion Criteria: Step 6 requires Gate Out status to be verified.' };
-          }
-          if (!formData.driverGateOutPhotoUrl) {
-            return { valid: false, error: 'Completion Criteria: Driver Live Picture at Gate Out is compulsory.' };
-          }
+      if (stepIndex === 4) { // Step 5: Loading Port Processing
+        if (!formData.portGatePassUrl) {
+          return { valid: false, error: 'Port Gate Pass upload is required before completing loading step.' };
         }
-        if (formData.loadingChargesArrangedBy === 'DPL' && (!formData.loadingChargesCommission || formData.loadingChargesCommission <= 0)) {
-          return { valid: false, error: 'Compulsory Rule: Please enter DPL Commission Amount for Loading Charges.' };
+        if (!formData.vehiclePhotoUrl) {
+          return { valid: false, error: 'Vehicle Photo at Port is required before completing loading step.' };
+        }
+        if (!formData.customsSealPhotoUrl || !formData.customsSealNumber?.trim()) {
+          return { valid: false, error: 'Customs Seal Verification Required: Both Customs Seal Photo and Customs Seal Number are mandatory.' };
+        }
+        if (!formData.gateOutToggled) {
+          return { valid: false, error: 'Completion Criteria: Step requires Port Gate Out status to be confirmed.' };
+        }
+        if (!formData.driverGateOutPhotoUrl) {
+          return { valid: false, error: 'Completion Criteria: Driver Live Picture at Gate Out is compulsory.' };
         }
       }
 
-      if (stepIndex === 7) { // Step 8: Destination Port Arrival
-        if (stepAction === 'advance') {
-          if (!formData.secondaryCustomsSealPhotoUrl || !formData.secondaryCustomsSealNumber?.trim()) {
-            return { valid: false, error: 'Customs Seal Verification Required: Both Secondary Customs Seal Photo and Customs Seal Number are mandatory.' };
-          }
+      if (stepIndex === 6) { // Step 7: Destination Port Arrival
+        if (!formData.secondaryCustomsSealPhotoUrl || !formData.secondaryCustomsSealNumber?.trim()) {
+          return { valid: false, error: 'Customs Seal Verification Required: Both Secondary Customs Seal Photo and Customs Seal Number are mandatory.' };
+        }
+        if (!formData.vehicleGateOutToggled) {
+          return { valid: false, error: 'Destination Completion: Please confirm vehicle gate out & offloading.' };
         }
       }
     }
 
     if (normCategory === 'Import & Export Services') {
-      if (stepAction === 'advance') {
-        if (stepIndex === 0 && !formData.croBookingNumber?.trim()) {
-          return { valid: false, error: 'Container Booking (CRO) reference number is required before advancing.' };
-        }
-        if (stepIndex === 1 && (!formData.vesselName?.trim() || !formData.shippingLineName?.trim())) {
-          return { valid: false, error: 'Vessel Name and Ocean Shipping Line are required before advancing.' };
-        }
-        if (stepIndex === 2 && !formData.assignedTrailerNo?.trim()) {
-          return { valid: false, error: 'Inland Trailer Registration Number is required before advancing.' };
-        }
-        if (stepIndex === 3 && (!formData.vgmWeightKg || formData.vgmWeightKg <= 0)) {
-          return { valid: false, error: 'SOLAS Verified Gross Mass (VGM Weight in Kg) is required before advancing.' };
-        }
-        if (stepIndex === 4 && !formData.exportCustomsGdNo?.trim()) {
-          return { valid: false, error: 'Port Customs Goods Declaration (GD) Number is required before advancing.' };
-        }
-        if (stepIndex === 5 && !formData.billOfLadingNo?.trim()) {
-          return { valid: false, error: 'Ocean Bill of Lading (B/L) Number is required before advancing.' };
-        }
-        if (stepIndex === 6 && !formData.destinationDoNumber?.trim()) {
-          return { valid: false, error: 'Destination Delivery Order (DO) Number is required before advancing.' };
-        }
-        if (stepIndex === 7 && !formData.allChargesSettledVerified) {
-          return { valid: false, error: 'Please confirm that all shipping line, port, and demurrage charges are settled before finalizing.' };
-        }
+      if (stepIndex === 0 && !formData.croBookingNumber?.trim()) {
+        return { valid: false, error: 'Container Booking (CRO) reference number is required before completing.' };
+      }
+      if (stepIndex === 1 && (!formData.vesselName?.trim() || !formData.shippingLineName?.trim())) {
+        return { valid: false, error: 'Vessel Name and Ocean Shipping Line are required before completing.' };
+      }
+      if (stepIndex === 2 && !formData.assignedTrailerNo?.trim()) {
+        return { valid: false, error: 'Inland Trailer Registration Number is required before completing.' };
+      }
+      if (stepIndex === 3 && (!formData.vgmWeightKg || formData.vgmWeightKg <= 0)) {
+        return { valid: false, error: 'SOLAS Verified Gross Mass (VGM Weight in Kg) is required before completing.' };
+      }
+      if (stepIndex === 4 && !formData.exportCustomsGdNo?.trim()) {
+        return { valid: false, error: 'Port Customs Goods Declaration (GD) Number is required before completing.' };
+      }
+      if (stepIndex === 5 && !formData.billOfLadingNo?.trim()) {
+        return { valid: false, error: 'Ocean Bill of Lading (B/L) Number is required before completing.' };
       }
     }
 
     return { valid: true };
   };
 
-  // Helper: Synchronize all DPL expenses and commissions to targetCase.charges
+  // Helper: Synchronize all DPL expenses to targetCase.charges (Zero commission per user mandate)
   const syncDplExpensesToInvoice = (currentCase: Case, updatedDetail: CaseStepDetail): CaseCharge[] => {
     const existingCharges = [...(currentCase.charges || [])];
     
     // Key-value pairs of DPL items for this step
-    const dplItemsToSync: Array<{ key: string; label: string; amount: number; commission: number; receiptUrl?: string; receiptName?: string }> = [];
+    const dplItemsToSync: Array<{ key: string; label: string; amount: number; receiptUrl?: string; receiptName?: string }> = [];
 
     const activeStepId = categoryWorkflow.steps[stepIndex]?.id || String(stepStatus);
-    const isDoStep = stepIndex === 0 || activeStepId === 'DELIVERY_ORDER' || updatedDetail.doDueChargesArrangedBy !== undefined;
-    const isExciseStep = stepIndex === 2 || activeStepId === 'SINDH_EXCISE' || updatedDetail.exciseHandledBy !== undefined;
-    const isWharfageStep = stepIndex === 3 || activeStepId === 'PORT_TERMINAL' || updatedDetail.wharfagePaymentEntity !== undefined;
-    const isVehicleStep = stepIndex === 4 || activeStepId === 'TRANSPORTER' || updatedDetail.vehicleRentArrangedBy !== undefined;
-    const isTrackerStep = stepIndex === 5 || activeStepId === 'CUSTOMS_GATE' || updatedDetail.trackerArrangedBy !== undefined;
+    const isDoStep = stepIndex === 0 || activeStepId === 'DELIVERY_ORDER' || activeStepId === CaseStatus.SHIPPING_LINE_DO;
+    const isExciseStep = stepIndex === 2 || activeStepId === 'SINDH_EXCISE' || activeStepId === CaseStatus.EXCISE_PAYMENT;
+    const isVehicleStep = stepIndex === 3 || activeStepId === 'TRANSPORTER' || activeStepId === CaseStatus.VEHICLE_ASSIGNMENT;
+    const isLoadingStep = stepIndex === 4 || activeStepId === 'CUSTOMS_GATE' || activeStepId === CaseStatus.LOADING_PORT_PROCESSING;
 
-    if (isDoStep) { // DO Due Charges & Security Deposit
-      if (updatedDetail.doDueChargesArrangedBy === 'DPL' && Number(updatedDetail.doDueChargesAmount) > 0) {
+    if (isDoStep) {
+      if ((updatedDetail.doDueChargesArrangedBy === 'DPL' || updatedDetail.doChargesPaidByDpl) && Number(updatedDetail.doDueChargesAmount) > 0) {
         dplItemsToSync.push({
           key: 'dpl_do_due_charges',
           label: 'DO Due Charges (DPL Arranged)',
           amount: Number(updatedDetail.doDueChargesAmount),
-          commission: 0, // No commission for DO Due Charges
           receiptUrl: updatedDetail.doReceiptUrl,
           receiptName: updatedDetail.doReceiptName
         });
       }
-      if (updatedDetail.doDepositArrangedBy === 'DPL' && Number(updatedDetail.doDepositAmount) > 0) {
+      if ((updatedDetail.doDepositArrangedBy === 'DPL' || updatedDetail.doDepositPaidByDpl) && Number(updatedDetail.doDepositAmount) > 0) {
         dplItemsToSync.push({
           key: 'dpl_do_deposit',
           label: 'DO Security Deposit (DPL Arranged)',
           amount: Number(updatedDetail.doDepositAmount),
-          commission: Number(updatedDetail.doDepositCommission) || 0,
           receiptUrl: updatedDetail.doReceiptUrl,
           receiptName: updatedDetail.doReceiptName
         });
       }
     }
 
-    if (isExciseStep) { // Excise Payment
+    if (isExciseStep) {
       if (updatedDetail.exciseHandledBy === 'DPL' && Number(updatedDetail.exciseAmount) > 0) {
         dplItemsToSync.push({
           key: 'dpl_excise',
           label: `Excise Duty Payment (${updatedDetail.exciseRegion || 'Sindh'}) (DPL Arranged)`,
           amount: Number(updatedDetail.exciseAmount),
-          commission: 0,
           receiptUrl: updatedDetail.exciseReceiptUrl,
           receiptName: updatedDetail.exciseReceiptName
         });
       }
     }
 
-    if (isWharfageStep) { // Wharfage Terminal Payment
-      if (updatedDetail.wharfagePaymentEntity === 'DPL' && Number(updatedDetail.wharfageAmount) > 0) {
-        dplItemsToSync.push({
-          key: 'dpl_wharfage',
-          label: 'Wharfage Terminal Payment (DPL Arranged)',
-          amount: Number(updatedDetail.wharfageAmount),
-          commission: Number(updatedDetail.wharfageCommission) || 0,
-          receiptUrl: updatedDetail.wharfageReceiptUrl,
-          receiptName: updatedDetail.wharfageReceiptName
-        });
-      }
-    }
-
-    if (isVehicleStep) { // Vehicle Rent
+    if (isVehicleStep) {
       if (updatedDetail.vehicleRentArrangedBy === 'DPL' && Number(updatedDetail.vehicleRentAmount) > 0) {
         dplItemsToSync.push({
           key: 'dpl_vehicle_rent',
           label: 'Vehicle Freight / Rent (DPL Arranged)',
-          amount: Number(updatedDetail.vehicleRentAmount),
-          commission: Number(updatedDetail.vehicleRentCommission) || 0
+          amount: Number(updatedDetail.vehicleRentAmount)
         });
       }
     }
 
-    if (isTrackerStep) { // Tracker & Loading
+    if (isLoadingStep) {
       if (updatedDetail.trackerArrangedBy === 'DPL' && Number(updatedDetail.trackerAmount) > 0) {
         dplItemsToSync.push({
           key: 'dpl_tracker',
           label: 'Tracking Device Fee (DPL Arranged)',
-          amount: Number(updatedDetail.trackerAmount),
-          commission: 0 // Only Tracker Cost, NO commission
+          amount: Number(updatedDetail.trackerAmount)
         });
       }
       if (updatedDetail.loadingChargesArrangedBy === 'DPL' && Number(updatedDetail.loadingChargesAmount) > 0) {
         dplItemsToSync.push({
           key: 'dpl_loading',
           label: 'Port Loading Charges (DPL Arranged)',
-          amount: Number(updatedDetail.loadingChargesAmount),
-          commission: Number(updatedDetail.loadingChargesCommission) || 0
+          amount: Number(updatedDetail.loadingChargesAmount)
         });
       }
     }
@@ -502,7 +673,6 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
         key: 'dpl_ie_trucking',
         label: 'Inland Drayage / Haulage (DPL Arranged)',
         amount: Number(updatedDetail.truckingChargesAmount),
-        commission: 0,
         receiptUrl: updatedDetail.truckingWaybillUrl,
         receiptName: updatedDetail.truckingWaybillName
       });
@@ -512,31 +682,27 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
         key: 'dpl_ie_dest_charges',
         label: 'Destination Ocean & Port Charges (DPL Arranged)',
         amount: Number(updatedDetail.destinationChargesAmount),
-        commission: 0,
         receiptUrl: updatedDetail.destinationDoDocUrl,
         receiptName: updatedDetail.destinationDoDocName
       });
     }
 
-    // Keys to clean up old items if switched back to Client
+    // Clean up old items for this step
     const keysToClean: string[] = [];
     if (isDoStep) keysToClean.push('dpl_do_due_charges', 'dpl_do_deposit');
     if (isExciseStep) keysToClean.push('dpl_excise');
-    if (isWharfageStep) keysToClean.push('dpl_wharfage');
     if (isVehicleStep) keysToClean.push('dpl_vehicle_rent');
-    if (isTrackerStep) keysToClean.push('dpl_tracker', 'dpl_loading');
+    if (isLoadingStep) keysToClean.push('dpl_tracker', 'dpl_loading');
     if (updatedDetail.truckingArrangedBy === 'Client') keysToClean.push('dpl_ie_trucking');
     if (updatedDetail.destinationChargesArrangedBy === 'Client') keysToClean.push('dpl_ie_dest_charges');
     
-    // Filter out previous auto-generated items for this step
     let filtered = existingCharges.filter(c => {
       const matchKey = keysToClean.some(k => (c as any).syncKey === k || (c as any).syncKey === `${k}_comm`);
       return !matchKey;
     });
 
-    // Append newly active items
+    // Append newly active items (zero commission)
     dplItemsToSync.forEach(item => {
-      // 1. Base expense
       filtered.push({
         id: `chg_${item.key}_${Date.now()}`,
         description: item.label,
@@ -548,49 +714,34 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
         arrangedBy: 'DPL',
         ...({ syncKey: item.key } as any)
       });
-
-      // 2. Compulsory Commission
-      if (item.commission > 0) {
-        filtered.push({
-          id: `chg_${item.key}_comm_${Date.now()}`,
-          description: `${item.label} - DPL Service Commission`,
-          category: 'Service Commission',
-          amount: item.commission,
-          taxable: true,
-          arrangedBy: 'DPL',
-          ...({ syncKey: `${item.key}_comm` } as any)
-        });
-      }
     });
 
     return filtered;
   };
 
-  const handleSave = () => {
-    const validation = validateStep();
-    if (!validation.valid) {
-      alert(validation.error);
-      return;
+  const handleSave = (isCompleting: boolean) => {
+    if (isCompleting) {
+      const validation = validateStepStrict();
+      if (!validation.valid) {
+        alert(validation.error);
+        return;
+      }
     }
 
     const currentWorkflow = targetCase.workflowDetails || {};
     let finalStatus = targetCase.status;
     let isCompleted = false;
 
-    if (stepAction === 'set_current') {
-      finalStatus = stepStatus;
-      isCompleted = false;
-    } else if (stepAction === 'advance') {
+    if (isCompleting) {
       isCompleted = true;
       const totalSteps = categoryWorkflow.totalSteps;
       if (stepIndex < totalSteps - 1) {
         finalStatus = categoryWorkflow.steps[stepIndex + 1].id as any;
       } else {
-        // Final step complete -> marks entire workflow completed
         finalStatus = CaseStatus.COMPLETED;
       }
     } else {
-      isCompleted = stepIndex <= activeStepIdx;
+      isCompleted = false;
     }
 
     // Final step completion trigger
@@ -606,12 +757,12 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
       updatedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    // Calculate updated billable charges based on Global Financial Rule
+    // Calculate updated billable charges
     const updatedCharges = syncDplExpensesToInvoice(targetCase, updatedStepDetail);
 
-    // Update container with vehicle & driver if assigned in step 5
+    // Update container with vehicle & driver if assigned in Vehicle Assignment
     let updatedContainers = targetCase.containers ? [...targetCase.containers] : [];
-    if (stepIndex === 4 && formData.assignedVehicleNo) {
+    if ((stepIndex === 3 || stepStatus === CaseStatus.VEHICLE_ASSIGNMENT) && formData.assignedVehicleNo) {
       updatedContainers = updatedContainers.map(c => ({
         ...c,
         vehicleNo: formData.assignedVehicleNo,
@@ -620,11 +771,21 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
       }));
     }
 
+    // Extract all uploaded step files/receipts and merge into targetCase.documents
+    const stepDocs = extractDocsFromStep(updatedStepDetail);
+    const existingDocs = [...(targetCase.documents || [])];
+    stepDocs.forEach(newDoc => {
+      if (!existingDocs.some((d: any) => d.url === newDoc.url || (d.name === newDoc.name && d.name !== 'Document'))) {
+        existingDocs.push(newDoc);
+      }
+    });
+
     const updatedCase: Case = {
       ...targetCase,
       status: finalStatus,
       charges: updatedCharges,
       containers: updatedContainers,
+      documents: existingDocs,
       workflowDetails: {
         ...currentWorkflow,
         [stepStatus]: updatedStepDetail
@@ -695,7 +856,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/80 z-[110] flex items-center justify-center p-3 sm:p-5 backdrop-blur-md no-print"
+      className="fixed inset-0 bg-black/80 z-[110] flex items-start justify-center pt-4 sm:pt-8 p-3 sm:p-5 backdrop-blur-md overflow-y-auto no-print"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -780,7 +941,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                   <strong>Restricted Operational Stage:</strong> You are logged in as <strong>{userRole}</strong>. This stage is editable by authorized role personnel or Case Manager/Admin.
                 </span>
               </div>
-              {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.DESTINATION_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
+              {isDestinationUnloadedAndGateOut(targetCase) && (userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.DESTINATION_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
                 <button
                   type="button"
                   onClick={() => downloadCustomsDeliveryOrderPdf({ targetCase })}
@@ -968,195 +1129,267 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
           {/* STEP 1: SHIPPING LINE DO */}
           {stepIndex === 0 && (
             <div className="space-y-4">
-              {/* Client-Arranged vs DPL-Arranged Operational Rule Card */}
-              {formData.doDueChargesArrangedBy === 'Client' ? (
-                <div className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/30 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sky-400 font-bold text-sm">
-                      <User size={16} />
-                      <span>Shipping Line DO: Arranged Directly by Client</span>
-                    </div>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                      Client Responsibility
-                    </span>
-                  </div>
-                  <p className="text-xs text-sky-200/90 leading-relaxed">
-                    Client manages and settles DO charges directly with the shipping line. DPL operational staff is not required to deposit funds or make payments at this stage.
-                  </p>
-                  <div className="p-3 rounded-xl bg-black/40 border border-sky-500/20 text-xs text-gray-300 space-y-1">
-                    <span className="font-semibold text-amber-300 flex items-center gap-1.5">
-                      <AlertCircle size={13} /> Loading Port Handover Rule:
-                    </span>
-                    <p className="text-[11px] text-gray-300">
-                      During <strong>Step 6: Loading Port Processing</strong>, loading staff will simply upload the physical DO picture, specify whose name the DO was issued in, and enter the shipping line name.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-3 text-xs">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
-                    <span className="text-emerald-300 font-medium">
-                      <strong>Arranged by DPL:</strong> Case Manager, Admin, or Operations Manager handles DO payment receipts & refundable security deposit.
-                    </span>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                    DPL Managed
-                  </span>
-                </div>
-              )}
-
-              {/* Receipt Upload/Download */}
-              <WorkflowMultiUploader
-                label="DO Receipt Document"
-                sublabel="Upload official delivery order payment receipt (Supports multi-page, camera capture, replace & remove)"
-                urlField="doReceiptUrl"
-                nameField="doReceiptName"
-                formData={formData}
-                setFormData={setFormData}
-                onPreview={setActivePdfPreview}
-              />
-
-              {/* Reference & Date */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-gray-300 block mb-1.5">DO Reference Number</label>
-                  <input 
-                    type="text"
-                    value={formData.doReferenceNo}
-                    onChange={(e) => setFormData({ ...formData, doReferenceNo: e.target.value, referenceNo: e.target.value })}
-                    placeholder="e.g. DO-HAPAG-98212"
-                    className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="font-semibold text-gray-300 block mb-1.5">DO Issue Date</label>
-                  <input 
-                    type="date"
-                    value={formData.doIssueDate}
-                    onChange={(e) => setFormData({ ...formData, doIssueDate: e.target.value, date: e.target.value })}
-                    className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white"
-                  />
-                </div>
-              </div>
-
-              {/* Global Financial Rule: DO Due Charges */}
+              {/* Top Choice: Arrange by DPL vs Arrange by Client */}
               <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white text-sm">DO Due Charges</span>
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <span className="font-bold text-white text-sm block">Shipping Line DO Arrangement</span>
+                    <span className="text-gray-400 text-xs">Select whether Delivery Order is arranged by DPL or directly by client</span>
+                  </div>
                   <div className="flex rounded-xl bg-slate-800 p-1 border border-white/10">
                     <button
                       type="button"
-                      onClick={() => setFormData({ ...formData, doDueChargesArrangedBy: 'Client' })}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        formData.doDueChargesArrangedBy === 'Client' ? 'bg-brand-600 text-white shadow' : 'text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      Arranged by Client
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, doDueChargesArrangedBy: 'DPL' })}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      onClick={() => setFormData(prev => ({ ...prev, doDueChargesArrangedBy: 'DPL' }))}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                         formData.doDueChargesArrangedBy === 'DPL' ? 'bg-emerald-600 text-white shadow' : 'text-gray-400 hover:text-white'
                       }`}
                     >
-                      Arranged by DPL
-                    </button>
-                  </div>
-                </div>
-
-                {formData.doDueChargesArrangedBy === 'DPL' ? (
-                  <div className="pt-1 animate-fade-in">
-                    <label className="text-emerald-400 block mb-1 text-xs font-semibold">DPL Due Charges Amount (PKR)</label>
-                    <input 
-                      type="number"
-                      value={formData.doDueChargesAmount || ''}
-                      onChange={(e) => setFormData({ ...formData, doDueChargesAmount: Number(e.target.value) })}
-                      placeholder="Enter amount..."
-                      className="w-full bg-slate-800 border border-emerald-500/40 rounded-xl px-3 py-2 text-white font-mono text-sm focus:border-emerald-400 outline-none"
-                    />
-                    <span className="text-[10px] text-emerald-400 mt-1 block">
-                      Auto-appends DO Due Charges directly to client's final invoice.
-                    </span>
-                  </div>
-                ) : (
-                  <div className="pt-1 text-xs text-sky-400/80 flex items-center justify-between bg-black/20 p-2.5 rounded-xl border border-white/5">
-                    <div className="flex items-center gap-1.5">
-                      <User size={13} className="text-sky-400" />
-                      <span className="text-sky-300 font-medium">Client settles DO due charges directly</span>
-                    </div>
-                    <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded">
-                      ⊘ Excluded from Invoice
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Global Financial Rule: DO Deposit */}
-              <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white text-sm">DO Security Deposit</span>
-                  <div className="flex rounded-xl bg-slate-800 p-1 border border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, doDepositArrangedBy: 'Client' })}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        formData.doDepositArrangedBy === 'Client' ? 'bg-brand-600 text-white shadow' : 'text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      Arranged by Client
+                      Arrange by DPL
                     </button>
                     <button
                       type="button"
-                      onClick={() => setFormData({ ...formData, doDepositArrangedBy: 'DPL' })}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        formData.doDepositArrangedBy === 'DPL' ? 'bg-emerald-600 text-white shadow' : 'text-gray-400 hover:text-white'
+                      onClick={() => setFormData(prev => ({ ...prev, doDueChargesArrangedBy: 'Client' }))}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        formData.doDueChargesArrangedBy === 'Client' ? 'bg-brand-600 text-white shadow' : 'text-gray-400 hover:text-white'
                       }`}
                     >
-                      Arranged by DPL
+                      Arrange by Client
                     </button>
                   </div>
                 </div>
+              </div>
 
-                {formData.doDepositArrangedBy === 'DPL' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 animate-fade-in">
-                    <div>
-                      <label className="text-gray-400 block mb-1 text-xs">Deposit Amount (PKR)</label>
-                      <input 
-                        type="number"
-                        value={formData.doDepositAmount || ''}
-                        onChange={(e) => setFormData({ ...formData, doDepositAmount: Number(e.target.value) })}
-                        placeholder="0"
-                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
-                      />
+              {formData.doDueChargesArrangedBy === 'Client' ? (
+                /* Arranged by Client view */
+                <div className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sky-400 font-bold text-sm">
+                      <User size={16} />
+                      <span>Arranged by Client</span>
                     </div>
-
-                    <div className="animate-fade-in">
-                      <label className="text-emerald-400 font-bold block mb-1 text-xs flex items-center gap-1">
-                        <Sparkles size={13} /> DPL Commission Amount (Compulsory)
-                      </label>
-                      <input 
-                        type="number"
-                        value={formData.doDepositCommission || ''}
-                        onChange={(e) => setFormData({ ...formData, doDepositCommission: Number(e.target.value) })}
-                        placeholder="e.g. 3000"
-                        className="w-full bg-emerald-950/40 border border-emerald-500/50 rounded-xl px-3 py-2 text-emerald-200 font-mono font-bold"
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="pt-1 text-xs text-sky-400/80 flex items-center justify-between bg-black/20 p-2.5 rounded-xl border border-white/5">
-                    <div className="flex items-center gap-1.5">
-                      <User size={13} className="text-sky-400" />
-                      <span className="text-sky-300 font-medium">Client deposits security guarantee directly</span>
-                    </div>
-                    <span className="text-[10px] text-gray-400 font-medium bg-white/5 px-2 py-0.5 rounded">
-                      ⊘ Excluded from Invoice
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                      Client / Loading Staff Updatable
                     </span>
                   </div>
-                )}
-              </div>
+                  <p className="text-xs text-sky-200/90 leading-relaxed">
+                    Client has been notified to provide and settle DO documents directly with the shipping line.
+                  </p>
+                  <div className="p-3 rounded-xl bg-black/40 border border-sky-500/20 text-xs text-gray-300">
+                    <p className="text-[11px] text-gray-300">
+                      <strong>Port Operations Handover:</strong> Loading port staff can also open this container and update the DO workflow when receiving physical documents at port.
+                    </p>
+                  </div>
+
+                  <WorkflowMultiUploader
+                    label="Delivery Order Document (Optional / If received)"
+                    sublabel="Upload or take photo of DO document received from client"
+                    urlField="doReceiptUrl"
+                    nameField="doReceiptName"
+                    allowCamera={true}
+                    formData={formData}
+                    setFormData={setFormData}
+                    onPreview={setActivePdfPreview}
+                  />
+                </div>
+              ) : (
+                /* Arranged by DPL view */
+                <div className="space-y-4">
+                  {/* DO Document Upload Button right AT THE TOP */}
+                  <WorkflowMultiUploader
+                    label="Delivery Order Document(s) *"
+                    sublabel="Upload physical DO document / payment receipt (Supports multiple files, camera capture & PDF)"
+                    urlField="doReceiptUrl"
+                    nameField="doReceiptName"
+                    allowCamera={true}
+                    formData={formData}
+                    setFormData={(updater: any) => {
+                      setFormData(prev => {
+                        const updated = typeof updater === 'function' ? updater(prev) : updater;
+                        if (!updated.doIssueDate) {
+                          updated.doIssueDate = new Date().toISOString().split('T')[0];
+                        }
+                        const docName = (updated.doReceiptName || '').toLowerCase();
+                        if (docName.includes('maersk') && !updated.shippingLine) updated.shippingLine = 'Maersk Line';
+                        else if (docName.includes('msc') && !updated.shippingLine) updated.shippingLine = 'MSC';
+                        else if (docName.includes('hapag') && !updated.shippingLine) updated.shippingLine = 'Hapag-Lloyd';
+                        else if (docName.includes('cosco') && !updated.shippingLine) updated.shippingLine = 'COSCO Shipping';
+                        else if (docName.includes('cma') && !updated.shippingLine) updated.shippingLine = 'CMA CGM';
+                        else if (docName.includes('one') && !updated.shippingLine) updated.shippingLine = 'ONE';
+                        return updated;
+                      });
+                    }}
+                    onPreview={setActivePdfPreview}
+                  />
+
+                  {/* The 6 clean simple fields with Paid by DPL checkboxes */}
+                  <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
+                    <span className="font-bold text-white text-xs uppercase tracking-wider block">
+                      Delivery Order Particulars:
+                    </span>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* 1. Shipping Line */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="font-semibold text-gray-300 text-xs">Shipping Line</label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-semibold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.shippingLinePaidByDpl ?? true}
+                              onChange={(e) => setFormData({ ...formData, shippingLinePaidByDpl: e.target.checked })}
+                              className="accent-emerald-500 rounded"
+                            />
+                            <span>Paid by DPL</span>
+                          </label>
+                        </div>
+                        <input
+                          type="text"
+                          list="shippingLineOptionsList"
+                          value={formData.shippingLine || ''}
+                          onChange={(e) => setFormData({ ...formData, shippingLine: e.target.value })}
+                          placeholder="e.g. Maersk Line, MSC, Hapag-Lloyd"
+                          className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
+                        />
+                        <datalist id="shippingLineOptionsList">
+                          <option value="Maersk Line" />
+                          <option value="MSC (Mediterranean Shipping Company)" />
+                          <option value="CMA CGM" />
+                          <option value="COSCO Shipping Lines" />
+                          <option value="Hapag-Lloyd" />
+                          <option value="ONE (Ocean Network Express)" />
+                          <option value="Evergreen Marine" />
+                          <option value="OOCL" />
+                          <option value="Yang Ming" />
+                          <option value="Wan Hai Lines" />
+                          <option value="Hyundai Merchant Marine (HMM)" />
+                          <option value="PIL (Pacific International Lines)" />
+                        </datalist>
+                      </div>
+
+                      {/* 2. Shipping Agent */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="font-semibold text-gray-300 text-xs">Shipping Agent</label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-semibold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.shippingAgentPaidByDpl ?? true}
+                              onChange={(e) => setFormData({ ...formData, shippingAgentPaidByDpl: e.target.checked })}
+                              className="accent-emerald-500 rounded"
+                            />
+                            <span>Paid by DPL</span>
+                          </label>
+                        </div>
+                        <input
+                          type="text"
+                          value={formData.shippingAgent || ''}
+                          onChange={(e) => setFormData({ ...formData, shippingAgent: e.target.value })}
+                          placeholder="e.g. Marine Services / Greenpak"
+                          className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
+                        />
+                      </div>
+
+                      {/* 3. DO Deposit */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="font-semibold text-gray-300 text-xs">DO Deposit (PKR)</label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-semibold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.doDepositPaidByDpl ?? (formData.doDepositArrangedBy === 'DPL')}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setFormData({ 
+                                  ...formData, 
+                                  doDepositPaidByDpl: checked,
+                                  doDepositArrangedBy: checked ? 'DPL' : 'Client' 
+                                });
+                              }}
+                              className="accent-emerald-500 rounded"
+                            />
+                            <span>Paid by DPL</span>
+                          </label>
+                        </div>
+                        <input
+                          type="number"
+                          value={formData.doDepositAmount || ''}
+                          onChange={(e) => setFormData({ ...formData, doDepositAmount: Number(e.target.value) })}
+                          placeholder="0"
+                          className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-xs"
+                        />
+                        <span className="text-[10px] text-gray-500 block">Refundable container security guarantee</span>
+                      </div>
+
+                      {/* 4. DO Charges */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="font-semibold text-gray-300 text-xs">DO Charges (PKR)</label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-semibold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.doChargesPaidByDpl ?? (formData.doDueChargesArrangedBy === 'DPL')}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setFormData({ 
+                                  ...formData, 
+                                  doChargesPaidByDpl: checked,
+                                  doDueChargesArrangedBy: checked ? 'DPL' : 'Client'
+                                });
+                              }}
+                              className="accent-emerald-500 rounded"
+                            />
+                            <span>Paid by DPL</span>
+                          </label>
+                        </div>
+                        <input
+                          type="number"
+                          value={formData.doDueChargesAmount || ''}
+                          onChange={(e) => setFormData({ ...formData, doDueChargesAmount: Number(e.target.value) })}
+                          placeholder="0"
+                          className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-xs"
+                        />
+                        <span className="text-[10px] text-gray-500 block">Shipping line document & release charges</span>
+                      </div>
+
+                      {/* 5. Container Rental Period */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="font-semibold text-gray-300 text-xs">Container Rental Period (Days)</label>
+                          <label className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-semibold cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.containerRentalPaidByDpl ?? true}
+                              onChange={(e) => setFormData({ ...formData, containerRentalPaidByDpl: e.target.checked })}
+                              className="accent-emerald-500 rounded"
+                            />
+                            <span>Paid by DPL</span>
+                          </label>
+                        </div>
+                        <input
+                          type="text"
+                          value={formData.containerRentalPeriod || ''}
+                          onChange={(e) => setFormData({ ...formData, containerRentalPeriod: e.target.value })}
+                          placeholder="e.g. 14 Days"
+                          className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
+                        />
+                        <span className="text-[10px] text-gray-500 block">Free detention & allowable rental period</span>
+                      </div>
+
+                      {/* 6. DO Date */}
+                      <div className="space-y-1.5">
+                        <label className="font-semibold text-gray-300 text-xs block">DO Date</label>
+                        <input
+                          type="date"
+                          value={formData.doIssueDate || new Date().toISOString().split('T')[0]}
+                          onChange={(e) => setFormData({ ...formData, doIssueDate: e.target.value, date: e.target.value })}
+                          className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs"
+                        />
+                        <span className="text-[10px] text-emerald-400 block">Auto-filled with today's date</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1341,98 +1574,15 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
             </div>
           )}
 
-          {/* STEP 4: WHARFAGE PAYMENT */}
-          {stepIndex === 3 && (
-            <div className="space-y-4">
-              {/* Wharfage Receipt at the top */}
-              <WorkflowMultiUploader
-                label="Wharfage Terminal Receipt"
-                sublabel="Upload port/terminal wharfage payment voucher (Supports multi-page, camera capture, replace & remove)"
-                urlField="wharfageReceiptUrl"
-                nameField="wharfageReceiptName"
-                formData={formData}
-                setFormData={setFormData}
-                onPreview={setActivePdfPreview}
-              />
-
-              {/* Receipt Details & Payment Entity */}
-              <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white text-sm">Wharfage Payment Particulars</span>
-                  <div className="flex rounded-xl bg-slate-800 p-1 border border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, wharfagePaymentEntity: 'Client' })}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        formData.wharfagePaymentEntity === 'Client' ? 'bg-brand-600 text-white shadow' : 'text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      Paid by Client
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, wharfagePaymentEntity: 'DPL' })}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        formData.wharfagePaymentEntity === 'DPL' ? 'bg-emerald-600 text-white shadow' : 'text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      Paid by DPL
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="text-gray-400 block mb-1">Wharfage Paid Amount (PKR)</label>
-                    <input 
-                      type="number"
-                      value={formData.wharfageAmount || ''}
-                      onChange={(e) => setFormData({ ...formData, wharfageAmount: Number(e.target.value) })}
-                      placeholder="0"
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-400 block mb-1">Receipt Date</label>
-                    <input 
-                      type="date"
-                      value={formData.wharfageReceiptDate}
-                      onChange={(e) => setFormData({ ...formData, wharfageReceiptDate: e.target.value, date: e.target.value })}
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white"
-                    />
-                  </div>
-                </div>
-
-                {formData.wharfagePaymentEntity === 'DPL' && (
-                  <div className="animate-fade-in pt-2 border-t border-white/5">
-                    <label className="text-emerald-400 font-bold block mb-1 flex items-center gap-1">
-                      <Sparkles size={13} /> DPL Commission Amount (Compulsory)
-                    </label>
-                    <input 
-                      type="number"
-                      value={formData.wharfageCommission || ''}
-                      onChange={(e) => setFormData({ ...formData, wharfageCommission: Number(e.target.value) })}
-                      placeholder="e.g. 2500"
-                      className="w-full bg-emerald-950/40 border border-emerald-500/50 rounded-xl px-3 py-2 text-emerald-200 font-mono font-bold"
-                    />
-                    <span className="text-[10px] text-gray-400 mt-1 block">
-                      Auto-appends wharfage payment + commission into client billable invoice.
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* STEP 5: VEHICLE ASSIGNMENT */}
-          {stepIndex === 4 && (
+          {/* STEP 4: VEHICLE ASSIGNMENT (STEP INDEX 3) */}
+          {(stepIndex === 3 || stepStatus === CaseStatus.VEHICLE_ASSIGNMENT) && (
             <div className="space-y-4">
               {/* Vehicle Registration & DB Verification */}
               <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="font-bold text-white text-sm flex items-center gap-2">
                     <Truck size={16} className="text-brand-400" />
-                    <span>Vehicle Identification & DB Verification</span>
+                    <span>Vehicle Registration & Database Validation</span>
                   </label>
                   {matchedVehicle ? (
                     <span className="text-[11px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
@@ -1440,91 +1590,86 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                     </span>
                   ) : (
                     <span className="text-[11px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-medium">
-                      Unregistered / Missing Docs
+                      Pending Validation
                     </span>
                   )}
                 </div>
 
-                <div className="space-y-2">
-                  <input 
-                    type="text"
-                    value={formData.assignedVehicleNo}
-                    onChange={(e) => setFormData({ ...formData, assignedVehicleNo: e.target.value })}
-                    placeholder="Enter Registration Number (e.g. KLA-992 / TLX-334)..."
-                    className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono font-bold uppercase tracking-wider"
-                  />
+                <div className="space-y-2.5">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input 
+                      type="text"
+                      value={formData.assignedVehicleNo}
+                      onChange={(e) => setFormData({ ...formData, assignedVehicleNo: e.target.value.toUpperCase() })}
+                      placeholder="Enter Registration Number (e.g. KLA-992 / TLX-334)..."
+                      className="flex-1 bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono font-bold uppercase tracking-wider text-xs"
+                    />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleValidateVehicle()}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow transition-all active:scale-95"
+                        title="Validate vehicle in registered fleet"
+                      >
+                        <CheckCircle2 size={14} />
+                        <span>Validate</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowVehicleSearchModal(true)}
+                        className="px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs flex items-center gap-1.5 shadow transition-all active:scale-95"
+                        title="Search vehicle from registered list"
+                      >
+                        <Search size={14} />
+                        <span>Search Vehicle in List</span>
+                      </button>
+                    </div>
+                  </div>
 
                   {/* Suggest existing vehicles */}
-                  <div className="flex flex-wrap gap-1.5">
-                    <span className="text-[10px] text-gray-500 py-1">Quick Select:</span>
-                    {allVehicles.slice(0, 5).map(v => (
-                      <button
-                        key={v.id}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, assignedVehicleNo: v.registrationNumber })}
-                        className="text-[10px] px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-gray-300 font-mono border border-white/5"
-                      >
-                        {v.registrationNumber}
-                      </button>
-                    ))}
-                  </div>
+                  {allVehicles.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      <span className="text-[10px] text-gray-500">Quick Select:</span>
+                      {allVehicles.slice(0, 5).map(v => (
+                        <button
+                          key={v.id}
+                          type="button"
+                          onClick={() => {
+                            setFormData(prev => ({ 
+                              ...prev, 
+                              assignedVehicleNo: v.registrationNumber,
+                              driverName: prev.driverName || v.driverName || '',
+                              driverCnic: prev.driverCnic || v.driverCnic || '',
+                              vehicleVerifiedInDb: true
+                            }));
+                          }}
+                          className="text-[10px] px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-gray-300 font-mono border border-white/5"
+                        >
+                          {v.registrationNumber}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* If matched in DB, show verified particulars */}
                 {matchedVehicle && (
-                  <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20 grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+                  <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                     <div>
-                      <span className="text-gray-400 block">Make / Model:</span>
+                      <span className="text-gray-400 block text-[10px]">Transporter:</span>
+                      <span className="text-white font-semibold">{matchedVehicle.transporterName || 'Self'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">Make / Model:</span>
                       <span className="text-white font-semibold">{matchedVehicle.makeModel || 'Carrier'}</span>
                     </div>
                     <div>
-                      <span className="text-gray-400 block">Category:</span>
-                      <span className="text-white font-semibold">{matchedVehicle.category}</span>
+                      <span className="text-gray-400 block text-[10px]">Status:</span>
+                      <span className="text-emerald-300 font-bold">{matchedVehicle.status || 'Active'}</span>
                     </div>
                     <div>
-                      <span className="text-gray-400 block">Tax Token Expiry:</span>
+                      <span className="text-gray-400 block text-[10px]">Tax Token Expiry:</span>
                       <span className="text-amber-300 font-mono">{matchedVehicle.validationExpiryDate || 'Valid'}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Compulsory Lock: If documents missing in DB, enforce compulsory upload */}
-                {(!matchedVehicle || !matchedVehicle.registrationBook) && (
-                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3">
-                    <div className="flex items-start gap-2 text-amber-300">
-                      <Lock size={15} className="shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-bold text-xs">Compulsory Vehicle Document Lock</p>
-                        <p className="text-[11px] text-amber-200/80">
-                          This vehicle does not have registration documents on file. You MUST upload the Registration Book and Owner CNIC to advance this step.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <WorkflowMultiUploader
-                        label="Registration Book *"
-                        sublabel="Vehicle registration book document"
-                        urlField="registrationBookUrl"
-                        nameField="registrationBookName"
-                        required={true}
-                        compact={true}
-                        formData={formData}
-                        setFormData={setFormData}
-                        onPreview={setActivePdfPreview}
-                      />
-
-                      <WorkflowMultiUploader
-                        label="Owner CNIC *"
-                        sublabel="Vehicle owner CNIC document"
-                        urlField="ownerCnicUrl"
-                        nameField="ownerCnicName"
-                        required={true}
-                        compact={true}
-                        formData={formData}
-                        setFormData={setFormData}
-                        onPreview={setActivePdfPreview}
-                      />
                     </div>
                   </div>
                 )}
@@ -1560,7 +1705,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                 {/* Dual-Sided CNIC Compulsory Uploads */}
                 <div className="space-y-3 pt-1">
                   <span className="text-gray-300 font-semibold block text-xs">
-                    Driver CNIC (Dual-Sided Compulsory Upload with Multi-Page & Camera Support)
+                    Driver CNIC (Dual-Sided Upload with Multi-Page & Camera Support)
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <WorkflowMultiUploader
@@ -1633,30 +1778,18 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                 </div>
 
                 {formData.vehicleRentArrangedBy === 'DPL' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 animate-fade-in">
-                    <div>
-                      <label className="text-gray-400 block mb-1 text-xs">Rent Amount (PKR)</label>
-                      <input 
-                        type="number"
-                        value={formData.vehicleRentAmount || ''}
-                        onChange={(e) => setFormData({ ...formData, vehicleRentAmount: Number(e.target.value) })}
-                        placeholder="e.g. 125000"
-                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
-                      />
-                    </div>
-
-                    <div className="animate-fade-in">
-                      <label className="text-emerald-400 font-bold block mb-1 text-xs flex items-center gap-1">
-                        <Sparkles size={13} /> DPL Commission Amount (Compulsory)
-                      </label>
-                      <input 
-                        type="number"
-                        value={formData.vehicleRentCommission || ''}
-                        onChange={(e) => setFormData({ ...formData, vehicleRentCommission: Number(e.target.value) })}
-                        placeholder="e.g. 7500"
-                        className="w-full bg-emerald-950/40 border border-emerald-500/50 rounded-xl px-3 py-2 text-emerald-200 font-mono font-bold"
-                      />
-                    </div>
+                  <div className="pt-1 animate-fade-in">
+                    <label className="text-gray-400 block mb-1 text-xs">Rent Amount (PKR)</label>
+                    <input 
+                      type="number"
+                      value={formData.vehicleRentAmount || ''}
+                      onChange={(e) => setFormData({ ...formData, vehicleRentAmount: Number(e.target.value) })}
+                      placeholder="e.g. 125000"
+                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-xs"
+                    />
+                    <span className="text-[10px] text-gray-500 mt-1 block">
+                      Freight rent amount will be billed to client invoice.
+                    </span>
                   </div>
                 ) : (
                   <div className="pt-1 text-xs text-sky-400/80 flex items-center justify-between bg-black/20 p-2.5 rounded-xl border border-white/5">
@@ -1673,114 +1806,72 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
             </div>
           )}
 
-          {/* STEP 6: LOADING PORT PROCESSING */}
-          {stepIndex === 5 && (
+          {/* STEP 5: LOADING PORT PROCESSING (STEP INDEX 4) */}
+          {(stepIndex === 4 || stepStatus === CaseStatus.LOADING_PORT_PROCESSING) && (
             <div className="space-y-4">
-              {/* Delivery Order (DO) Verification & Loading Handover */}
-              <div className="p-4 rounded-2xl bg-sky-950/30 border border-sky-500/30 space-y-3.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded-lg bg-sky-500/20 text-sky-400">
-                      <FileText size={16} />
+              {/* Shipping Line DO section (When arranged by DPL) */}
+              {(formData.doDueChargesArrangedBy === 'DPL' || targetCase.serviceArrangements?.['delivery_order']?.arrangedBy === 'DPL') && (
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white text-xs uppercase tracking-wider block">
+                      Delivery Order (DO) Details:
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      DPL Arranged DO
+                    </span>
+                  </div>
+
+                  {/* DO Picture Upload */}
+                  <WorkflowMultiUploader
+                    label="Delivery Order (DO) Document / Photo"
+                    sublabel="Upload or take photo of physical Delivery Order issued by shipping line"
+                    urlField="doReceiptUrl"
+                    nameField="doReceiptName"
+                    allowCamera={true}
+                    compact={true}
+                    formData={formData}
+                    setFormData={setFormData}
+                    onPreview={setActivePdfPreview}
+                  />
+
+                  {/* Date, Shipping Line, and Shipping Agent */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="font-semibold text-gray-300 block mb-1 text-xs">DO Date</label>
+                      <input
+                        type="date"
+                        value={formData.doIssueDate || new Date().toISOString().split('T')[0]}
+                        onChange={(e) => setFormData({ ...formData, doIssueDate: e.target.value })}
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs"
+                      />
                     </div>
                     <div>
-                      <span className="font-bold text-white text-sm block">
-                        Shipping Line Delivery Order (DO) Verification at Loading
-                      </span>
-                      <span className="text-gray-400 text-[11px]">
-                        Loading team: upload DO picture, select shipping line, and record whom the DO was issued in favor of
-                      </span>
+                      <label className="font-semibold text-gray-300 block mb-1 text-xs">Shipping Line</label>
+                      <input
+                        type="text"
+                        value={formData.shippingLine || ''}
+                        onChange={(e) => setFormData({ ...formData, shippingLine: e.target.value })}
+                        placeholder="e.g. Maersk, MSC, Hapag-Lloyd"
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-gray-300 block mb-1 text-xs">Shipping Agent</label>
+                      <input
+                        type="text"
+                        value={formData.shippingAgent || ''}
+                        onChange={(e) => setFormData({ ...formData, shippingAgent: e.target.value })}
+                        placeholder="e.g. Marine Services"
+                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
+                      />
                     </div>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                    Loading Gate
-                  </span>
                 </div>
-
-                {/* DO Picture Upload */}
-                <WorkflowMultiUploader
-                  label="Delivery Order (DO) Document / Photo"
-                  sublabel="Upload or take photo of physical Delivery Order issued by shipping line"
-                  urlField="clientDoPhotoUrl"
-                  nameField="clientDoPhotoName"
-                  allowCamera={true}
-                  compact={true}
-                  formData={formData}
-                  setFormData={setFormData}
-                  onPreview={setActivePdfPreview}
-                />
-
-                {/* Shipping Line & Issued In Favor Of */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="font-semibold text-gray-300 block mb-1 text-xs">
-                      Shipping Line Name (Kaun si shipping line ka DO hai)
-                    </label>
-                    <input
-                      type="text"
-                      list="shippingLineOptions"
-                      value={formData.clientDoShippingLine || ''}
-                      onChange={(e) => setFormData({ ...formData, clientDoShippingLine: e.target.value })}
-                      placeholder="e.g. Maersk, MSC, CMA CGM, COSCO, Hapag-Lloyd"
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
-                    />
-                    <datalist id="shippingLineOptions">
-                      <option value="Maersk Line" />
-                      <option value="MSC (Mediterranean Shipping Company)" />
-                      <option value="CMA CGM" />
-                      <option value="COSCO Shipping Lines" />
-                      <option value="Hapag-Lloyd" />
-                      <option value="ONE (Ocean Network Express)" />
-                      <option value="Evergreen Marine" />
-                      <option value="OOCL" />
-                      <option value="Yang Ming" />
-                      <option value="Wan Hai Lines" />
-                      <option value="Hyundai Merchant Marine (HMM)" />
-                      <option value="PIL (Pacific International Lines)" />
-                    </datalist>
-                  </div>
-
-                  <div>
-                    <label className="font-semibold text-gray-300 block mb-1 text-xs">
-                      DO Issued In Name Of (Kiske naam per DO utha hai)
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.clientDoFavorOf || ''}
-                      onChange={(e) => setFormData({ ...formData, clientDoFavorOf: e.target.value })}
-                      placeholder="e.g. Consignee / Clearing Agent Name"
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-medium"
-                    />
-                  </div>
-                </div>
-
-                {/* Optional DO Number */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-gray-400 block mb-1 text-xs">DO Reference / Number (Optional)</label>
-                    <input
-                      type="text"
-                      value={formData.clientDoNumber || ''}
-                      onChange={(e) => setFormData({ ...formData, clientDoNumber: e.target.value })}
-                      placeholder="e.g. DO-99201"
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-1.5 text-white font-mono text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-gray-400 block mb-1 text-xs">DO Date (Optional)</label>
-                    <input
-                      type="date"
-                      value={formData.clientDoDate || ''}
-                      onChange={(e) => setFormData({ ...formData, clientDoDate: e.target.value })}
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-1.5 text-white text-xs"
-                    />
-                  </div>
-                </div>
-              </div>
+              )}
 
               {/* Media & Document Uploads */}
               <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
-                <label className="font-bold text-white text-sm block">Media & Document Uploads</label>
+                <label className="font-bold text-white text-sm block">Port Gate Pass & Vehicle Verification</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <WorkflowMultiUploader
                     label="Vehicle Photo at Port"
@@ -1820,18 +1911,18 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                       ...formData, 
                       trackerStatus: formData.trackerStatus === 'Installed' ? 'Not Installed' : 'Installed' 
                     })}
-                    className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-all ${
-                      formData.trackerStatus === 'Installed'
-                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                    className={`px-3 py-1 rounded-xl text-xs font-semibold border transition-all ${
+                      formData.trackerStatus === 'Installed' 
+                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' 
                         : 'bg-white/5 border-white/10 text-gray-400'
                     }`}
                   >
-                    {formData.trackerStatus === 'Installed' ? '✓ Installed' : 'Not Installed'}
+                    {formData.trackerStatus === 'Installed' ? '✓ Tracker Installed' : 'Not Installed'}
                   </button>
                 </div>
 
                 <div className="flex items-center justify-between pt-1">
-                  <span className="text-gray-300 font-medium">Tracker Arranged By:</span>
+                  <span className="text-gray-300 text-xs">Arranged By:</span>
                   <div className="flex rounded-xl bg-slate-800 p-1 border border-white/10">
                     <button
                       type="button"
@@ -1862,16 +1953,13 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                       value={formData.trackerAmount || ''}
                       onChange={(e) => setFormData({ ...formData, trackerAmount: Number(e.target.value) })}
                       placeholder="e.g. 15000"
-                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-sm"
+                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-xs"
                     />
-                    <span className="text-[10px] text-gray-400 mt-1 block">
-                      Tracker Cost is appended directly to client's invoice (no commission added).
-                    </span>
                   </div>
                 )}
               </div>
 
-              {/* Loading Charges Module (Moved from Step 4) */}
+              {/* Loading Charges Module */}
               <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1886,7 +1974,7 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                         formData.loadingChargesArrangedBy === 'Client' ? 'bg-brand-600 text-white' : 'text-gray-400'
                       }`}
                     >
-                      Client
+                      Arranged by Client
                     </button>
                     <button
                       type="button"
@@ -1895,33 +1983,28 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                         formData.loadingChargesArrangedBy === 'DPL' ? 'bg-emerald-600 text-white' : 'text-gray-400'
                       }`}
                     >
-                      DPL
+                      Arranged by DPL
                     </button>
                   </div>
                 </div>
 
-                {formData.loadingChargesArrangedBy === 'DPL' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 animate-fade-in">
-                    <div>
-                      <label className="text-gray-400 block mb-1">Loading Amount (PKR)</label>
-                      <input 
-                        type="number"
-                        value={formData.loadingChargesAmount || ''}
-                        onChange={(e) => setFormData({ ...formData, loadingChargesAmount: Number(e.target.value) })}
-                        placeholder="e.g. 6000"
-                        className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-emerald-400 font-bold block mb-1">DPL Commission (Compulsory)</label>
-                      <input 
-                        type="number"
-                        value={formData.loadingChargesCommission || ''}
-                        onChange={(e) => setFormData({ ...formData, loadingChargesCommission: Number(e.target.value) })}
-                        placeholder="e.g. 1500"
-                        className="w-full bg-emerald-950/40 border border-emerald-500/50 rounded-xl px-3 py-2 text-emerald-200 font-mono font-bold"
-                      />
-                    </div>
+                {formData.loadingChargesArrangedBy === 'DPL' ? (
+                  <div className="pt-2 animate-fade-in">
+                    <label className="text-gray-400 block mb-1 text-xs">Loading Amount (PKR)</label>
+                    <input 
+                      type="number"
+                      value={formData.loadingChargesAmount || ''}
+                      onChange={(e) => setFormData({ ...formData, loadingChargesAmount: Number(e.target.value) })}
+                      placeholder="e.g. 6000"
+                      className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-white font-mono text-xs"
+                    />
+                    <span className="text-[10px] text-gray-500 mt-1 block">
+                      Loading amount will be added to the invoice.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-xs text-sky-300/80 bg-black/20 p-2.5 rounded-xl border border-white/5">
+                    Loading charges settled directly by client.
                   </div>
                 )}
               </div>
@@ -1995,11 +2078,11 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
               </div>
 
               {/* Gate Out Verification & Completion Criteria */}
-              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-3">
+              <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="font-bold text-white text-sm block">Gate Out Verification (Completion Requirement)</span>
-                    <span className="text-amber-200/80 text-[11px]">Step 6 marks completed only when Gate Out and Driver Live Photo are verified</span>
+                    <span className="font-bold text-white text-sm block">Gate Out Verification</span>
+                    <span className="text-gray-400 text-[11px]">Gate Out and Driver Live Photo verification</span>
                   </div>
                   <button
                     type="button"
@@ -2028,11 +2111,34 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                   />
                 </div>
               </div>
+
+              {/* Make Loading Bill Button */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-amber-600/10 to-emerald-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                    <Receipt size={22} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white text-sm">Port Loading Bill & Disbursement Invoice</h4>
+                    <p className="text-gray-300 text-[11px]">
+                      Add wharfage, tracker, delivery & port charges with receipts, and generate downloadable Port Loading Bill PDF.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowLoadingBillModal(true)}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all active:scale-95 shrink-0"
+                >
+                  <Receipt size={15} />
+                  <span>Make Loading Bill</span>
+                </button>
+              </div>
             </div>
           )}
 
-          {/* STEP 7: IN TRANSIT & EMERGENCY EXCEPTION */}
-          {stepIndex === 6 && (
+          {/* STEP 6: IN TRANSIT & EMERGENCY EXCEPTION (STEP INDEX 5) */}
+          {(stepIndex === 5 || stepStatus === CaseStatus.IN_TRANSIT) && (
             <div className="space-y-5">
               {/* Motion Feature: Animated Transport Carrier */}
               <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border border-blue-500/30 relative overflow-hidden">
@@ -2090,13 +2196,13 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
             </div>
           )}
 
-          {/* STEP 8: DESTINATION PORT ARRIVAL & AUTO COMPLETION */}
-          {stepIndex === 7 && (
+          {/* STEP 7: DESTINATION PORT ARRIVAL (STEP INDEX 6) */}
+          {(stepIndex === 6 || stepStatus === CaseStatus.DESTINATION_PORT_ARRIVAL) && (
             <div className="space-y-4">
               {/* Transit Completion Trigger: Port Gate Arrival Picture */}
               <WorkflowMultiUploader
-                label="Port Gate Arrival Picture (Step 7 Completion Trigger)"
-                sublabel="Capture or upload arrival photo (camera, multi-file supported; automatically marks Step 7 In Transit as Completed)"
+                label="Port Gate Arrival Picture"
+                sublabel="Capture or upload arrival photo at destination dry port"
                 urlField="portGateArrivalPhotoUrl"
                 nameField="portGateArrivalPhotoName"
                 allowCamera={true}
@@ -2202,12 +2308,12 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
                 </div>
               </div>
 
-              {/* Vehicle Gate Out & Workflow Termination */}
+              {/* Vehicle Gate Out */}
               <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
                 <div>
-                  <span className="font-bold text-white text-sm block">Vehicle Gate Out & Termination</span>
+                  <span className="font-bold text-white text-sm block">Vehicle Gate Out</span>
                   <span className="text-emerald-200/80 text-[11px]">
-                    Marking Gate Out completes the entire 8-step workflow and auto-generates the final Delivery Order (DO / NOC)
+                    Confirm destination container offloading and vehicle gate-out
                   </span>
                 </div>
                 <button
@@ -2227,89 +2333,41 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
             </div>
           )}
 
-          {/* Step Action Selector */}
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-2">
-            <label className="font-bold text-white text-xs uppercase tracking-wider block">
-              Workflow Transition Action
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <label className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex flex-col justify-between ${
-                stepAction === 'advance' 
-                  ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-300 shadow-md' 
-                  : 'bg-white/[0.02] border-white/10 text-gray-400 hover:bg-white/5'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="radio" 
-                    name="stepAction" 
-                    checked={stepAction === 'advance'} 
-                    onChange={() => setStepAction('advance')}
-                    className="accent-emerald-500"
-                  />
-                  <span className="font-bold">Complete & Advance</span>
-                </div>
-                <span className="text-[10px] text-gray-400 mt-1">Mark complete and advance to next stage</span>
-              </label>
-
-              <label className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex flex-col justify-between ${
-                stepAction === 'set_current' 
-                  ? 'bg-amber-500/15 border-amber-500/60 text-amber-300 shadow-md' 
-                  : 'bg-white/[0.02] border-white/10 text-gray-400 hover:bg-white/5'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="radio" 
-                    name="stepAction" 
-                    checked={stepAction === 'set_current'} 
-                    onChange={() => setStepAction('set_current')}
-                    className="accent-amber-500"
-                  />
-                  <span className="font-bold">Set as Active Stage</span>
-                </div>
-                <span className="text-[10px] text-gray-400 mt-1">Make this the current working stage</span>
-              </label>
-
-              <label className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex flex-col justify-between ${
-                stepAction === 'keep' 
-                  ? 'bg-blue-500/15 border-blue-500/60 text-blue-300 shadow-md' 
-                  : 'bg-white/[0.02] border-white/10 text-gray-400 hover:bg-white/5'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="radio" 
-                    name="stepAction" 
-                    checked={stepAction === 'keep'} 
-                    onChange={() => setStepAction('keep')}
-                    className="accent-blue-500"
-                  />
-                  <span className="font-bold">Save Data Only</span>
-                </div>
-                <span className="text-[10px] text-gray-400 mt-1">Update fields without modifying stage</span>
-              </label>
-            </div>
-          </div>
         </div>
+
+        {/* Validation Error Alert Banner */}
+        {validationError && (
+          <div className="mx-5 mb-2 p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-200 flex items-start gap-2.5 animate-shake text-xs shrink-0">
+            <AlertCircle size={16} className="text-rose-400 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-bold block text-rose-300">Cannot Complete Step:</span>
+              <span>{validationError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setValidationError(null)}
+              className="text-gray-400 hover:text-white text-xs font-bold"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="p-4 border-t border-white/10 bg-slate-950/70 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
           <div>
             {(userRole === UserRole.UNLOADING_PORT_STAFF || userRole === UserRole.DESTINATION_PORT_STAFF || userRole === UserRole.ADMIN || userRole === UserRole.OPERATIONS_MANAGER) && (
-              formData.vehicleGateOutToggled || existingDetail.vehicleGateOutToggled || targetCase.status === CaseStatus.COMPLETED ? (
+              isDestinationUnloadedAndGateOut(targetCase) ? (
                 <button
                   type="button"
                   onClick={() => downloadCustomsDeliveryOrderPdf({ targetCase })}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 active:scale-95"
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 active:scale-95"
                   title="Download Official Customs Delivery Order (DO) PDF"
                 >
                   <Download size={15} />
                   <span>Download Bonded Carrier DO (PDF)</span>
                 </button>
-              ) : (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px]">
-                  <Clock size={13} className="shrink-0" />
-                  <span>DO generates after vehicle gate-out & offloading</span>
-                </div>
-              )
+              ) : null
             )}
           </div>
           <div className="flex items-center gap-2.5">
@@ -2320,23 +2378,280 @@ export const WorkflowStepModal: React.FC<WorkflowStepModalProps> = ({
             >
               Close
             </button>
+
             {!isReadOnly && (
-              <button
-                type="button"
-                onClick={handleSave}
-                className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg shadow-brand-600/30 flex items-center gap-2 active:scale-95"
-              >
-                <Save size={15} />
-                <span>Save Step Details</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setValidationError(null);
+                    handleSave(false);
+                  }}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 hover:border-amber-500/50 shadow transition-all flex items-center gap-1.5 active:scale-95"
+                  title="Save draft data without marking step completed"
+                >
+                  <Save size={14} className="text-amber-400" />
+                  <span>Incomplete Save</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const check = validateStepStrict();
+                    if (!check.valid) {
+                      setValidationError(check.error || 'Please fill all required fields and upload all required documents.');
+                      return;
+                    }
+                    setValidationError(null);
+                    handleSave(true);
+                  }}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 transition-all flex items-center gap-1.5 active:scale-95"
+                  title="Validate all fields & documents and mark step completed"
+                >
+                  <CheckCircle2 size={15} />
+                  <span>Completed</span>
+                </button>
+              </>
             )}
           </div>
         </div>
       </div>
 
+      {/* Vehicle Validation Popup Modal */}
+      {showVehicleValidateModal && vehicleValidationResult && (
+        <div className="fixed inset-0 bg-black/80 z-[140] flex items-start justify-center pt-8 sm:pt-14 p-4 backdrop-blur-md overflow-y-auto">
+          <div className="bg-slate-900 border border-white/20 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <Truck size={18} className="text-brand-400" />
+                <h3 className="font-bold text-white text-sm">Vehicle Database Validation</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVehicleValidateModal(false)}
+                className="text-gray-400 hover:text-white p-1 rounded-lg"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className={`p-4 rounded-xl border ${
+              vehicleValidationResult.valid 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+            } space-y-2`}>
+              <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wide">
+                {vehicleValidationResult.valid ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                <span>{vehicleValidationResult.valid ? 'Vehicle Valid & Active' : 'Validation Alert'}</span>
+              </div>
+              <p className="text-xs text-gray-200 leading-relaxed">
+                {vehicleValidationResult.reason}
+              </p>
+            </div>
+
+            {vehicleValidationResult.vehicle && (
+              <div className="p-3.5 bg-black/40 border border-white/10 rounded-xl space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Registration Number:</span>
+                  <span className="text-white font-mono font-bold">{vehicleValidationResult.vehicle.registrationNumber}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Transporter:</span>
+                  <span className="text-white font-semibold">{vehicleValidationResult.vehicle.transporterName || 'Self / Registered'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Make / Model:</span>
+                  <span className="text-white">{vehicleValidationResult.vehicle.makeModel || 'Carrier'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Status:</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    vehicleValidationResult.valid ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
+                  }`}>
+                    {vehicleValidationResult.vehicle.status || 'Active'}
+                  </span>
+                </div>
+                {vehicleValidationResult.vehicle.validationExpiryDate && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Fitness / Tax Expiry:</span>
+                    <span className="text-amber-300 font-mono">{vehicleValidationResult.vehicle.validationExpiryDate}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowVehicleValidateModal(false)}
+                className="px-3.5 py-2 rounded-xl text-xs text-gray-400 hover:text-white"
+              >
+                Close
+              </button>
+              {vehicleValidationResult.valid && vehicleValidationResult.vehicle ? (
+                <button
+                  type="button"
+                  onClick={() => handleApplyValidatedVehicle(vehicleValidationResult.vehicle!)}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center gap-1.5"
+                >
+                  <Check size={14} />
+                  <span>Confirm & Apply Vehicle</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowVehicleValidateModal(false);
+                    setShowVehicleSearchModal(true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs flex items-center gap-1.5"
+                >
+                  <Search size={14} />
+                  <span>Search Vehicle in List</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle Search from List Popup Modal */}
+      {showVehicleSearchModal && (
+        <div className="fixed inset-0 bg-black/85 z-[140] flex items-start justify-center pt-8 sm:pt-14 p-4 backdrop-blur-md overflow-y-auto">
+          <div className="bg-slate-900 border border-white/20 rounded-2xl max-w-xl w-full p-5 shadow-2xl space-y-4 animate-in fade-in duration-150">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2">
+                <Search size={18} className="text-brand-400" />
+                <div>
+                  <h3 className="font-bold text-white text-sm">Search Vehicle from Registered Fleet</h3>
+                  <span className="text-[11px] text-gray-400">Search by Vehicle Registration Number or Transporter Name</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVehicleSearchModal(false)}
+                className="text-gray-400 hover:text-white p-1 rounded-lg"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <input
+                type="text"
+                value={vehicleSearchQuery}
+                onChange={(e) => setVehicleSearchQuery(e.target.value)}
+                placeholder="Type Registration No. (e.g. KLA-992) or Transporter Name..."
+                className="w-full bg-black/50 border border-white/15 rounded-xl pl-10 pr-4 py-2.5 text-white text-xs placeholder-gray-500 focus:border-brand-500 outline-none"
+                autoFocus
+              />
+            </div>
+
+            <div className="max-h-72 overflow-y-auto custom-scrollbar space-y-2">
+              {filteredVehiclesList.length === 0 ? (
+                <div className="p-8 text-center text-gray-400 text-xs bg-black/20 rounded-xl">
+                  No matching registered vehicles found.
+                </div>
+              ) : (
+                filteredVehiclesList.map(veh => {
+                  const stat = (veh.status || 'Active').toLowerCase();
+                  const isInvalid = stat === 'expired' || stat === 'cancelled' || stat === 'suspended' || stat === 'inactive';
+                  return (
+                    <div
+                      key={veh.id}
+                      className="p-3 bg-black/30 border border-white/10 rounded-xl flex items-center justify-between gap-3 hover:border-white/20 transition-all"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-white text-xs">{veh.registrationNumber}</span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            isInvalid ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          }`}>
+                            {veh.status || 'Active'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gray-400 mt-1 flex flex-wrap gap-x-3">
+                          <span>Transporter: <strong className="text-gray-200">{veh.transporterName || 'Self / Registered'}</strong></span>
+                          {veh.makeModel && <span>Model: {veh.makeModel}</span>}
+                          {veh.category && <span>Category: {veh.category}</span>}
+                        </div>
+                      </div>
+
+                      <div>
+                        {isInvalid ? (
+                          <span className="text-[11px] text-rose-400/80 italic">Cannot select</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleSelectVehicleFromList(veh)}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow transition-all active:scale-95"
+                          >
+                            Select
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowVehicleSearchModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Bill Modal */}
+      {showLoadingBillModal && (
+        <LoadingBillModal
+          isOpen={showLoadingBillModal}
+          onClose={() => setShowLoadingBillModal(false)}
+          targetCase={targetCase}
+          onSaveBill={(billData, newCharges, newDocs) => {
+            setFormData(prev => ({
+              ...prev,
+              wharfageAmount: billData.wharfageAmount,
+              wharfageReceiptUrl: billData.wharfageReceiptUrl,
+              wharfageReceiptName: billData.wharfageReceiptName,
+              trackerAmount: billData.trackerAmount,
+              loadingChargesAmount: billData.deliveryCharges
+            }));
+            const existingCharges = targetCase.charges || [];
+            const updatedCharges = [...existingCharges];
+            newCharges.forEach(chg => {
+              if (!updatedCharges.some(c => c.description === chg.description)) {
+                updatedCharges.push(chg);
+              }
+            });
+            const existingDocs = targetCase.documents || [];
+            const updatedDocs = [...existingDocs];
+            newDocs.forEach((doc: any) => {
+              if (!updatedDocs.some((d: any) => d.url === doc.url)) {
+                updatedDocs.push(doc);
+              }
+            });
+            onSaveCase({
+              ...targetCase,
+              charges: updatedCharges,
+              documents: updatedDocs
+            });
+            setShowLoadingBillModal(false);
+          }}
+        />
+      )}
+
       {/* Incident / Stoppage Modal */}
       {showIncidentModal && (
-        <div className="fixed inset-0 bg-black/85 z-[130] flex items-center justify-center p-4 backdrop-blur-md">
+        <div className="fixed inset-0 bg-black/85 z-[130] flex items-start justify-center pt-8 sm:pt-14 p-4 backdrop-blur-md overflow-y-auto">
           <div className="bg-slate-900 border border-rose-500/40 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-fade-in">
             <div className="flex items-center gap-3 text-rose-400">
               <AlertCircle size={28} />

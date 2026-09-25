@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { 
   Ship, CheckCircle2, ChevronDown, ChevronUp, Clock, MapPin, Plus, Save, 
   Trash2, Search, AlertCircle, RefreshCw, Layers, DollarSign, Key, UploadCloud, 
-  Download, BookOpen, User, Phone, Check, LogOut, FileText, Camera
+  Download, BookOpen, User, Phone, Check, LogOut, FileText, Camera, Receipt, ExternalLink
 } from 'lucide-react';
-import { Case, Container, CaseStatus, CaseCharge, UserRole } from '../types';
-import { subscribeToCases, saveCaseToFirestore } from '../services/dbService';
+import { Case, Container, CaseStatus, CaseCharge, UserRole, Vehicle } from '../types';
+import { subscribeToCases, saveCaseToFirestore, subscribeToVehicles } from '../services/dbService';
 import { compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
 import { useBranding } from '../services/brandingService';
 import Logo from './Logo';
+import { WorkflowStepModal } from './WorkflowStepModal';
+import { LoadingBillModal } from './LoadingBillModal';
 
 interface LoadingPortStaffPortalProps {
   onSignOut: () => void;
@@ -29,6 +31,9 @@ export const LoadingPortStaffPortal: React.FC<LoadingPortStaffPortalProps> = ({ 
   const { customLogo } = useBranding();
   const [cases, setCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [selectedWorkflowCase, setSelectedWorkflowCase] = useState<{ targetCase: Case; stepIndex: number; stepStatus: string } | null>(null);
+  const [selectedBillCase, setSelectedBillCase] = useState<Case | null>(null);
   
   // Port Selection: 'KICT', 'QICT' (Port Qasim), 'SAPT', 'KPT'
   const [activePort, setActivePort] = useState<'KICT' | 'QICT' | 'SAPT' | 'KPT'>('KICT');
@@ -61,14 +66,20 @@ export const LoadingPortStaffPortal: React.FC<LoadingPortStaffPortalProps> = ({ 
   // Success message feedback
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  // Subscribe to live cases
+  // Subscribe to live cases and vehicles
   useEffect(() => {
     setLoading(true);
-    const unsub = subscribeToCases((items) => {
+    const unsubCases = subscribeToCases((items) => {
       setCases(items || []);
       setLoading(false);
     });
-    return () => unsub();
+    const unsubVehicles = subscribeToVehicles((vList) => {
+      setVehicles(vList || []);
+    });
+    return () => {
+      unsubCases();
+      unsubVehicles();
+    };
   }, []);
 
   // Filter cases for the current loading staff portal
@@ -439,6 +450,58 @@ export const LoadingPortStaffPortal: React.FC<LoadingPortStaffPortalProps> = ({ 
                   {isExpanded && (
                     <div className="border-t border-white/10 p-5 bg-black/40 space-y-6 animate-in slide-in-from-top-3 duration-200">
                       
+                      {/* Top Action Bar for Workflow & Loading Bill */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-gradient-to-r from-slate-900 via-slate-850 to-brand-950/40 rounded-2xl border border-white/10 shadow-md">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-white">Container Operational Workflow:</span>
+                          <span className="text-[11px] font-mono">
+                            {c.workflowDetails?.[CaseStatus.SHIPPING_LINE_DO]?.doDueChargesArrangedBy === 'Client' ? (
+                              <span className="text-sky-300 font-semibold bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">DO Arranged by Client</span>
+                            ) : (
+                              <span className="text-emerald-300 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">DO Arranged by DPL</span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedWorkflowCase({ targetCase: c, stepIndex: 0, stepStatus: CaseStatus.SHIPPING_LINE_DO });
+                            }}
+                            className="bg-sky-600/20 hover:bg-sky-600 border border-sky-500/40 text-sky-200 hover:text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                            title="Open Shipping Line DO step (View / upload DO picture, date, shipping line, agent)"
+                          >
+                            <FileText size={13} />
+                            <span>Update DO Step</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedWorkflowCase({ targetCase: c, stepIndex: 4, stepStatus: CaseStatus.LOADING_PORT_PROCESSING });
+                            }}
+                            className="bg-brand-600/30 hover:bg-brand-600 border border-brand-500/40 text-brand-200 hover:text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                            title="Open full Loading Port Processing step"
+                          >
+                            <ExternalLink size={13} />
+                            <span>Loading Step Workflow</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedBillCase(c);
+                            }}
+                            className="bg-amber-500/20 hover:bg-amber-500 border border-amber-500/40 text-amber-300 hover:text-slate-950 px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                            title="Create Port Loading Bill (Wharfage, Tracker, Delivery Charges)"
+                          >
+                            <Receipt size={13} />
+                            <span>Make Loading Bill</span>
+                          </button>
+                        </div>
+                      </div>
+
                       {/* Sub-grid: Vehicle & Driver details */}
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                         
@@ -696,6 +759,66 @@ export const LoadingPortStaffPortal: React.FC<LoadingPortStaffPortalProps> = ({ 
         )}
 
       </div>
+
+      {/* Workflow Step Modal for Loading Port Staff */}
+      {selectedWorkflowCase && (
+        <WorkflowStepModal
+          isOpen={!!selectedWorkflowCase}
+          onClose={() => setSelectedWorkflowCase(null)}
+          targetCase={selectedWorkflowCase.targetCase}
+          stepStatus={selectedWorkflowCase.stepStatus}
+          stepIndex={selectedWorkflowCase.stepIndex}
+          availableVehicles={vehicles}
+          userRole={UserRole.LOADING_PORT_STAFF}
+          userRoles={userRoles}
+          onSaveCase={async (updatedCase) => {
+            try {
+              await saveCaseToFirestore(updatedCase);
+              showFeedback(`✓ Workflow updated for Case ${updatedCase.caseNo}`);
+            } catch (e) {
+              console.error(e);
+            }
+            setSelectedWorkflowCase(null);
+          }}
+        />
+      )}
+
+      {/* Make Loading Bill Modal */}
+      {selectedBillCase && (
+        <LoadingBillModal
+          isOpen={!!selectedBillCase}
+          onClose={() => setSelectedBillCase(null)}
+          targetCase={selectedBillCase}
+          onSaveBill={async (billData, newCharges, newDocs) => {
+            const existingCharges = selectedBillCase.charges || [];
+            const updatedCharges = [...existingCharges];
+            newCharges.forEach(chg => {
+              if (!updatedCharges.some(c => c.description === chg.description)) {
+                updatedCharges.push(chg);
+              }
+            });
+            const existingDocs = selectedBillCase.documents || [];
+            const updatedDocs = [...existingDocs];
+            newDocs.forEach((doc: any) => {
+              if (!updatedDocs.some((d: any) => d.url === doc.url)) {
+                updatedDocs.push(doc);
+              }
+            });
+            const updatedCase: Case = {
+              ...selectedBillCase,
+              charges: updatedCharges,
+              documents: updatedDocs
+            };
+            try {
+              await saveCaseToFirestore(updatedCase);
+              showFeedback(`✓ Loading Bill generated for Case ${selectedBillCase.caseNo}`);
+            } catch (e) {
+              console.error(e);
+            }
+            setSelectedBillCase(null);
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -108,7 +108,7 @@ export const CATEGORY_WORKFLOW_MAP: Record<string, CategoryWorkflowConfig> = {
   'Bonded Carrier': {
     category: 'Bonded Carrier',
     normalizedCategory: 'Bonded Carrier',
-    totalSteps: 8,
+    totalSteps: 7,
     steps: [
       {
         stepIndex: 0,
@@ -136,14 +136,6 @@ export const CATEGORY_WORKFLOW_MAP: Record<string, CategoryWorkflowConfig> = {
       },
       {
         stepIndex: 3,
-        id: CaseStatus.WHARFAGE_PAYMENT,
-        title: 'Wharfage Payment',
-        shortTitle: 'Port Wharfage',
-        description: 'Wharfage terminal charges, receipt upload, amount, date, and paying party.',
-        categoryName: 'Bonded Carrier'
-      },
-      {
-        stepIndex: 4,
         id: CaseStatus.VEHICLE_ASSIGNMENT,
         title: 'Vehicle Assignment',
         shortTitle: 'Fleet Allocation',
@@ -151,15 +143,15 @@ export const CATEGORY_WORKFLOW_MAP: Record<string, CategoryWorkflowConfig> = {
         categoryName: 'Bonded Carrier'
       },
       {
-        stepIndex: 5,
+        stepIndex: 4,
         id: CaseStatus.LOADING_PORT_PROCESSING,
         title: 'Loading Port Processing',
         shortTitle: 'Port Gate Out',
-        description: 'Port gate pass, satellite tracker setup, container loading, customs seal, and driver photo.',
+        description: 'Port gate pass, satellite tracker setup, container loading, customs seal, driver photo, and loading bill.',
         categoryName: 'Bonded Carrier'
       },
       {
-        stepIndex: 6,
+        stepIndex: 5,
         id: CaseStatus.IN_TRANSIT,
         title: 'In Transit & Emergency Exception',
         shortTitle: 'Highway Transit',
@@ -167,7 +159,7 @@ export const CATEGORY_WORKFLOW_MAP: Record<string, CategoryWorkflowConfig> = {
         categoryName: 'Bonded Carrier'
       },
       {
-        stepIndex: 7,
+        stepIndex: 6,
         id: CaseStatus.DESTINATION_PORT_ARRIVAL,
         title: 'Destination Port Arrival & Auto DO Generation',
         shortTitle: 'Dry Port Discharge',
@@ -625,4 +617,16 @@ export function getNextWorkflowStep(category: string | undefined, currentIndex: 
     return CaseStatus.COMPLETED;
   }
   return cfg.steps[currentIndex + 1].id;
+}
+
+export function isDestinationUnloadedAndGateOut(targetCase?: any): boolean {
+  if (!targetCase) return false;
+  if (targetCase.status === CaseStatus.COMPLETED) return true;
+  const wf = targetCase.workflowDetails || {};
+  const destStep = wf[CaseStatus.DESTINATION_PORT_ARRIVAL] || wf['DESTINATION_PORT_ARRIVAL'] || wf['EMPTY_CONTAINER_RETURN'];
+  if (destStep?.completed || destStep?.vehicleGateOutToggled || destStep?.gateOutToggled) return true;
+  if (targetCase.containers && targetCase.containers.length > 0 && targetCase.containers.every((cont: any) => cont.offloaded || cont.status === 'Completed' || cont.status === 'Delivered')) {
+    return true;
+  }
+  return false;
 }

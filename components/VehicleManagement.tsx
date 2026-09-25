@@ -1356,7 +1356,7 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
       {/* VEHICLE CANCELLATION CONFIRMATION & AUTO NOC MODAL (SRS) */}
       {/* ========================================================= */}
       {vehicleToCancel && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto z-50 animate-in fade-in duration-200">
           <div className="glass-card p-6 sm:p-7 rounded-3xl w-full max-w-lg border border-red-500/30 shadow-2xl space-y-5 bg-slate-950/95">
             {/* Modal Header */}
             <div className="flex items-start gap-4">
@@ -1555,7 +1555,7 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
 
       {/* Admin Approval Request Modal for Vehicle Deletion / Cancellation */}
       {showVehicleApprovalModal && approvalTargetVehicle && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto animate-in fade-in duration-200">
           <div className="glass-card p-6 rounded-2xl w-full max-w-lg border border-amber-500/30 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5 text-amber-400 font-bold text-base">
@@ -1673,7 +1673,7 @@ const AddTransporterModal = ({ onClose, onSave }: any) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto z-50">
       <div className="glass-card p-6 rounded-2xl w-full max-w-2xl border border-white/10 max-h-[90vh] overflow-y-auto custom-scrollbar">
         <h3 className="text-xl font-bold text-white mb-4 sticky top-0 bg-slate-900/95 pb-4 border-b border-white/10 z-10 backdrop-blur-md">Add New Transporter</h3>
         
@@ -1917,7 +1917,7 @@ const AddVehicleModal = ({ transporters, preSelectedTransporterId, onClose, onSa
   const showValidationDate = formData.category === VehicleCategory.BONDED_CARRIER || formData.category === VehicleCategory.AFGHAN_TRANSIT;
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto z-50">
       <div className="glass-card p-6 rounded-2xl w-full max-w-2xl border border-white/10 max-h-[90vh] overflow-y-auto custom-scrollbar">
         <h3 className="text-xl font-bold text-white mb-4 sticky top-0 bg-slate-900/95 pb-4 border-b border-white/10 z-10 backdrop-blur-md">Add New Vehicle</h3>
         
@@ -2287,7 +2287,7 @@ const VehicleProfileModal = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-start justify-center pt-6 sm:pt-10 p-3 sm:p-5 overflow-y-auto z-50 animate-in fade-in">
       <div className="glass-card w-full max-w-4xl h-[85vh] flex flex-col rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
         <div className="bg-slate-900/90 p-5 md:p-6 border-b border-white/10 flex flex-wrap justify-between items-center gap-3">
            <div>

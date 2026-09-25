@@ -4,7 +4,7 @@ import {
   MapPin, Anchor, Box, User, AlertCircle, Calendar, Camera, X, Truck, Briefcase, 
   Search, Eye, Share2, AlertTriangle, ArrowLeft, Download, Trash2, Edit, Plus, ListFilter, Filter,
   Sparkles, Scan, FileCheck, Globe, Receipt, Scale, Ship, UploadCloud, Play, Clock, ArrowRight, RefreshCw, Layers,
-  Building, Phone, Mail, DollarSign, Tag, Package, ShieldCheck, XCircle
+  Building, Phone, Mail, DollarSign, Tag, Package, ShieldCheck, XCircle, Copy, Check, ExternalLink
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
@@ -29,7 +29,8 @@ import {
   SUB_CATEGORY_OPTIONS, 
   supportsSubCategories, 
   getCategoryWorkflow, 
-  getWorkflowStepIndex 
+  getWorkflowStepIndex,
+  isDestinationUnloadedAndGateOut 
 } from '../services/workflowConfig';
 import {
   getCategoryArrangements,
@@ -322,34 +323,15 @@ export const getArrangementInitialCharges = (arrangements: Record<string, { labe
   return getArrangementCharges(arrangements as any);
 };
 
-// Configuration for Report Columns
+// Configuration for Report Columns (Optimized for zero-horizontal-scrolling)
 const REPORT_COLUMNS = [
-  { key: 'caseNo', label: 'Case No' },
-  { key: 'clientName', label: 'Client' },
-  { key: 'category', label: 'Category' },
-  { key: 'status', label: 'Status' },
-  { key: 'createdAt', label: 'Date' },
-  { key: 'pol', label: 'POL' },
-  { key: 'pod', label: 'POD' },
-  { key: 'extractedData.blNumber', label: 'BL No' },
-  { key: 'extractedData.blDate', label: 'BL Date' },
-  { key: 'extractedData.vesselName', label: 'Vessel' },
-  { key: 'extractedData.shippingLine', label: 'Line' },
-  { key: 'extractedData.shipperName', label: 'Shipper' },
-  { key: 'extractedData.shipperAddress', label: 'Shipper Addr' },
-  { key: 'extractedData.consigneeName', label: 'Consignee' },
-  { key: 'extractedData.consigneeAddress', label: 'Consignee Addr' },
-  { key: 'extractedData.igmNo', label: 'IGM No' },
-  { key: 'extractedData.igmDate', label: 'IGM Date' },
-  { key: 'extractedData.indexNo', label: 'Index No' },
-  { key: 'extractedData.arrivalDate', label: 'Arrival' },
-  { key: 'extractedData.itemType', label: 'Item Type' },
-  { key: 'extractedData.itemName', label: 'Item Name' },
-  { key: 'extractedData.packagingType', label: 'Packaging' },
-  { key: 'extractedData.packageCount', label: 'Pkg Count' },
-  { key: 'extractedData.totalWeight', label: 'Weight (Kg)' },
-  { key: 'extractedData.invoiceValue', label: 'Value (PKR)' },
-  { key: 'extractedData.hsCode', label: 'HS Code' },
+  { key: 'caseNo', label: 'CASE NO' },
+  { key: 'createdAt', label: 'DATE' },
+  { key: 'clientName', label: 'CLIENT' },
+  { key: 'category', label: 'CATEGORY' },
+  { key: 'status', label: 'STATUS' },
+  { key: 'pol', label: 'PORT OF LOADING' },
+  { key: 'pod', label: 'PORT OF DELIVERY' },
 ];
 
 interface CaseManagementProps {
@@ -688,6 +670,8 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
   const [reportSearchTerm, setReportSearchTerm] = useState('');
   const [reportFilters, setReportFilters] = useState<Record<string, string>>({});
   const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
+  const [reportSelectedCase, setReportSelectedCase] = useState<Case | null>(null);
+  const [copiedCaseNo, setCopiedCaseNo] = useState(false);
 
   // Detail View Edit State
   const [isEditingCase, setIsEditingCase] = useState(false);
@@ -1978,13 +1962,539 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
     setReportFilters(prev => ({ ...prev, [key]: value }));
   };
 
+  // Dedicated Popup Modal for Full Case Details & Complete Documents Download
+  const renderReportCaseDetailModal = () => {
+    if (!reportSelectedCase) return null;
+    const c = reportSelectedCase;
+    const caseNo = c.caseNo || c.caseNumber || 'N/A';
+    const clientName = c.clientName || c.client || c.extractedData?.consigneeName || 'N/A';
+    const status = c.status || 'Active';
+    const pol = c.pol || c.extractedData?.pol || 'Karachi Port / Terminal';
+    const pod = c.pod || c.extractedData?.pod || c.extractedData?.placeOfDelivery || 'Upcountry Dry Port';
+    const dateStr = c.createdAt ? c.createdAt.split('T')[0] : (c.registrationDate || c.date || 'N/A');
+    const ext = c.extractedData || ({} as ExtractedData);
+    const docs = c.documents || [];
+    const charges = c.charges || [];
+    const containers = c.containers || [];
+
+    const handleDownloadAllFilesBatch = () => {
+      // 1. Download Unified Complete Dossier PDF
+      handleDownloadPdfFile(c, { withInvoice: true, withAttachments: true });
+      // 2. Trigger download of any attached document files
+      if (docs.length > 0) {
+        docs.forEach((doc: any, i: number) => {
+          setTimeout(() => {
+            try {
+              const docName = doc.name || `Document_${caseNo}_${i + 1}`;
+              let url = doc.url;
+              if (!url && doc instanceof File) url = URL.createObjectURL(doc);
+              if (url) {
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = docName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+              }
+            } catch (err) {
+              console.warn("File download notice:", err);
+            }
+          }, (i + 1) * 350);
+        });
+      }
+    };
+
+    return (
+      <div 
+        className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-md flex items-start justify-center pt-6 sm:pt-10 p-3 sm:p-6 no-print overflow-y-auto"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setReportSelectedCase(null);
+        }}
+      >
+        <div className="bg-slate-900 border border-white/15 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+          
+          {/* Modal Header */}
+          <div className="p-5 sm:p-6 border-b border-white/10 bg-slate-950/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
+            <div className="space-y-1">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-xl sm:text-2xl font-black font-mono text-amber-300 tracking-wider">
+                  {caseNo}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(caseNo);
+                    setCopiedCaseNo(true);
+                    setTimeout(() => setCopiedCaseNo(false), 2000);
+                  }}
+                  className="text-gray-400 hover:text-white p-1 rounded transition-colors text-xs flex items-center gap-1 bg-white/5 px-2 py-0.5 border border-white/10 cursor-pointer"
+                  title="Copy Case Number"
+                >
+                  {copiedCaseNo ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                  <span>{copiedCaseNo ? 'Copied' : 'Copy'}</span>
+                </button>
+                <span className="px-3 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                  {status}
+                </span>
+              </div>
+              <p className="text-xs text-gray-300">
+                <span className="font-semibold text-white">{clientName}</span> • <span className="text-gray-400">{c.category || 'Bonded Carrier'}</span>
+                {c.subCategory && c.subCategory !== 'Standard Container / General Cargo' && ` (${c.subCategory})`}
+                {' '}• Registered on {dateStr}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-center">
+              <button
+                type="button"
+                onClick={handleDownloadAllFilesBatch}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+                title="Download all case documents, dossier PDF and attachments"
+              >
+                <Download size={15} />
+                <span>Download All Documents</span>
+              </button>
+
+              <button 
+                type="button"
+                onClick={() => setReportSelectedCase(null)}
+                className="text-gray-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-colors"
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* Modal Scrollable Body */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-5 sm:p-6 space-y-6 text-gray-200">
+            
+            {/* 1. Quick Document Downloads Center */}
+            <div className="bg-gradient-to-r from-brand-950/60 via-slate-900 to-amber-950/40 p-4 sm:p-5 rounded-2xl border border-white/10 shadow-lg space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Download size={16} className="text-emerald-400" />
+                    <span>Download Case Documents & Official PDFs</span>
+                  </h4>
+                  <p className="text-[11px] text-gray-400">
+                    One-click access to complete case dossier, single-page summary, commercial invoice, DO, and shipping documents.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCase(c);
+                      setShowDownloadDocsModal(true);
+                    }}
+                    className="text-[11px] text-brand-300 hover:text-white font-medium underline flex items-center gap-1"
+                  >
+                    <span>Full Download Center</span>
+                    <ExternalLink size={11} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                {/* Button A: Complete Dossier */}
+                <button
+                  type="button"
+                  onClick={() => handleDownloadPdfFile(c, { withInvoice: true, withAttachments: true })}
+                  disabled={isDownloadingPdf}
+                  className="bg-emerald-700/80 hover:bg-emerald-600 border border-emerald-500/40 text-white p-3 rounded-xl text-xs font-semibold flex flex-col items-center justify-center text-center gap-1 shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                  title="Download unified PDF with all case particulars, invoices, and paperwork"
+                >
+                  <Download size={16} className="text-emerald-200" />
+                  <span>Complete Dossier (PDF)</span>
+                  <span className="text-[9px] text-emerald-200/80 font-normal">All details + attachments</span>
+                </button>
+
+                {/* Button B: Case Summary */}
+                <button
+                  type="button"
+                  onClick={() => handleDownloadPdfFile(c, { onlyCaseDetails: true })}
+                  disabled={isDownloadingPdf}
+                  className="bg-brand-700/80 hover:bg-brand-600 border border-brand-500/40 text-white p-3 rounded-xl text-xs font-semibold flex flex-col items-center justify-center text-center gap-1 shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                  title="Download clean single-page official case summary"
+                >
+                  <FileText size={16} className="text-brand-200" />
+                  <span>Case Summary (PDF)</span>
+                  <span className="text-[9px] text-brand-200/80 font-normal">Single-page metadata</span>
+                </button>
+
+                {/* Button C: Commercial Invoice */}
+                <button
+                  type="button"
+                  onClick={() => handleDownloadPdfFile(c, { onlyInvoice: true })}
+                  disabled={isDownloadingPdf}
+                  className="bg-amber-700/80 hover:bg-amber-600 border border-amber-500/40 text-white p-3 rounded-xl text-xs font-semibold flex flex-col items-center justify-center text-center gap-1 shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                  title="Download official commercial invoice voucher"
+                >
+                  <Receipt size={16} className="text-amber-200" />
+                  <span>Commercial Invoice</span>
+                  <span className="text-[9px] text-amber-200/80 font-normal">Itemized bill breakdown</span>
+                </button>
+
+                {/* Button D: Customs Delivery Order (DO) */}
+                {isDestinationUnloadedAndGateOut(c) && (
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadDeliveryOrder(c)}
+                    className="bg-purple-700/80 hover:bg-purple-600 border border-purple-500/40 text-white p-3 rounded-xl text-xs font-semibold flex flex-col items-center justify-center text-center gap-1 shadow-md transition-all active:scale-95 cursor-pointer"
+                    title="Print customs delivery order document"
+                  >
+                    <FileCheck size={16} className="text-purple-200" />
+                    <span>Print DO Document</span>
+                    <span className="text-[9px] text-purple-200/80 font-normal">Port/Terminal Delivery Order</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 2. Attached Shipping Files & Documents */}
+            {docs.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                    <Package size={15} className="text-brand-400" />
+                    <span>Attached Shipping Documents ({docs.length})</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={handleDownloadAllFilesBatch}
+                    className="text-[11px] text-brand-300 hover:text-white flex items-center gap-1 font-medium underline"
+                  >
+                    <Download size={12} />
+                    <span>Download All Files</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {docs.map((doc: any, idx: number) => {
+                    const docName = doc.name || `Attached_Document_${idx + 1}`;
+                    const docCategory = doc.docCategory || doc.type || 'Customs Paperwork';
+                    let docUrl = doc.url;
+                    if (!docUrl && doc instanceof File) {
+                      try { docUrl = URL.createObjectURL(doc); } catch (_) {}
+                    }
+
+                    return (
+                      <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-white/10 hover:border-white/20 transition-all text-xs">
+                        <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                          <div className="w-8 h-8 rounded-lg bg-brand-500/10 text-brand-400 flex items-center justify-center shrink-0">
+                            <FileText size={16} />
+                          </div>
+                          <div className="truncate">
+                            <p className="font-semibold text-white truncate">{docName}</p>
+                            <span className="text-[10px] text-gray-400">{docCategory}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {docUrl && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const isPdf = docName.toLowerCase().endsWith('.pdf');
+                                if (isPdf) {
+                                  setDirectDownloadUrl(docUrl);
+                                  setDirectDownloadFilename(docName);
+                                  setIsPdfViewerOpen(true);
+                                } else {
+                                  setLightboxImage(docUrl);
+                                }
+                              }}
+                              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white transition-colors"
+                              title="Preview Document"
+                            >
+                              <Eye size={14} />
+                            </button>
+                          )}
+                          {docUrl && (
+                            <a
+                              href={docUrl}
+                              download={docName}
+                              className="p-1.5 rounded-lg bg-brand-600/30 hover:bg-brand-600 text-brand-300 hover:text-white transition-colors flex items-center gap-1 font-medium text-[11px] px-2.5"
+                              title="Download File"
+                            >
+                              <Download size={13} />
+                              <span>Save</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 3. Comprehensive Shipping Particulars Grid */}
+            <div className="space-y-4">
+              <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                <Ship size={15} className="text-brand-400" />
+                <span>Shipping, Routing & Commodity Particulars</span>
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                
+                {/* Card A: Bill of Lading & Vessel */}
+                <div className="p-4 rounded-xl bg-slate-950/60 border border-white/10 space-y-2">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-brand-400 font-bold block">
+                    B/L, Vessel & Port Calls
+                  </span>
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">B/L Number:</span>
+                      <span className="font-mono font-semibold text-white">{ext.blNumber || c.blNumber || '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">B/L Date:</span>
+                      <span className="text-gray-200">{ext.blDate || '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Vessel Name:</span>
+                      <span className="text-gray-200">{ext.vesselName || '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Shipping Line:</span>
+                      <span className="text-gray-200">{ext.shippingLine || '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">IGM / Index:</span>
+                      <span className="font-mono text-gray-200">
+                        {ext.igmNo ? `IGM: ${ext.igmNo}` : ''} {ext.indexNo ? `Idx: ${ext.indexNo}` : ''} {!ext.igmNo && !ext.indexNo && '-'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-gray-400">Arrival Date:</span>
+                      <span className="text-gray-200">{ext.arrivalDate || '-'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card B: Port Routing & Status */}
+                <div className="p-4 rounded-xl bg-slate-950/60 border border-white/10 space-y-2">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 font-bold block">
+                    Routing & Service Category
+                  </span>
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Port of Loading (POL):</span>
+                      <span className="text-white font-medium text-right truncate max-w-[160px]">{pol}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Port of Delivery (POD):</span>
+                      <span className="text-white font-medium text-right truncate max-w-[160px]">{pod}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Category:</span>
+                      <span className="text-gray-200">{c.category || 'Bonded Carrier'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Sub-Category:</span>
+                      <span className="text-gray-200">{c.subCategory || 'Standard'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-gray-400">DO Arranged By:</span>
+                      <span className="font-semibold text-amber-300">
+                        {c.serviceArrangements?.shippingLineDO?.arrangedBy === 'DPL' ? 'DPL (Docks Pvt Ltd)' : 'Client Arranged'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card C: Cargo & Value */}
+                <div className="p-4 rounded-xl bg-slate-950/60 border border-white/10 space-y-2">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold block">
+                    Cargo Description & Weight
+                  </span>
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Item Name:</span>
+                      <span className="text-white font-medium truncate max-w-[160px]">{ext.itemName || ext.itemType || '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Packaging Type:</span>
+                      <span className="text-gray-200">{ext.packagingType || '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Package Count:</span>
+                      <span className="font-mono text-gray-200">{ext.packageCount ? `${ext.packageCount} Units` : '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Total Gross Weight:</span>
+                      <span className="font-mono font-semibold text-white">{ext.totalWeight ? `${ext.totalWeight.toLocaleString()} Kg` : '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 border-b border-white/5">
+                      <span className="text-gray-400">Invoice Value:</span>
+                      <span className="font-mono text-emerald-300">{ext.invoiceValue ? `PKR ${ext.invoiceValue.toLocaleString()}` : '-'}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-gray-400">HS Code:</span>
+                      <span className="font-mono text-gray-200">{ext.hsCode || '-'}</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            {/* 4. Shipper & Consignee */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div className="p-4 rounded-xl bg-slate-950/60 border border-white/10 space-y-1.5 text-xs">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-bold block">
+                  Consignee / Importer
+                </span>
+                <p className="font-bold text-white text-sm">{ext.consigneeName || clientName}</p>
+                <p className="text-gray-400 leading-relaxed">{ext.consigneeAddress || 'Address on file'}</p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-950/60 border border-white/10 space-y-1.5 text-xs">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-purple-400 font-bold block">
+                  Shipper / Supplier
+                </span>
+                <p className="font-bold text-white text-sm">{ext.shipperName || 'International Supplier'}</p>
+                <p className="text-gray-400 leading-relaxed">{ext.shipperAddress || 'Overseas Port / Location'}</p>
+              </div>
+            </div>
+
+            {/* 5. Containers & Transport Vehicles */}
+            {containers.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                  <Truck size={15} className="text-brand-400" />
+                  <span>Assigned Containers & Transport Fleet ({containers.length})</span>
+                </h4>
+
+                <div className="overflow-x-auto rounded-xl border border-white/10">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-950 text-gray-400 font-mono uppercase border-b border-white/10">
+                      <tr>
+                        <th className="p-3">#</th>
+                        <th className="p-3">Container No</th>
+                        <th className="p-3">Size / Type</th>
+                        <th className="p-3">Seal No</th>
+                        <th className="p-3">Vehicle No</th>
+                        <th className="p-3">Driver Name & Phone</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 bg-slate-900/50">
+                      {containers.map((cn: Container, cIdx: number) => (
+                        <tr key={cIdx} className="hover:bg-white/5">
+                          <td className="p-3 text-gray-500 font-mono">{cIdx + 1}</td>
+                          <td className="p-3 font-mono font-bold text-amber-300">{cn.number || '-'}</td>
+                          <td className="p-3 text-gray-300 font-mono">{cn.size || '40ft'}</td>
+                          <td className="p-3 font-mono text-cyan-300">{cn.sealNo || '-'}</td>
+                          <td className="p-3 font-mono font-semibold text-white">{cn.vehicleNo || '-'}</td>
+                          <td className="p-3 text-gray-300">
+                            {cn.driverName ? `${cn.driverName} (${cn.driverContact || 'No Phone'})` : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* 6. Itemized Financial Charges */}
+            {charges.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <DollarSign size={15} className="text-emerald-400" />
+                    <span>Itemized Charges & Billing</span>
+                  </span>
+                  <span className="font-mono text-emerald-400 font-bold">
+                    Total: PKR {charges.reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0).toLocaleString()}
+                  </span>
+                </h4>
+
+                <div className="overflow-x-auto rounded-xl border border-white/10">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-950 text-gray-400 font-mono uppercase border-b border-white/10">
+                      <tr>
+                        <th className="p-3">Charge Description</th>
+                        <th className="p-3">Category</th>
+                        <th className="p-3 text-right">Amount (PKR)</th>
+                        <th className="p-3 text-center">Receipt</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 bg-slate-900/50">
+                      {charges.map((ch: CaseCharge, chIdx: number) => (
+                        <tr key={chIdx} className="hover:bg-white/5">
+                          <td className="p-3 font-medium text-white">{ch.description}</td>
+                          <td className="p-3 text-gray-400">{ch.category || 'Port / Logistics'}</td>
+                          <td className="p-3 font-mono text-emerald-300 font-semibold text-right">
+                            PKR {(Number(ch.amount) || 0).toLocaleString()}
+                          </td>
+                          <td className="p-3 text-center">
+                            {ch.receiptUrl ? (
+                              <a
+                                href={ch.receiptUrl}
+                                download={`Receipt_${(ch.description || 'Charge').replace(/\s+/g, '_')}`}
+                                className="text-[10px] text-brand-300 hover:text-white underline inline-flex items-center gap-1"
+                              >
+                                <Download size={10} />
+                                <span>Receipt</span>
+                              </a>
+                            ) : (
+                              <span className="text-gray-600">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+          </div>
+
+          {/* Modal Footer */}
+          <div className="p-4 sm:p-5 border-t border-white/10 bg-slate-950/80 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+            <span className="text-xs text-gray-400">
+              DPL Operations Audit & Clearance Record
+            </span>
+            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  const target = c;
+                  setReportSelectedCase(null);
+                  setShowReportModal(false);
+                  setSelectedCase(target);
+                  setView('details');
+                }}
+                className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-brand-600/30 cursor-pointer"
+              >
+                <ExternalLink size={14} />
+                <span>Open in Full Case Editor</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setReportSelectedCase(null)}
+                className="bg-slate-800 hover:bg-slate-700 text-gray-200 px-4 py-2 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
   const renderReportModal = () => {
     const reportData = getFilteredReportData();
 
     return (
       <div className="fixed inset-0 bg-slate-950 z-50 flex flex-col animate-in fade-in slide-in-from-bottom-4 print-sheet" data-printable-modal="true">
         {/* Top Bar - Hidden during Print */}
-        <div className="bg-slate-900 border-b border-white/10 p-4 flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg z-20 no-print">
+        <div className="bg-slate-900 border-b border-white/10 p-4 flex flex-col md:flex-row justify-between items-center gap-4 shadow-lg z-20 no-print shrink-0">
            <div className="flex items-center gap-4 w-full md:w-auto">
               <button onClick={() => setShowReportModal(false)} className="text-gray-400 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors">
                  <ArrowLeft size={24} />
@@ -1997,8 +2507,8 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
               <Search className="absolute left-3 top-2.5 text-brand-400" size={20} />
               <input 
                 type="text" 
-                placeholder="Search anything (Client, BL, Item, etc)..." 
-                className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 outline-none text-white focus:border-brand-500 transition-colors shadow-inner"
+                placeholder="Search anything (Client, BL, item, etc)..." 
+                className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 outline-none text-white focus:border-brand-500 transition-colors shadow-inner text-sm"
                 value={reportSearchTerm}
                 onChange={(e) => setReportSearchTerm(e.target.value)}
                 autoFocus
@@ -2011,17 +2521,16 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
               </div>
               <button
                 onClick={() => {
-                  const headers = ['Case No', 'Client', 'BL Number', 'Category', 'Containers', 'Vehicle', 'Driver', 'Status', 'Created Date'];
-                  const rows = reportData.map(c => [
+                  const headers = ['#', 'Case No', 'Date', 'Client', 'Category', 'Status', 'Port of Loading', 'Port of Delivery'];
+                  const rows = reportData.map((c, i) => [
+                    i + 1,
                     c.caseNo,
-                    c.clientName || '',
-                    c.blNumber || '',
+                    c.createdAt ? c.createdAt.split('T')[0] : (c.registrationDate || ''),
+                    c.clientName || c.client || '',
                     c.category,
-                    (c.containers || []).map(cn => cn.number).join('; '),
-                    (c.containers || []).map(cn => cn.vehicleNo).filter(Boolean).join('; ') || '',
-                    (c.containers || []).map(cn => cn.driverName).filter(Boolean).join('; ') || '',
                     c.status,
-                    c.createdAt || ''
+                    c.pol || c.extractedData?.pol || '',
+                    c.pod || c.extractedData?.pod || '',
                   ]);
                   const csvContent = [headers.join(','), ...rows.map(r => r.map(f => `"${String(f).replace(/"/g, '""')}"`).join(','))].join('\n');
                   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -2060,93 +2569,163 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
            </div>
         </div>
 
-        {/* Report Table */}
-        <div className="flex-1 overflow-auto custom-scrollbar bg-slate-950 p-4">
-           <div className="border border-white/10 rounded-xl overflow-hidden shadow-2xl bg-slate-900/50 print:border-none">
-             <div className="overflow-x-auto">
-               <table className="w-full text-left text-sm text-gray-200 print:text-black">
-                  <thead className="bg-slate-900 text-xs uppercase font-bold text-gray-400 sticky top-0 z-10 shadow-md print:bg-gray-100 print:text-black">
-                    <tr>
-                      <th className="p-4 border-b border-white/10 bg-slate-900 sticky left-0 z-20 w-16 text-center print:bg-transparent print:border-gray-300">#</th>
-                      {REPORT_COLUMNS.map((col) => (
-                        <th key={col.key} className="p-4 border-b border-white/10 bg-slate-900 whitespace-nowrap min-w-[150px] group relative print:bg-transparent print:border-gray-300">
-                           <div className="flex items-center justify-between gap-2">
-                              <span>{col.label}</span>
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); setActiveFilterColumn(activeFilterColumn === col.key ? null : col.key); }}
-                                className={`p-1 rounded hover:bg-white/10 transition-colors no-print ${reportFilters[col.key] ? 'text-brand-400' : 'text-gray-600 group-hover:text-gray-400'}`}
-                              >
-                                 <Filter size={14} fill={reportFilters[col.key] ? 'currentColor' : 'none'} />
-                              </button>
-                           </div>
-
-                           {/* Column Filter Popup */}
-                           {activeFilterColumn === col.key && (
-                              <div className="absolute top-full left-0 mt-2 w-48 bg-slate-800 border border-white/20 rounded-lg shadow-xl p-2 z-30 animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
-                                 <input 
-                                   type="text" 
-                                   placeholder={`Filter ${col.label}...`}
-                                   className="w-full bg-black/30 border border-white/10 rounded p-2 text-xs text-white outline-none focus:border-brand-500"
-                                   value={reportFilters[col.key] || ''}
-                                   onChange={(e) => handleColumnFilterChange(col.key, e.target.value)}
-                                   autoFocus
-                                 />
-                                 <div className="flex justify-end mt-2">
-                                    <button 
-                                      onClick={() => setActiveFilterColumn(null)}
-                                      className="text-[10px] text-brand-400 hover:text-white uppercase font-bold"
-                                    >
-                                      Close
-                                    </button>
-                                 </div>
-                              </div>
-                           )}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                     {reportData.map((row, idx) => (
-                        <tr key={row.id} className="hover:bg-white/5 transition-colors">
-                           <td className="p-4 border-r border-white/5 bg-slate-900/30 sticky left-0 text-center text-gray-500 font-mono text-xs">
-                              {idx + 1}
-                           </td>
-                           {REPORT_COLUMNS.map((col) => {
-                              const val = getNestedValue(row, col.key);
-                              return (
-                                <td key={col.key} className="p-4 whitespace-nowrap text-gray-300 border-r border-white/5 last:border-0">
-                                   {val || '-'}
-                                </td>
-                              );
-                           })}
-                        </tr>
-                     ))}
-                     {reportData.length === 0 && (
-                        <tr>
-                           <td colSpan={REPORT_COLUMNS.length + 1} className="p-12 text-center text-gray-500">
-                              No records found matching your search.
-                           </td>
-                        </tr>
-                     )}
-                  </tbody>
-               </table>
+        {/* Report Table Viewport with Reduced Side Margins & Natural Up/Down Scroll */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-950 p-4 sm:p-6 lg:p-8">
+           <div className="max-w-[1360px] mx-auto w-full space-y-3">
+             
+             {/* Sub-header instruction */}
+             <div className="flex items-center justify-between text-xs text-gray-400 px-1 no-print">
+               <span className="flex items-center gap-1.5 text-brand-300">
+                 <Sparkles size={14} className="text-amber-400" />
+                 Row par click karein case ki mukammal detail aur documents download karne ke liye
+               </span>
+               <span className="font-mono text-gray-400">{reportData.length} cases</span>
              </div>
 
-             {/* Official Footer for Print */}
-             <div className="hidden print:flex justify-between items-center p-4 border-t border-gray-300 text-xs text-gray-600 print-avoid-break">
-                <div>
-                   <p className="font-semibold text-black">Docks (Pvt.) Ltd — Operations Control</p>
-                   <p className="text-[10px]">Confidential Logistics & Customs Terminal Audit</p>
-                </div>
-                <div className="text-right">
-                   <div className="border-t border-dashed border-gray-400 pt-1 w-44 text-center">
-                      <p className="text-[11px] font-semibold text-black">Operations Director</p>
-                      <p className="text-[10px] text-gray-600">Verification & Sign-off</p>
-                   </div>
-                </div>
+             <div className="border border-white/10 rounded-2xl overflow-hidden shadow-2xl bg-slate-900/60 print:border-none">
+               <div className="w-full">
+                 <table className="w-full text-left text-sm text-gray-200 print:text-black">
+                    <thead className="bg-slate-900 text-xs uppercase font-bold text-gray-400 sticky top-0 z-10 shadow-md print:bg-gray-100 print:text-black">
+                      <tr>
+                        <th className="p-3.5 border-b border-white/10 bg-slate-900 w-12 text-center print:bg-transparent print:border-gray-300">#</th>
+                        {REPORT_COLUMNS.map((col) => (
+                          <th key={col.key} className="p-3.5 border-b border-white/10 bg-slate-900 group relative print:bg-transparent print:border-gray-300 text-xs tracking-wider">
+                             <div className="flex items-center justify-between gap-1.5">
+                                <span>{col.label}</span>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); setActiveFilterColumn(activeFilterColumn === col.key ? null : col.key); }}
+                                  className={`p-1 rounded hover:bg-white/10 transition-colors no-print ${reportFilters[col.key] ? 'text-brand-400' : 'text-gray-600 group-hover:text-gray-400'}`}
+                                  title={`Filter by ${col.label}`}
+                                >
+                                   <Filter size={13} fill={reportFilters[col.key] ? 'currentColor' : 'none'} />
+                                </button>
+                             </div>
+
+                             {/* Column Filter Popup */}
+                             {activeFilterColumn === col.key && (
+                                <div className="absolute top-full left-0 mt-2 w-52 bg-slate-800 border border-white/20 rounded-xl shadow-2xl p-2.5 z-30 animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+                                   <input 
+                                     type="text" 
+                                     placeholder={`Filter ${col.label}...`}
+                                     className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-xs text-white outline-none focus:border-brand-500"
+                                     value={reportFilters[col.key] || ''}
+                                     onChange={(e) => handleColumnFilterChange(col.key, e.target.value)}
+                                     autoFocus
+                                   />
+                                   <div className="flex justify-between items-center mt-2 pt-1 border-t border-white/10">
+                                      {reportFilters[col.key] ? (
+                                        <button
+                                          onClick={() => handleColumnFilterChange(col.key, '')}
+                                          className="text-[10px] text-red-400 hover:text-red-300"
+                                        >
+                                          Clear
+                                        </button>
+                                      ) : <span />}
+                                      <button 
+                                        onClick={() => setActiveFilterColumn(null)}
+                                        className="text-[10px] text-brand-400 hover:text-white uppercase font-bold"
+                                      >
+                                        Close
+                                      </button>
+                                   </div>
+                                </div>
+                             )}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                       {reportData.map((row, idx) => (
+                          <tr 
+                            key={row.id} 
+                            onClick={() => setReportSelectedCase(row)}
+                            className="hover:bg-brand-500/10 transition-colors cursor-pointer group"
+                            title="Click row to open case details & download documents"
+                          >
+                             <td className="p-3.5 border-r border-white/5 bg-slate-900/30 text-center text-gray-500 font-mono text-xs w-12">
+                                {idx + 1}
+                             </td>
+                             {REPORT_COLUMNS.map((col) => {
+                                let val = getNestedValue(row, col.key);
+                                if (col.key === 'createdAt' && val) {
+                                  val = String(val).split('T')[0];
+                                } else if (col.key === 'pol' && !val) {
+                                  val = row.extractedData?.pol || '-';
+                                } else if (col.key === 'pod' && !val) {
+                                  val = row.extractedData?.pod || row.extractedData?.placeOfDelivery || '-';
+                                } else if (col.key === 'clientName' && !val) {
+                                  val = row.extractedData?.consigneeName || row.client || '-';
+                                }
+
+                                if (col.key === 'caseNo') {
+                                  return (
+                                    <td key={col.key} className="p-3.5 font-mono font-bold text-amber-300 border-r border-white/5 whitespace-nowrap">
+                                      <div className="flex items-center gap-1.5">
+                                        <span>{val || '-'}</span>
+                                        <ExternalLink size={12} className="opacity-0 group-hover:opacity-80 transition-opacity text-brand-400 shrink-0" />
+                                      </div>
+                                    </td>
+                                  );
+                                }
+
+                                if (col.key === 'createdAt') {
+                                  return (
+                                    <td key={col.key} className="p-3.5 font-mono text-gray-300 border-r border-white/5 whitespace-nowrap text-xs">
+                                      {val || '-'}
+                                    </td>
+                                  );
+                                }
+
+                                if (col.key === 'clientName') {
+                                  return (
+                                    <td key={col.key} className="p-3.5 font-semibold text-white border-r border-white/5 truncate max-w-[200px]" title={String(val || '')}>
+                                      {val || '-'}
+                                    </td>
+                                  );
+                                }
+
+                                if (col.key === 'category') {
+                                  return (
+                                    <td key={col.key} className="p-3.5 text-gray-300 border-r border-white/5 whitespace-nowrap text-xs">
+                                      {val || '-'}
+                                    </td>
+                                  );
+                                }
+
+                                if (col.key === 'status') {
+                                  return (
+                                    <td key={col.key} className="p-3.5 border-r border-white/5 whitespace-nowrap">
+                                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-brand-500/15 text-brand-300 border border-brand-500/30">
+                                        {val || 'Active'}
+                                      </span>
+                                    </td>
+                                  );
+                                }
+
+                                return (
+                                  <td key={col.key} className="p-3.5 text-gray-300 border-r border-white/5 last:border-0 truncate max-w-[180px] text-xs" title={String(val || '')}>
+                                     {val || '-'}
+                                  </td>
+                                );
+                             })}
+                          </tr>
+                       ))}
+                       {reportData.length === 0 && (
+                          <tr>
+                             <td colSpan={REPORT_COLUMNS.length + 1} className="p-12 text-center text-gray-500">
+                                No records found matching your search.
+                             </td>
+                          </tr>
+                       )}
+                    </tbody>
+                 </table>
+               </div>
              </div>
            </div>
         </div>
+
+        {/* Case Detail & Document Download Popup Modal */}
+        {reportSelectedCase && renderReportCaseDetailModal()}
       </div>
     );
   };
@@ -2216,30 +2795,11 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
            <button onClick={handleStartRegistration} className="bg-brand-600 hover:bg-brand-500 text-white px-5 py-2.5 rounded-lg flex items-center gap-2 font-medium shadow-lg shadow-brand-600/30 transition-all hover:scale-105">
              <Upload size={18} /> New Case Registration
            </button>
-           <select 
-              value={mockUserRole} 
-              onChange={(e) => setMockUserRole(e.target.value as UserRole)}
-              className="bg-slate-800 text-white border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none"
-              title="Mock User Role (For Testing)"
-           >
-              <option value={UserRole.ADMIN}>Admin Role</option>
-              <option value={UserRole.CLIENT}>Client Role</option>
-              <option value={UserRole.OPERATIONS_MANAGER}>Operations Manager</option>
-              <option value={UserRole.FINANCE_MANAGER}>Finance Manager</option>
-           </select>
            <button onClick={() => setShowPortModal(true)} className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-colors">
              <Anchor size={18} className="text-brand-400" /> Add Port
            </button>
            <button onClick={() => setShowFilterModal(true)} className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-colors">
              <ListFilter size={18} className="text-brand-400" /> View List / Reports
-           </button>
-           <button 
-             onClick={() => setShowCustomsGuideModal(true)} 
-             className="bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 px-3.5 py-2.5 rounded-lg flex items-center gap-2 font-medium text-xs sm:text-sm transition-all"
-             title="Pakistan Customs Act, Rules & Statutory Compliance Guide"
-           >
-             <FileCheck size={17} className="text-amber-400" />
-             <span>Customs Rules & Act Guide</span>
            </button>
          </div>
          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
@@ -2476,7 +3036,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
        {/* View List / Filter Modal */}
        {showFilterModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto animate-in fade-in duration-200">
             <div className="glass-card p-6 rounded-2xl w-full max-w-sm border border-white/10">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2"><ListFilter size={20} className="text-brand-400"/> Filter Case List</h3>
@@ -2526,7 +3086,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
        {/* Confirm Discard Incomplete Draft Modal */}
        {showDiscardModal && (
-         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto animate-in fade-in duration-200">
            <div className="glass-card p-6 rounded-2xl w-full max-w-md border border-red-500/30 shadow-2xl space-y-4">
              <div className="flex items-center gap-3 text-red-400">
                <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center shrink-0">
@@ -2587,7 +3147,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
        {/* Existing Incomplete Draft Prompt (When clicking New Registration) */}
        {showStartNewDraftPrompt && (
-         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto animate-in fade-in duration-200">
            <div className="glass-card p-6 rounded-2xl w-full max-w-md border border-amber-500/30 shadow-2xl space-y-4">
              <div className="flex items-center gap-3 text-amber-400">
                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0">
@@ -2731,7 +3291,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                 ) : (
                    <>
                       {/* Print Delivery Order (DO) button for Destination Staff, Case Manager, and Admin */}
-                      {(effectiveRole === UserRole.UNLOADING_PORT_STAFF || effectiveRole === UserRole.DESTINATION_PORT_STAFF || effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.OPERATIONS_MANAGER) && (
+                      {(effectiveRole === UserRole.UNLOADING_PORT_STAFF || effectiveRole === UserRole.DESTINATION_PORT_STAFF || effectiveRole === UserRole.ADMIN || effectiveRole === UserRole.OPERATIONS_MANAGER) && isDestinationUnloadedAndGateOut(targetCase) && (
                         <button 
                           onClick={() => handleDownloadDeliveryOrder(targetCase)} 
                           className="bg-amber-600 hover:bg-amber-500 active:scale-95 text-white px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs sm:text-sm shadow-lg shadow-amber-600/20 transition-all font-medium"
@@ -6039,7 +6599,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
       {/* Add More Charges Modal */}
       {showRegistrationChargeModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[95] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[95] flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto">
           <div className="glass-card max-w-md w-full p-6 rounded-2xl border border-white/15 bg-slate-900/95 shadow-2xl space-y-4 animate-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -6573,358 +7133,242 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
         />
       )}
 
-      {/* Download Documents Modal */}
+      {/* Download Documents Modal - Clean List Format */}
       {showDownloadDocsModal && selectedCase && (
         <div 
-          className="fixed inset-0 bg-black/75 z-[100] flex items-center justify-center p-4 backdrop-blur-sm no-print"
+          className="fixed inset-0 bg-black/80 z-[100] flex items-start justify-center pt-6 sm:pt-10 p-3 sm:p-5 backdrop-blur-sm no-print overflow-y-auto"
           onClick={(e) => {
             if (e.target === e.currentTarget) setShowDownloadDocsModal(false);
           }}
         >
-          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-xl w-full border border-white/15 shadow-2xl animate-fade-in max-h-[92vh] flex flex-col">
+          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-2xl w-full border border-white/15 shadow-2xl animate-fade-in max-h-[90vh] flex flex-col">
             {/* Header */}
-            <div className="p-5 sm:p-6 border-b border-white/10 flex justify-between items-center bg-slate-950/60 shrink-0">
+            <div className="p-4 sm:p-5 border-b border-white/10 flex justify-between items-center bg-slate-950/70 shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-brand-500/15 text-brand-400 flex items-center justify-center border border-brand-500/30">
                   <Download size={20} />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                    <span>Download Documents</span>
-                    
+                  <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <span>Download Case Documents</span>
                   </h3>
-                  <p className="text-xs text-gray-400 font-mono">Case No: {selectedCase.caseNo}</p>
+                  <p className="text-xs text-gray-400 font-mono">
+                    Case No: <span className="text-amber-300 font-semibold">{selectedCase.caseNo}</span>
+                    {selectedCase.clientName && <span> • Client: <span className="text-white font-medium">{selectedCase.clientName}</span></span>}
+                  </p>
                 </div>
               </div>
               <button 
                 onClick={() => setShowDownloadDocsModal(false)}
                 className="text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                title="Close"
               >
                 <X size={20} />
               </button>
             </div>
 
-            {/* Content Body */}
-            <div className="p-5 sm:p-6 space-y-4 overflow-y-auto">
-              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
-                Select Document to Download:
-              </p>
-
-              {/* Options Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* 1. Case Details */}
-                <div 
-                  onClick={() => setSelectedDownloadType('caseDetails')}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                    selectedDownloadType === 'caseDetails'
-                      ? 'bg-brand-600/15 border-brand-500 ring-2 ring-brand-500/30 shadow-lg shadow-brand-600/10'
-                      : 'bg-white/[0.02] border-white/10 hover:bg-white/5'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <input 
-                      type="radio" 
-                      name="downloadChoice" 
-                      checked={selectedDownloadType === 'caseDetails'} 
-                      onChange={() => setSelectedDownloadType('caseDetails')}
-                      className="accent-brand-500 w-4 h-4 mt-0.5"
-                    />
-                    <div>
-                      <h4 className="font-bold text-white text-sm">Case Details</h4>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Print or download full single-page case summary with all particulars and metadata.
-                      </p>
-                    </div>
+            {/* List Body */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                  Available Documents List:
+                </p>
+                {isDownloadingPdf && (
+                  <div className="flex items-center gap-1.5 text-xs text-brand-300 font-medium">
+                    <Loader2 size={13} className="animate-spin text-brand-400" />
+                    <span>Preparing download...</span>
                   </div>
-                  <span className="text-[10px] font-mono text-brand-300 bg-brand-500/10 px-2 py-0.5 rounded border border-brand-500/20 self-start mt-3">
-                    Single Page Document
-                  </span>
-                </div>
-
-                {/* 2. Invoice */}
-                <div 
-                  onClick={() => setSelectedDownloadType('invoice')}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                    selectedDownloadType === 'invoice'
-                      ? 'bg-brand-600/15 border-brand-500 ring-2 ring-brand-500/30 shadow-lg shadow-brand-600/10'
-                      : 'bg-white/[0.02] border-white/10 hover:bg-white/5'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <input 
-                      type="radio" 
-                      name="downloadChoice" 
-                      checked={selectedDownloadType === 'invoice'} 
-                      onChange={() => setSelectedDownloadType('invoice')}
-                      className="accent-brand-500 w-4 h-4 mt-0.5"
-                    />
-                    <div>
-                      <h4 className="font-bold text-white text-sm">Commercial Invoice</h4>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Official billing breakdown and disbursed charges with corporate endorsement.
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 self-start mt-3">
-                    Itemized Billing Charges
-                  </span>
-                </div>
-
-                {/* 3. Attached Documents */}
-                <div 
-                  onClick={() => setSelectedDownloadType('attachments')}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                    selectedDownloadType === 'attachments'
-                      ? 'bg-brand-600/15 border-brand-500 ring-2 ring-brand-500/30 shadow-lg shadow-brand-600/10'
-                      : 'bg-white/[0.02] border-white/10 hover:bg-white/5'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <input 
-                      type="radio" 
-                      name="downloadChoice" 
-                      checked={selectedDownloadType === 'attachments'} 
-                      onChange={() => setSelectedDownloadType('attachments')}
-                      className="accent-brand-500 w-4 h-4 mt-0.5"
-                    />
-                    <div>
-                      <h4 className="font-bold text-white text-sm">Attached Shipping Documents</h4>
-                      <p className="text-xs text-gray-400 mt-1">
-                        All scanned shipping paperwork including BL, GD, packing lists, and verification photos.
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 self-start mt-3">
-                    {selectedCase.documents?.length || 0} Attached File(s)
-                  </span>
-                </div>
-
-                {/* 4. All Documents */}
-                <div 
-                  onClick={() => setSelectedDownloadType('all')}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
-                    selectedDownloadType === 'all'
-                      ? 'bg-brand-600/15 border-brand-500 ring-2 ring-brand-500/30 shadow-lg shadow-brand-600/10'
-                      : 'bg-white/[0.02] border-white/10 hover:bg-white/5'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <input 
-                      type="radio" 
-                      name="downloadChoice" 
-                      checked={selectedDownloadType === 'all'} 
-                      onChange={() => setSelectedDownloadType('all')}
-                      className="accent-brand-500 w-4 h-4 mt-0.5"
-                    />
-                    <div>
-                      <h4 className="font-bold text-white text-sm">Complete Unified Dossier</h4>
-                      <p className="text-xs text-gray-400 mt-1">
-                        Comprehensive unified package combining Case Details, Commercial Invoice, and all attachments.
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-mono text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 self-start mt-3">
-                    Complete Unified Dossier
-                  </span>
-                </div>
+                )}
               </div>
 
-              {/* If Attached Documents is selected, render list of individual files for direct access */}
-              {selectedDownloadType === 'attachments' && (
-                <div className="pt-2 border-t border-white/10 space-y-2">
-                  <h5 className="text-xs font-semibold text-gray-300 flex items-center justify-between">
-                    <span>Attached Files List:</span>
-                    <span className="text-gray-400 font-normal">{selectedCase.documents?.length || 0} files</span>
-                  </h5>
-                  {selectedCase.documents && selectedCase.documents.length > 0 ? (
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                      {selectedCase.documents.map((doc: any, idx: number) => {
-                        const docName = doc.name || `Document_${idx + 1}`;
-                        const docCategory = doc.docCategory || doc.type || 'Customs Doc';
-                        const docSrc = doc.url || (doc instanceof File ? URL.createObjectURL(doc) : '');
-
-                        return (
-                          <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg bg-slate-800/80 border border-white/5 text-xs">
-                            <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                              <FileText size={16} className="text-brand-400 shrink-0" />
-                              <div className="truncate">
-                                <p className="text-white font-medium truncate">{docName}</p>
-                                <span className="text-[10px] text-gray-400">{docCategory}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              {docSrc && (
-                                <button
-                                  type="button"
-                                  onClick={() => setLightboxImage(docSrc)}
-                                  className="text-gray-300 hover:text-white bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded transition-colors"
-                                  title="Preview Document"
-                                >
-                                  View
-                                </button>
-                              )}
-                              {docSrc && (
-                                <a
-                                  href={docSrc}
-                                  download={docName}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-brand-400 hover:text-brand-300 bg-brand-500/10 hover:bg-brand-500/20 px-2.5 py-1 rounded border border-brand-500/20 transition-colors flex items-center gap-1"
-                                  title="Download File"
-                                >
-                                  <Download size={12} />
-                                  <span>Save</span>
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-gray-400 italic py-2">
-                      No document attachments currently uploaded for this case.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* If Invoice or All is selected, and there are charge receipts, list them for direct download */}
-              {(selectedDownloadType === 'invoice' || selectedDownloadType === 'all' || selectedDownloadType === 'attachments') && (
-                selectedCase.charges?.some((c: any) => c.receiptUrl) && (
-                  <div className="pt-2 border-t border-white/10 space-y-2">
-                    <h5 className="text-xs font-semibold text-gray-300 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Receipt size={14} className="text-emerald-400" />
-                        <span>Attached Payment Receipts:</span>
-                      </span>
-                      <span className="text-xs text-emerald-400 font-mono">
-                        {selectedCase.charges.filter((c: any) => c.receiptUrl).length} receipt(s)
-                      </span>
-                    </h5>
-                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {selectedCase.charges.filter((c: any) => c.receiptUrl).map((ch: any, rIdx: number) => (
-                        <div key={rIdx} className="flex items-center justify-between p-2 rounded-lg bg-slate-800/80 border border-white/5 text-xs">
-                          <div className="truncate pr-2">
-                            <p className="text-white font-medium truncate">{ch.description}</p>
-                            <span className="text-[10px] text-emerald-400 font-mono">PKR {Number(ch.amount || 0).toLocaleString()}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => setLightboxImage(ch.receiptUrl)}
-                              className="text-gray-300 hover:text-white bg-white/5 hover:bg-white/10 px-2 py-1 rounded text-xs transition-colors"
-                              title="Preview Receipt"
-                            >
-                              View
-                            </button>
-                            <a
-                              href={ch.receiptUrl}
-                              download={ch.receiptName || `Receipt_${ch.description.replace(/\s+/g, '_')}.png`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 px-2 py-1 rounded border border-emerald-500/30 transition-colors flex items-center gap-1"
-                              title="Download Receipt"
-                            >
-                              <Download size={11} />
-                              <span>Download</span>
-                            </a>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )
-              )}
-
-              {/* Status / Success Banner */}
+              {/* Status / Notice Banner */}
               {pdfDownloadSuccess && (
-                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between gap-3 text-xs text-emerald-300">
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between gap-3 text-xs text-emerald-300 animate-in fade-in">
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 size={16} className="shrink-0" />
-                    <span>File ready: <strong>{pdfDownloadSuccess}</strong></span>
+                    <CheckCircle2 size={16} className="shrink-0 text-emerald-400" />
+                    <span>Downloaded: <strong className="font-mono text-white">{pdfDownloadSuccess}</strong></span>
                   </div>
-                  {directDownloadUrl && (
-                    <a
-                      href={directDownloadUrl}
-                      download={directDownloadFilename || 'Document.pdf'}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 rounded-lg font-medium transition-all"
-                    >
-                      Save File
-                    </a>
-                  )}
+                  <span className="text-[11px] text-gray-400">Saved to Downloads</span>
                 </div>
               )}
 
               {pdfDownloadError && (
                 <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-2 text-xs text-red-300">
-                  <AlertCircle size={16} className="shrink-0" />
+                  <AlertCircle size={16} className="shrink-0 text-red-400" />
                   <span>{pdfDownloadError}</span>
                 </div>
               )}
+
+              {/* Clean List of Documents */}
+              <div className="divide-y divide-white/10 rounded-xl border border-white/10 bg-slate-950/50 overflow-hidden shadow-sm">
+                
+                {/* 1. Sabse upar Hoga: Case Detail */}
+                <div className="p-3.5 sm:p-4 flex items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-brand-500/15 text-brand-400 border border-brand-500/25 flex items-center justify-center shrink-0">
+                      <FileText size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold text-white truncate">Case Detail</h4>
+                      <p className="text-[11px] text-gray-400 truncate">Official Single-Page Case Summary, Dropdowns Form & Invoice Breakdown</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isDownloadingPdf}
+                    onClick={() => handleDownloadPdfFile(selectedCase, { onlyCaseDetails: true, withInvoice: false, withAttachments: false })}
+                    className="bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-brand-600/20 transition-all shrink-0 cursor-pointer active:scale-95"
+                    title="Download Case Detail PDF"
+                  >
+                    <Download size={13} />
+                    <span>Download</span>
+                  </button>
+                </div>
+
+                {/* 2. Usse niche Hoga: Invoice */}
+                <div className="p-3.5 sm:p-4 flex items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/25 flex items-center justify-center shrink-0">
+                      <Receipt size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold text-white truncate">Invoice</h4>
+                      <p className="text-[11px] text-gray-400 truncate">Official Commercial Invoice & Itemized Service Charges</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isDownloadingPdf}
+                    onClick={() => handleDownloadPdfFile(selectedCase, { onlyInvoice: true, withInvoice: true, withAttachments: false })}
+                    className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-amber-600/20 transition-all shrink-0 cursor-pointer active:scale-95"
+                    title="Download Commercial Invoice PDF"
+                  >
+                    <Download size={13} />
+                    <span>Download</span>
+                  </button>
+                </div>
+
+                {/* 3. Usse niche: Sare uploaded document honge jinke naam likhe a rahe honge aur aage download ka button hoga */}
+                {selectedCase.documents && selectedCase.documents.length > 0 ? (
+                  selectedCase.documents.map((doc: any, idx: number) => {
+                    const docName = doc.name || ('Document_' + (idx + 1));
+                    const docCategory = doc.docCategory || doc.type || 'Customs Document';
+                    const docSrc = doc.url || (doc instanceof File ? URL.createObjectURL(doc) : '');
+
+                    const handleDownloadUploadedDoc = () => {
+                      if (!docSrc) return;
+                      const a = document.createElement('a');
+                      a.href = docSrc;
+                      a.download = docName;
+                      a.rel = 'noopener noreferrer';
+                      document.body.appendChild(a);
+                      a.click();
+                      setTimeout(() => {
+                        if (document.body.contains(a)) document.body.removeChild(a);
+                      }, 400);
+                    };
+
+                    return (
+                      <div key={idx} className="p-3.5 sm:p-4 flex items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-cyan-500/15 text-cyan-400 border border-cyan-500/25 flex items-center justify-center shrink-0">
+                            <FileCheck size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="text-sm font-bold text-white truncate" title={docName}>{docName}</h4>
+                            <p className="text-[11px] text-gray-400 truncate">{docCategory}</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleDownloadUploadedDoc}
+                          disabled={!docSrc}
+                          className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-cyan-600/20 transition-all shrink-0 cursor-pointer active:scale-95"
+                          title={'Download ' + docName}
+                        >
+                          <Download size={13} />
+                          <span>Download</span>
+                        </button>
+                      </div>
+                    );
+                  })
+                ) : null}
+
+                {/* Attached Payment Receipts if any */}
+                {selectedCase.charges && selectedCase.charges.some((c: any) => c.receiptUrl) && (
+                  selectedCase.charges.filter((c: any) => c.receiptUrl).map((ch: any, rIdx: number) => {
+                    const rName = ch.receiptName || ('Receipt_' + (ch.description || 'Charge').replace(/\s+/g, '_') + '.png');
+                    const handleDownloadReceipt = () => {
+                      const a = document.createElement('a');
+                      a.href = ch.receiptUrl;
+                      a.download = rName;
+                      a.rel = 'noopener noreferrer';
+                      document.body.appendChild(a);
+                      a.click();
+                      setTimeout(() => {
+                        if (document.body.contains(a)) document.body.removeChild(a);
+                      }, 400);
+                    };
+
+                    return (
+                      <div key={'rcp-' + rIdx} className="p-3.5 sm:p-4 flex items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 flex items-center justify-center shrink-0">
+                            <Receipt size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="text-sm font-bold text-white truncate">{ch.description} (Receipt)</h4>
+                            <p className="text-[11px] text-emerald-400 font-mono">PKR {Number(ch.amount || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleDownloadReceipt}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-600/20 transition-all shrink-0 cursor-pointer active:scale-95"
+                          title="Download Receipt"
+                        >
+                          <Download size={13} />
+                          <span>Download</span>
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+
+                {/* Complete Unified Dossier */}
+                <div className="p-3.5 sm:p-4 flex items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors bg-brand-500/[0.04]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/15 text-purple-300 border border-purple-500/25 flex items-center justify-center shrink-0">
+                      <Layers size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold text-white truncate">Complete Unified Dossier</h4>
+                      <p className="text-[11px] text-gray-400 truncate">Combined dossier containing Case Details, Invoice & all paperwork in 1 PDF</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isDownloadingPdf}
+                    onClick={() => handleDownloadPdfFile(selectedCase, { withInvoice: true, withAttachments: true })}
+                    className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-purple-600/20 transition-all shrink-0 cursor-pointer active:scale-95"
+                    title="Download Complete Unified Dossier PDF"
+                  >
+                    <Download size={13} />
+                    <span>Download</span>
+                  </button>
+                </div>
+              </div>
             </div>
 
-            {/* Footer Actions */}
-            <div className="p-5 sm:p-6 border-t border-white/10 bg-slate-950/60 flex flex-wrap items-center justify-between gap-3 shrink-0">
+            {/* Footer */}
+            <div className="p-4 sm:p-5 border-t border-white/10 bg-slate-950/70 flex justify-end shrink-0">
               <button
                 type="button"
                 onClick={() => setShowDownloadDocsModal(false)}
-                className="px-4 py-2 rounded-xl text-xs sm:text-sm text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                className="px-5 py-2 rounded-xl text-xs sm:text-sm font-medium text-gray-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               >
                 Close
               </button>
-
-              <div className="flex items-center gap-2">
-                {/* Print Button */}
-                {/* Primary Download PDF Button */}
-                <button
-                  type="button"
-                  disabled={isDownloadingPdf}
-                  onClick={() => {
-                    if (selectedDownloadType === 'caseDetails') {
-                      handleDownloadPdfFile(selectedCase, {
-                        onlyCaseDetails: true,
-                        withInvoice: false,
-                        withAttachments: false
-                      });
-                    } else if (selectedDownloadType === 'invoice') {
-                      handleDownloadPdfFile(selectedCase, {
-                        onlyInvoice: true,
-                        withInvoice: true,
-                        withAttachments: false,
-                        onlyCaseDetails: false
-                      });
-                    } else if (selectedDownloadType === 'attachments') {
-                      handleDownloadPdfFile(selectedCase, {
-                        withAttachments: true,
-                        withInvoice: false,
-                        onlyInvoice: false,
-                        onlyCaseDetails: false
-                      });
-                    } else {
-                      handleDownloadPdfFile(selectedCase, {
-                        withAttachments: true,
-                        withInvoice: true,
-                        onlyInvoice: false,
-                        onlyCaseDetails: false
-                      });
-                    }
-                  }}
-                  className="bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-105 active:scale-95"
-                >
-                  {isDownloadingPdf ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      <span>Generating PDF...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download size={16} />
-                      <span>Download PDF</span>
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -7079,7 +7523,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
       {/* Pakistan Customs & International Logistics Statutory Compliance Guide Modal */}
       {showCustomsGuideModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-6 animate-in fade-in">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-6 sm:pt-10 p-3 sm:p-6 overflow-y-auto animate-in fade-in">
           <div className="bg-slate-900 border border-amber-500/30 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
             {/* Header */}
             <div className="p-4 sm:p-5 border-b border-white/10 bg-black/40 flex items-center justify-between">
@@ -7246,7 +7690,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
       {/* Add New Port Modal (In-flow without leaving page) */}
       {showPortModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto animate-in fade-in duration-200">
           <div className="glass-card p-5 sm:p-6 rounded-2xl w-full max-w-md border border-white/10 shadow-2xl bg-slate-900/95 space-y-4">
             <div className="flex justify-between items-center pb-2 border-b border-white/10">
               <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
@@ -7408,7 +7852,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
       {/* Admin Approval Request Modal for Finished Cases */}
       {showApprovalPromptModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-8 sm:pt-14 p-4 overflow-y-auto animate-in fade-in duration-200">
           <div className="glass-card p-6 rounded-2xl w-full max-w-lg border border-amber-500/30 shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5 text-amber-400 font-bold text-base">

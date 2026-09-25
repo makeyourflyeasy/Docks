@@ -11,6 +11,19 @@
     <meta name="description" content="One Window Logistics Solution - Afghan Transit, Customs Clearance, Freight & Client Portal" />
     <meta property="og:title" content="Docks (Pvt.) Ltd" />
     <meta property="og:description" content="One Window Logistics Solution - Afghan Transit, Customs Clearance, Freight & Client Portal" />
+    <script>
+      // Suppress harmless Vite HMR WebSocket connection warnings in iframes
+      window.addEventListener('error', function(e) {
+        if (e.message && (e.message.includes('send was called before connect') || e.message.includes('WebSocket'))) {
+          e.stopImmediatePropagation();
+        }
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e.reason && typeof e.reason.message === 'string' && (e.reason.message.includes('send was called before connect') || e.reason.message.includes('WebSocket'))) {
+          e.preventDefault();
+        }
+      });
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script>

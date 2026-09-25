@@ -29,7 +29,6 @@ export const WORKFLOW_8_STEPS = [
   CaseStatus.SHIPPING_LINE_DO,
   CaseStatus.TP_FILING,
   CaseStatus.EXCISE_PAYMENT,
-  CaseStatus.WHARFAGE_PAYMENT,
   CaseStatus.VEHICLE_ASSIGNMENT,
   CaseStatus.LOADING_PORT_PROCESSING,
   CaseStatus.IN_TRANSIT,
@@ -207,6 +206,15 @@ export interface CaseStepDetail {
   doReceiptName?: string;
   doReferenceNo?: string;
   doIssueDate?: string;
+  shippingLine?: string;
+  shippingAgent?: string;
+  containerRentalPeriod?: string;
+  shippingLinePaidByDpl?: boolean;
+  shippingAgentPaidByDpl?: boolean;
+  doDepositPaidByDpl?: boolean;
+  doChargesPaidByDpl?: boolean;
+  containerRentalPaidByDpl?: boolean;
+  loadingBillData?: any;
   doDueChargesArrangedBy?: 'Client' | 'DPL';
   doDueChargesAmount?: number;
   doDueChargesCommission?: number;
