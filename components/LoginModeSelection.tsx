@@ -86,7 +86,11 @@ export const LoginModeSelection: React.FC<LoginModeSelectionProps> = ({ onSelect
       if (user.designation) {
         safeAppStorage.setItem('dpl_user_designation', user.designation);
       }
+      safeAppStorage.setItem('dpl_current_user_id', user.userId || '');
       safeAppStorage.setItem('dpl_current_user_name', user.name || user.userId || 'Staff');
+      if ((user as any).station) {
+        safeAppStorage.setItem('dpl_current_user_station', (user as any).station);
+      }
 
       let targetView = 'dashboard';
 

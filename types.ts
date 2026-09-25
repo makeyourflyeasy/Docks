@@ -144,6 +144,56 @@ export interface ExtractedData {
   paymentTerms?: string; // Paid / To-Pay / Advance / COD
 }
 
+export interface StaffLoadingBill {
+  id: string;
+  billNo: string;
+  staffUserId: string;
+  staffName: string;
+  caseId: string;
+  caseNo: string;
+  clientName: string;
+  containerNo: string;
+  vehicleNo?: string;
+  driverName?: string;
+  portTerminal: string;
+  date: string; // YYYY-MM-DD
+  createdAt: string;
+  charges: Array<{
+    id?: string;
+    head: string;
+    amount: number;
+    description?: string;
+    receiptUrl?: string;
+    receiptName?: string;
+  }>;
+  totalAmount: number;
+  paidAmount: number;
+  balanceDue: number;
+  status: 'PENDING' | 'PARTIAL' | 'PAID';
+  remarks?: string;
+}
+
+export interface StaffPrivateLedgerEntry {
+  id: string;
+  staffUserId: string;
+  staffName: string;
+  clientName: string;
+  date: string;
+  type: 'DEBIT' | 'CREDIT';
+  reference: string;
+  description: string;
+  debit: number;
+  credit: number;
+  balance: number;
+  paymentMode?: 'CASH' | 'DEPOSIT_SLIP';
+  receiptUrl?: string;
+  receiptName?: string;
+  remarks?: string;
+  caseNo?: string;
+  containerNo?: string;
+  createdAt: string;
+}
+
 export interface CaseCharge {
   id?: string;
   category?: string;
@@ -167,9 +217,11 @@ export interface CaseServiceArrangement {
 }
 
 export interface MockDocument {
+  id?: string;
   name: string;
   url: string;
   type: string;
+  [key: string]: any;
 }
 
 export interface CompanyDocument {
@@ -200,6 +252,7 @@ export interface CaseStepDetail {
   referenceNo?: string;
   updatedAt?: string;
   multiFiles?: Record<string, StepFileItem[]>;
+  [key: string]: any;
 
   // Step 1: Shipping Line DO
   doReceiptUrl?: string;
@@ -668,6 +721,8 @@ export interface Case {
   caseNo: string; // DPL-YY-00001
   invoiceNo?: string;
   registrationDate?: string;
+  updatedAt?: string;
+  [key: string]: any;
   clientName: string;
   category: string;
   subCategory?: string;
@@ -678,6 +733,7 @@ export interface Case {
   blNumber?: string;
   igmNo?: string;
   documents: (File | MockDocument)[];
+  loadingBills?: StaffLoadingBill[];
   extractedData: ExtractedData;
   containers: Container[];
   createdAt: string;
@@ -1047,7 +1103,10 @@ export interface AppUser {
   designation?: string; // Free-text designation/title
   contact: string;
   email: string;
-  status: 'ACTIVE' | 'INACTIVE';
+  status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  isSuspended?: boolean;
+  suspendedAt?: string;
+  suspendedReason?: string;
   profilePicture?: string;
   cnicDoc?: string;
   clientName?: string;

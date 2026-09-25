@@ -1,824 +1,865 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Ship, CheckCircle2, ChevronDown, ChevronUp, Clock, MapPin, Plus, Save, 
-  Trash2, Search, AlertCircle, RefreshCw, Layers, DollarSign, Key, UploadCloud, 
-  Download, BookOpen, User, Phone, Check, LogOut, FileText, Camera, Receipt, ExternalLink
+  Ship, FolderKanban, Clock, FileText, Search, Download, 
+  CheckCircle2, Plus, LogOut, MapPin, Truck, AlertTriangle, 
+  User, CreditCard, ChevronRight, RefreshCw, Filter, Layers, 
+  ShieldCheck, ArrowUpRight, ArrowDownLeft, FileCheck, Receipt, Eye
 } from 'lucide-react';
-import { Case, Container, CaseStatus, CaseCharge, UserRole, Vehicle } from '../types';
-import { subscribeToCases, saveCaseToFirestore, subscribeToVehicles } from '../services/dbService';
-import { compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
+import { Case, CaseStatus, UserRole, StaffLoadingBill, StaffPrivateLedgerEntry, Container } from '../types';
+import { subscribeToCases, subscribeToStaffBills, subscribeToStaffPrivateLedger, saveStaffPrivateLedgerEntryToFirestore, saveStaffBillToFirestore } from '../services/dbService';
 import { useBranding } from '../services/brandingService';
 import Logo from './Logo';
-import { WorkflowStepModal } from './WorkflowStepModal';
-import { LoadingBillModal } from './LoadingBillModal';
+import { PortCaseDetailModal } from './PortCaseDetailModal';
+import { PortSearchCaseModal } from './PortSearchCaseModal';
+import { PortWorkflowModal } from './PortWorkflowModal';
+import { DownloadLoadingBillSearchModal, DownloadClientLedgerModal, AddStaffPaymentModal } from './PortFinanceModals';
+import { downloadLoadingBillPdf } from '../services/pdfExportService';
 
 interface LoadingPortStaffPortalProps {
   onSignOut: () => void;
+  userRole?: UserRole;
   userRoles?: UserRole[];
+  staffUserId?: string;
+  staffUserName?: string;
 }
 
-// Default standard port charge list options
-const INITIAL_CHARGE_OPTIONS = [
-  'Loading / Labor Handling Charges',
-  'Customs Bullet Seal & E-Seal Tracking Fee',
-  'Wharfage Terminal & Port Dues',
-  'Weighbridge & Weighing Scale Charges',
-  'Gate Pass & Port Terminal Entry Fee',
-  'Detention / Demurrage Initial Fee'
-];
-
-export const LoadingPortStaffPortal: React.FC<LoadingPortStaffPortalProps> = ({ onSignOut, userRoles = [] }) => {
-  const { customLogo } = useBranding();
-  const [cases, setCases] = useState<Case[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [selectedWorkflowCase, setSelectedWorkflowCase] = useState<{ targetCase: Case; stepIndex: number; stepStatus: string } | null>(null);
-  const [selectedBillCase, setSelectedBillCase] = useState<Case | null>(null);
+export const LoadingPortStaffPortal: React.FC<LoadingPortStaffPortalProps> = ({
+  onSignOut,
+  userRole = UserRole.LOADING_PORT_STAFF,
+  userRoles = [],
+  staffUserId = 'mohsin',
+  staffUserName = 'Mohsin Khan'
+}) => {
+  const { customLogo, companyName } = useBranding();
   
-  // Port Selection: 'KICT', 'QICT' (Port Qasim), 'SAPT', 'KPT'
-  const [activePort, setActivePort] = useState<'KICT' | 'QICT' | 'SAPT' | 'KPT'>('KICT');
-  const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  // Navigation State: 'cases' | 'current' | 'finance'
+  // User explicitly specified:
+  // - "cases" (instead of case management)
+  // - "current cases"
+  // - "finance"
+  const [activeTab, setActiveTab] = useState<'cases' | 'current' | 'finance'>('cases');
 
-  // Dynamic custom charge types saved in local storage for this user session / ID
-  const [availableChargeTypes, setAvailableChargeTypes] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('dpl_dynamic_charge_types');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch (_) {}
-    return INITIAL_CHARGE_OPTIONS;
-  });
+  const [cases, setCases] = useState<Case[]>([]);
+  const [loadingCases, setLoadingCases] = useState(true);
+  const [staffBills, setStaffBills] = useState<StaffLoadingBill[]>([]);
+  const [staffLedger, setStaffLedger] = useState<StaffPrivateLedgerEntry[]>([]);
 
-  // Local state for editing charges inside the expanded container panel
-  const [newChargeLabel, setNewChargeLabel] = useState('');
-  const [newChargeAmount, setNewChargeAmount] = useState('');
-  const [newChargeArrangedBy, setNewChargeArrangedBy] = useState<'DPL' | 'Client'>('DPL');
-  const [customChargeInputActive, setCustomChargeInputActive] = useState(false);
-  const [customChargeName, setCustomChargeName] = useState('');
+  // Modals state
+  const [selectedCaseForDetail, setSelectedCaseForDetail] = useState<Case | null>(null);
+  const [selectedCaseForWorkflow, setSelectedCaseForWorkflow] = useState<Case | null>(null);
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showDownloadBillModal, setShowDownloadBillModal] = useState(false);
+  const [showDownloadLedgerModal, setShowDownloadLedgerModal] = useState(false);
+  const [showAddPaymentModal, setShowAddPaymentModal] = useState(false);
 
-  // Local state for uploading seal details in expanded container
-  const [sealNoInput, setSealNoInput] = useState('');
-  const [uploadedSealPhoto, setUploadedSealPhoto] = useState('');
-  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
-
-  // Success message feedback
+  // Dynamic feedback toast
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  // Subscribe to live cases and vehicles
+  // Check if destination staff
+  const isDestinationStaff = 
+    userRole === UserRole.DESTINATION_PORT_STAFF || 
+    userRole === UserRole.UNLOADING_PORT_STAFF || 
+    userRoles.includes(UserRole.DESTINATION_PORT_STAFF) || 
+    userRoles.includes(UserRole.UNLOADING_PORT_STAFF);
+
+  // Quick station label
+  const staffStation = isDestinationStaff ? 'Destination / Offloading Station' : 'Karachi Port Terminals Node';
+
+  // Port filtering for Current Cases
+  const [activePortFilter, setActivePortFilter] = useState<string>('ALL');
+
+  // Subscribe to live cases
   useEffect(() => {
-    setLoading(true);
+    setLoadingCases(true);
     const unsubCases = subscribeToCases((items) => {
       setCases(items || []);
-      setLoading(false);
+      setLoadingCases(false);
     });
-    const unsubVehicles = subscribeToVehicles((vList) => {
-      setVehicles(vList || []);
-    });
-    return () => {
-      unsubCases();
-      unsubVehicles();
-    };
+    return () => unsubCases();
   }, []);
 
-  // Filter cases for the current loading staff portal
-  // Rule 1: Case status must be at the loading step: CaseStatus.LOADING_PORT_PROCESSING
-  // Rule 2: Case port must match activePort code
-  const filteredCases = cases.filter(c => {
-    // Check if status is Step 6 (Loading Port Processing)
-    const isAtLoadingStep = c.status === CaseStatus.LOADING_PORT_PROCESSING;
-    if (!isAtLoadingStep) return false;
-
-    // Port match: checking pol (Port of Loading)
-    const polUpper = (c.pol || '').toUpperCase();
-    const portCode = activePort.toUpperCase();
-
-    // QICT is the terminal code for Port Qasim
-    const matchesPort = 
-      polUpper.includes(portCode) || 
-      (portCode === 'QICT' && polUpper.includes('QASIM')) ||
-      (portCode === 'KICT' && polUpper.includes('KICT')) ||
-      (portCode === 'SAPT' && polUpper.includes('SAPT')) ||
-      (portCode === 'KPT' && (polUpper.includes('KPT') || polUpper.includes('KARACHI PORT')));
-
-    if (!matchesPort) return false;
-
-    // Search term filtering (case number, container number, driver, client name)
-    if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      const matchCaseNo = c.caseNo?.toLowerCase().includes(search);
-      const matchClient = c.clientName?.toLowerCase().includes(search);
-      const matchContainer = (c.containers || []).some(cn => cn.number?.toLowerCase().includes(search));
-      const matchVehicle = (c.containers || []).some(cn => cn.vehicleNo?.toLowerCase().includes(search));
-      return matchCaseNo || matchClient || matchContainer || matchVehicle;
-    }
-
-    return true;
-  });
-
-  const handleSelectPort = (port: 'KICT' | 'QICT' | 'SAPT' | 'KPT') => {
-    setActivePort(port);
-    setExpandedCaseId(null);
-    clearEditStates();
-  };
-
-  const clearEditStates = () => {
-    setNewChargeLabel('');
-    setNewChargeAmount('');
-    setNewChargeArrangedBy('DPL');
-    setCustomChargeInputActive(false);
-    setCustomChargeName('');
-    setSealNoInput('');
-    setUploadedSealPhoto('');
-  };
-
-  // Expand case row & populate its current data for editing
-  const handleToggleExpand = (c: Case) => {
-    if (expandedCaseId === c.id) {
-      setExpandedCaseId(null);
-      clearEditStates();
-    } else {
-      setExpandedCaseId(c.id);
-      // Pre-fill fields if container exists
-      const container = c.containers?.[0];
-      setSealNoInput(container?.sealNo || '');
-      setUploadedSealPhoto(container?.sealPhoto || '');
-      setNewChargeLabel('');
-      setNewChargeAmount('');
-      setNewChargeArrangedBy('DPL');
-      setCustomChargeInputActive(false);
-      setCustomChargeName('');
-    }
-  };
-
-  // Dynamic Add New Charge
-  const handleAddCharge = async (caseItem: Case) => {
-    const finalLabel = customChargeInputActive ? customChargeName.trim() : newChargeLabel;
-    const amount = parseFloat(newChargeAmount);
-
-    if (!finalLabel) {
-      alert('Please select or specify a charge description.');
-      return;
-    }
-    if (isNaN(amount) || amount <= 0) {
-      alert('Please enter a valid charge amount.');
-      return;
-    }
-
-    // Save custom charge option to local storage if it's new
-    if (customChargeInputActive && !availableChargeTypes.includes(finalLabel)) {
-      const updatedList = [...availableChargeTypes, finalLabel];
-      setAvailableChargeTypes(updatedList);
-      localStorage.setItem('dpl_dynamic_charge_types', JSON.stringify(updatedList));
-    }
-
-    const newCharge: CaseCharge = {
-      id: String(Date.now()),
-      description: finalLabel,
-      amount: amount,
-      arrangedBy: newChargeArrangedBy
-    };
-
-    const currentCharges = caseItem.charges || [];
-    const updatedCase = {
-      ...caseItem,
-      charges: [...currentCharges, newCharge]
-    };
-
-    try {
-      await saveCaseToFirestore(updatedCase);
-      showFeedback(`✓ Charge "${finalLabel}" of PKR ${amount.toLocaleString()} added successfully to Case ${caseItem.caseNo}`);
-      
-      // Reset charge inputs
-      setNewChargeAmount('');
-      setNewChargeLabel('');
-      setCustomChargeName('');
-      setCustomChargeInputActive(false);
-    } catch (err) {
-      console.error(err);
-      alert('Failed to save charge to database.');
-    }
-  };
-
-  const handleDeleteCharge = async (caseItem: Case, chargeId: string) => {
-    if (!confirm('Are you sure you want to delete this charge?')) return;
-
-    const updatedCharges = (caseItem.charges || []).filter(ch => String(ch.id) !== String(chargeId));
-    const updatedCase = {
-      ...caseItem,
-      charges: updatedCharges
-    };
-
-    try {
-      await saveCaseToFirestore(updatedCase);
-      showFeedback('✓ Charge removed successfully.');
-    } catch (err) {
-      console.error(err);
-      alert('Failed to delete charge.');
-    }
-  };
-
-  // Process and convert captured camera photo to PDF
-  const handleSealPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setIsUploadingPhoto(true);
-      try {
-        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-        if (!isPdf) {
-          const converted = await convertImageToPdf(file, `Seal_Photo_Verification_${file.name}`, true);
-          setUploadedSealPhoto(converted.pdfDataUrl);
-        } else {
-          const processed = await compressAndPrepareFile(file);
-          setUploadedSealPhoto(processed.dataUrl || (processed.base64 ? `data:application/pdf;base64,${processed.base64}` : ''));
-        }
-      } catch (err) {
-        console.warn(err);
-        alert('Failed to process image capture.');
-      } finally {
-        setIsUploadingPhoto(false);
-      }
-    }
-  };
-
-  // Complete Loading and release container into Transit/On the Way
-  const handleCompleteLoading = async (caseItem: Case) => {
-    if (!confirm(`Are you sure you want to complete loading for Case ${caseItem.caseNo}? This will post all charges to the client ledger and dispatch the shipment.`)) return;
-
-    // Update container details (Seal number & Seal photo)
-    const updatedContainers = (caseItem.containers || []).map((cntr, idx) => {
-      if (idx === 0) {
-        return {
-          ...cntr,
-          sealNo: sealNoInput.trim() || cntr.sealNo,
-          sealPhoto: uploadedSealPhoto || cntr.sealPhoto
-        };
-      }
-      return cntr;
+  // Subscribe to staff private bills & ledgers isolated by staffUserId
+  useEffect(() => {
+    const unsubBills = subscribeToStaffBills(staffUserId, (billsList) => {
+      setStaffBills(billsList || []);
     });
 
-    const updatedCase: Case = {
-      ...caseItem,
-      status: CaseStatus.IN_TRANSIT, // Transition from Step 6 to Step 7
-      containers: updatedContainers,
-      workflowDetails: {
-        ...(caseItem.workflowDetails || {}),
-        [CaseStatus.LOADING_PORT_PROCESSING]: {
-          status: 'COMPLETED',
-          completed: true,
-          date: new Date().toISOString(),
-          officer: 'Loading Port Staff',
-          remarks: `Loading completed at ${activePort}. Bullet seal verify: ${sealNoInput || 'N/A'}`
-        }
-      }
+    const unsubLedger = subscribeToStaffPrivateLedger(staffUserId, (entries) => {
+      setStaffLedger(entries || []);
+    });
+
+    return () => {
+      unsubBills();
+      unsubLedger();
     };
+  }, [staffUserId]);
 
-    try {
-      await saveCaseToFirestore(updatedCase);
-      setExpandedCaseId(null);
-      clearEditStates();
-      showFeedback(`🎉 Loading complete for Case ${caseItem.caseNo}! Container dispatched to destination. Invoice charges are now officially posted to the Client Ledger.`);
-    } catch (err) {
-      console.error(err);
-      alert('Failed to complete loading step in database.');
-    }
-  };
-
-  const showFeedback = (msg: string) => {
+  const showToast = (msg: string) => {
     setFeedbackMessage(msg);
     setTimeout(() => {
       setFeedbackMessage(null);
     }, 6000);
   };
 
+  // 1. Pending Cases (loading workflow not yet completed)
+  // For loading staff: all cases where loading workflow is not completed
+  // For destination staff: all cases destination-bound or arrived
+  const pendingCases = useMemo(() => {
+    return cases.filter(c => {
+      if (isDestinationStaff) {
+        // Destination staff: sees in-transit or arrived at destination
+        const isDestPending = c.status === CaseStatus.IN_TRANSIT || c.status === CaseStatus.DESTINATION_PORT_ARRIVAL;
+        return isDestPending;
+      }
+
+      // Loading staff: Pending loading processing (Step 5 or 6, not yet departed/completed)
+      const isPendingLoading = 
+        c.status === CaseStatus.LOADING_PORT_PROCESSING || 
+        c.status === CaseStatus.VEHICLE_ASSIGNMENT ||
+        c.status === CaseStatus.WHARFAGE_PAYMENT ||
+        (c.status !== CaseStatus.IN_TRANSIT && c.status !== CaseStatus.DESTINATION_PORT_ARRIVAL && c.status !== CaseStatus.COMPLETED);
+
+      return isPendingLoading;
+    });
+  }, [cases, isDestinationStaff]);
+
+  // 2. Completed Cases in the last 1 week (7 days)
+  const completedCasesLastWeek = useMemo(() => {
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+    return cases.filter(c => {
+      const isCompleted = c.status === CaseStatus.COMPLETED || c.status === CaseStatus.IN_TRANSIT;
+      if (!isCompleted) return false;
+
+      const completionDateStr = 
+        c.workflowDetails?.[CaseStatus.LOADING_PORT_PROCESSING]?.date || 
+        c.workflowDetails?.[CaseStatus.DESTINATION_PORT_ARRIVAL]?.date || 
+        c.updatedAt || 
+        c.createdAt;
+
+      if (!completionDateStr) return false;
+      const compDate = new Date(completionDateStr);
+      return compDate >= oneWeekAgo;
+    });
+  }, [cases]);
+
+  // Current Cases filtered by Port
+  const currentFilteredCases = useMemo(() => {
+    return pendingCases.filter(c => {
+      if (activePortFilter === 'ALL') return true;
+      const pol = (c.pol || '').toUpperCase();
+      const pod = (c.pod || '').toUpperCase();
+      const target = activePortFilter.toUpperCase();
+
+      if (isDestinationStaff) {
+        return pod.includes(target);
+      }
+      return pol.includes(target);
+    });
+  }, [pendingCases, activePortFilter, isDestinationStaff]);
+
+  // 3. Finance: Bills created in the last 1 week
+  const billsLastWeek = useMemo(() => {
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+    return staffBills.filter(b => {
+      if (!b.date && !b.createdAt) return true;
+      const dateToCheck = new Date(b.date || b.createdAt);
+      return dateToCheck >= oneWeekAgo;
+    }).sort((a, b) => new Date(b.date || b.createdAt).getTime() - new Date(a.date || a.createdAt).getTime());
+  }, [staffBills]);
+
+  // 4. Finance: Containers with Pending Payments
+  // Checks which bills have unpaid balance or containers with charges pending collection
+  const pendingPaymentContainers = useMemo(() => {
+    // List bills that have balanceDue > 0
+    return staffBills.filter(b => {
+      const remaining = Number(b.totalAmount) - (Number(b.paidAmount) || 0);
+      return remaining > 0;
+    });
+  }, [staffBills]);
+
+  // Unique clients list for Add Payment modal
+  const uniqueClients = useMemo(() => {
+    const set = new Set<string>();
+    cases.forEach(c => { if (c.clientName) set.add(c.clientName); });
+    staffBills.forEach(b => { if (b.clientName) set.add(b.clientName); });
+    staffLedger.forEach(e => { if (e.clientName) set.add(e.clientName); });
+    return Array.from(set).sort();
+  }, [cases, staffBills, staffLedger]);
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* High-Fidelity Header */}
-      <header className="bg-slate-900/90 border-b border-white/10 px-6 py-4 sticky top-0 z-20 backdrop-blur-md flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Logo className="h-9 w-auto max-w-[150px]" />
-          <div>
-            <h1 className="text-base font-bold text-white tracking-wide">DPL Loading Staff Portal</h1>
-            <span className="text-[10px] text-brand-300 font-mono tracking-widest uppercase">Karachi Port Terminals Node</span>
+    <div className="flex h-screen h-[100dvh] w-full bg-slate-950 text-slate-100 font-sans overflow-hidden">
+      
+      {/* ============================================================ */}
+      {/* SIDEBAR: Dedicated Loading & Offloading Staff Navigation */}
+      {/* ============================================================ */}
+      <aside className="w-64 bg-slate-900/95 border-r border-white/10 flex flex-col justify-between shrink-0 z-20">
+        <div className="p-4 space-y-6">
+          {/* Logo & Portal Identity */}
+          <div className="px-2 pt-1">
+            <Logo className="h-9 w-auto max-w-[150px] mb-2" />
+            <div className="space-y-0.5">
+              <span className="text-xs font-black text-white tracking-wider uppercase block">
+                {isDestinationStaff ? 'Destination Staff Portal' : 'Loading Staff Portal'}
+              </span>
+              <span className="text-[10px] text-amber-400 font-mono tracking-wider block">
+                {staffStation}
+              </span>
+            </div>
           </div>
+
+          {/* Navigation Links (Cases, Current Cases, Finance) */}
+          <nav className="space-y-1.5">
+            {/* 1. Cases */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('cases')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl font-bold text-xs transition-all ${
+                activeTab === 'cases'
+                  ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20 font-black'
+                  : 'text-gray-300 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <FolderKanban size={17} />
+                <span>Cases</span>
+              </div>
+              <span className={`px-2 py-0.5 text-[10px] rounded-full font-mono font-bold ${
+                activeTab === 'cases' ? 'bg-black/20 text-slate-950' : 'bg-white/10 text-gray-400'
+              }`}>
+                {cases.length}
+              </span>
+            </button>
+
+            {/* 2. Current Cases */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('current')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl font-bold text-xs transition-all ${
+                activeTab === 'current'
+                  ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20 font-black'
+                  : 'text-gray-300 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Clock size={17} />
+                <span>Current Cases</span>
+              </div>
+              <span className={`px-2 py-0.5 text-[10px] rounded-full font-mono font-bold ${
+                activeTab === 'current' ? 'bg-black/20 text-slate-950' : 'bg-amber-500/20 text-amber-300'
+              }`}>
+                {pendingCases.length}
+              </span>
+            </button>
+
+            {/* 3. Finance */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('finance')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl font-bold text-xs transition-all ${
+                activeTab === 'finance'
+                  ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20 font-black'
+                  : 'text-gray-300 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <CreditCard size={17} />
+                <span>Finance</span>
+              </div>
+              <span className={`px-2 py-0.5 text-[10px] rounded-full font-mono font-bold ${
+                activeTab === 'finance' ? 'bg-black/20 text-slate-950' : 'bg-white/10 text-gray-400'
+              }`}>
+                {staffBills.length}
+              </span>
+            </button>
+          </nav>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="hidden md:flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-gray-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Active Station: Karachi Ports</span>
+        {/* Staff User Card & Sign Out */}
+        <div className="p-4 border-t border-white/10 bg-slate-950/40 space-y-3">
+          <div className="flex items-center gap-2.5 px-2 py-1">
+            <div className="w-8 h-8 rounded-full bg-brand-500/20 text-brand-300 border border-brand-500/30 flex items-center justify-center font-bold text-xs shrink-0">
+              {staffUserName.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <span className="text-xs font-bold text-white block truncate">{staffUserName}</span>
+              <span className="text-[10px] text-gray-400 block font-mono">ID: {staffUserId}</span>
+            </div>
           </div>
-          <button 
+
+          <button
+            type="button"
             onClick={onSignOut}
-            className="flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/20 hover:border-red-500/40 px-3 py-1.5 rounded-xl text-xs font-semibold transition"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 hover:text-red-300 rounded-xl text-xs font-bold transition"
           >
             <LogOut size={14} />
             <span>Sign Out</span>
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Main Container */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+      {/* ============================================================ */}
+      {/* MAIN VIEW CONTENT CONTAINER */}
+      {/* ============================================================ */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto custom-scrollbar">
         
         {/* Dynamic Toast Feedback Notification */}
         {feedbackMessage && (
-          <div className="bg-gradient-to-r from-slate-900 to-slate-950 border-l-4 border-amber-400 text-amber-200 p-4 rounded-xl shadow-2xl flex items-start gap-3 animate-bounce">
+          <div className="fixed top-5 right-5 z-50 bg-gradient-to-r from-slate-900 to-slate-950 border-l-4 border-amber-400 text-amber-200 p-4 rounded-2xl shadow-2xl flex items-start gap-3 max-w-md animate-in slide-in-from-top-3">
             <CheckCircle2 className="text-amber-400 shrink-0 mt-0.5" size={18} />
             <div className="text-xs font-medium leading-relaxed flex-1">{feedbackMessage}</div>
             <button onClick={() => setFeedbackMessage(null)} className="text-gray-400 hover:text-white font-bold text-xs">✕</button>
           </div>
         )}
 
-        {/* Port wise Selector Header & Search */}
-        <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between bg-slate-900/50 p-4 rounded-3xl border border-white/15 shadow-xl">
-          {/* Port Buttons */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 custom-scrollbar">
-            {[
-              { id: 'KICT', label: 'KICT Port Terminal', count: cases.filter(c => c.status === CaseStatus.LOADING_PORT_PROCESSING && (c.pol?.toUpperCase().includes('KICT'))).length },
-              { id: 'QICT', label: 'Port Qasim (QICT)', count: cases.filter(c => c.status === CaseStatus.LOADING_PORT_PROCESSING && (c.pol?.toUpperCase().includes('QICT') || c.pol?.toUpperCase().includes('QASIM'))).length },
-              { id: 'SAPT', label: 'SAPT Port Terminal', count: cases.filter(c => c.status === CaseStatus.LOADING_PORT_PROCESSING && (c.pol?.toUpperCase().includes('SAPT'))).length },
-              { id: 'KPT', label: 'KPT Karachi Port', count: cases.filter(c => c.status === CaseStatus.LOADING_PORT_PROCESSING && (c.pol?.toUpperCase().includes('KPT') || c.pol?.toUpperCase().includes('KARACHI'))).length }
-            ].map(p => (
+        {/* ============================================================ */}
+        {/* VIEW 1: CASES (Search Case + Pending Section + 1-Week Completed Section) */}
+        {/* ============================================================ */}
+        {activeTab === 'cases' && (
+          <div className="p-6 max-w-7xl w-full mx-auto space-y-6">
+            
+            {/* Top Bar: Search Case Button */}
+            <div className="bg-slate-900/60 p-4 sm:p-5 rounded-3xl border border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 shadow-xl">
+              <div>
+                <h2 className="text-base font-bold text-white tracking-wide">Cases & Shipments Ledger</h2>
+                <p className="text-xs text-gray-400">Inspect historical records, pending loading cases, and completed shipments</p>
+              </div>
+
+              {/* Big "Search Case" Button */}
               <button
-                key={p.id}
-                onClick={() => handleSelectPort(p.id as any)}
-                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-2xl font-bold text-xs shrink-0 tracking-wide transition-all ${
-                  activePort === p.id 
-                    ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/30 border border-brand-500' 
-                    : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-transparent'
-                }`}
+                type="button"
+                onClick={() => setShowSearchModal(true)}
+                className="bg-brand-600 hover:bg-brand-500 text-white font-bold px-5 py-2.5 rounded-2xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-brand-600/25 transition active:scale-95"
               >
-                <Ship size={14} />
-                <span>{p.label}</span>
-                <span className={`px-2 py-0.5 text-[10px] rounded-full font-mono ${activePort === p.id ? 'bg-white/20 text-white' : 'bg-black/30 text-gray-400'}`}>
-                  {p.count}
-                </span>
+                <Search size={15} />
+                <span>Search Case (Filters & Keyword)</span>
               </button>
-            ))}
-          </div>
-
-          {/* Search bar */}
-          <div className="relative flex-1 md:max-w-md">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-            <input 
-              type="text" 
-              placeholder="Search by container #, case #, driver name or client..."
-              className="w-full bg-black/40 border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-gray-400 outline-none focus:border-brand-500 transition-all font-medium"
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Container Loading Grid & list */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-400 gap-3">
-            <RefreshCw size={32} className="animate-spin text-brand-500" />
-            <p className="text-xs font-semibold">Loading live port container data...</p>
-          </div>
-        ) : filteredCases.length === 0 ? (
-          <div className="p-12 text-center bg-slate-900/20 border border-dashed border-white/10 rounded-3xl space-y-3 shadow-inner">
-            <Ship size={40} className="mx-auto text-gray-500 opacity-60" />
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">No containers pending loading</h3>
-            <p className="text-xs text-gray-400 leading-relaxed max-w-md mx-auto">
-              There are no shipments currently waiting at the <span className="text-brand-300 font-semibold">{activePort}</span> node for the Loading workflow step. As soon as dispatch officers complete Step 5 (Vehicle Assignment), containers will appear here.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between text-[11px] font-bold text-gray-400 uppercase tracking-wider px-2">
-              <span>Pending Shipment Containers ({filteredCases.length})</span>
-              <span>Karachi Port Terminal: {activePort}</span>
             </div>
 
-            {filteredCases.map(c => {
-              const mainCntr = c.containers?.[0];
-              const isExpanded = expandedCaseId === c.id;
-
-              return (
-                <div 
-                  key={c.id} 
-                  className={`bg-slate-900/80 rounded-3xl border transition-all overflow-hidden ${
-                    isExpanded 
-                      ? 'border-brand-500/40 shadow-xl shadow-brand-500/5 bg-slate-900/95' 
-                      : 'border-white/10 hover:border-white/20 hover:bg-slate-900'
-                  }`}
-                >
-                  {/* Summary Bar */}
-                  <div 
-                    onClick={() => handleToggleExpand(c)}
-                    className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 cursor-pointer select-none"
-                  >
-                    <div className="flex items-center gap-3.5 min-w-0">
-                      <div className="w-10 h-10 rounded-2xl bg-brand-500/10 text-brand-400 flex items-center justify-center shrink-0 border border-brand-500/20 shadow-md">
-                        <Ship size={18} />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-black text-white tracking-tight">{mainCntr?.number || 'Container TBD'}</span>
-                          <span className="bg-white/5 border border-white/10 text-[10px] text-gray-400 font-bold px-2 py-0.5 rounded">
-                            {mainCntr?.size || '40ft'}
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1 text-[11px] text-gray-400 font-medium">
-                          <span className="text-gray-300 font-semibold">{c.clientName}</span>
-                          <span className="text-slate-600">•</span>
-                          <span>Case ID: <span className="font-mono font-bold text-amber-300">{c.caseNo}</span></span>
-                          <span className="text-slate-600">•</span>
-                          <span className="flex items-center gap-1"><MapPin size={11} className="text-brand-400" /> {c.pol} → {c.pod}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-3 sm:pt-0 border-white/10">
-                      <div className="text-left sm:text-right">
-                        <span className="text-[10px] text-gray-500 uppercase block font-bold tracking-widest">Assigned Vehicle</span>
-                        <span className="text-xs text-white font-semibold font-mono tracking-wide">{mainCntr?.vehicleNo || 'TBD Marker Vehicle'}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-amber-400/10 text-amber-300 border border-amber-400/20 text-[10px] sm:text-xs font-bold px-2.5 py-1 rounded-xl flex items-center gap-1">
-                          <Clock size={12} /> Loading Pending
-                        </span>
-                        {isExpanded ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Expanded Detailed Panel */}
-                  {isExpanded && (
-                    <div className="border-t border-white/10 p-5 bg-black/40 space-y-6 animate-in slide-in-from-top-3 duration-200">
-                      
-                      {/* Top Action Bar for Workflow & Loading Bill */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-gradient-to-r from-slate-900 via-slate-850 to-brand-950/40 rounded-2xl border border-white/10 shadow-md">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-bold text-white">Container Operational Workflow:</span>
-                          <span className="text-[11px] font-mono">
-                            {c.workflowDetails?.[CaseStatus.SHIPPING_LINE_DO]?.doDueChargesArrangedBy === 'Client' ? (
-                              <span className="text-sky-300 font-semibold bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">DO Arranged by Client</span>
-                            ) : (
-                              <span className="text-emerald-300 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">DO Arranged by DPL</span>
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedWorkflowCase({ targetCase: c, stepIndex: 0, stepStatus: CaseStatus.SHIPPING_LINE_DO });
-                            }}
-                            className="bg-sky-600/20 hover:bg-sky-600 border border-sky-500/40 text-sky-200 hover:text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
-                            title="Open Shipping Line DO step (View / upload DO picture, date, shipping line, agent)"
-                          >
-                            <FileText size={13} />
-                            <span>Update DO Step</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedWorkflowCase({ targetCase: c, stepIndex: 4, stepStatus: CaseStatus.LOADING_PORT_PROCESSING });
-                            }}
-                            className="bg-brand-600/30 hover:bg-brand-600 border border-brand-500/40 text-brand-200 hover:text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
-                            title="Open full Loading Port Processing step"
-                          >
-                            <ExternalLink size={13} />
-                            <span>Loading Step Workflow</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedBillCase(c);
-                            }}
-                            className="bg-amber-500/20 hover:bg-amber-500 border border-amber-500/40 text-amber-300 hover:text-slate-950 px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
-                            title="Create Port Loading Bill (Wharfage, Tracker, Delivery Charges)"
-                          >
-                            <Receipt size={13} />
-                            <span>Make Loading Bill</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Sub-grid: Vehicle & Driver details */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                        
-                        {/* 1. Fleet & Driver verification */}
-                        <div className="bg-white/5 p-4 rounded-2xl border border-white/10 space-y-3">
-                          <h4 className="text-xs font-bold text-brand-300 uppercase tracking-wider flex items-center gap-1.5 border-b border-white/5 pb-2">
-                            <User size={13} />
-                            1. Fleet Partner & Crew Verification
-                          </h4>
-                          <div className="space-y-2 text-xs">
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">Driver Name:</span>
-                              <span className="text-white font-semibold">{mainCntr?.driverName || 'N/A Crew Name'}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">Driver Phone:</span>
-                              <span className="text-brand-400 font-mono font-bold flex items-center gap-1">
-                                <Phone size={11} /> {mainCntr?.driverContact || 'No Contact Number'}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">Driver CNIC / ID:</span>
-                              <span className="text-white font-mono">{mainCntr?.driverCnic || 'N/A CNIC'}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">Truck / Plate No:</span>
-                              <span className="text-amber-400 font-mono font-bold">{mainCntr?.vehicleNo || 'N/A Vehicle No'}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* 2. Loading Operations: Seal Verification & Camera Capture */}
-                        <div className="bg-white/5 p-4 rounded-2xl border border-white/10 space-y-3.5">
-                          <h4 className="text-xs font-bold text-brand-300 uppercase tracking-wider flex items-center gap-1.5 border-b border-white/5 pb-2">
-                            <Camera size={13} />
-                            2. Customs Bullet Seal & Camera
-                          </h4>
-                          <div className="space-y-3 text-xs">
-                            <div>
-                              <label className="text-gray-300 block mb-1">Customs Bullet Seal No / Tracking ID *</label>
-                              <input 
-                                type="text"
-                                placeholder="e.g. SL-992834"
-                                className="w-full bg-black/50 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500 font-mono font-bold uppercase tracking-wider text-xs"
-                                value={sealNoInput}
-                                onChange={e => setSealNoInput(e.target.value)}
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <span className="text-gray-300 block mb-1">Verify Seal Photo (Converts to PDF scan)</span>
-                              <div className="flex items-center gap-2">
-                                <label className="flex-1 flex items-center justify-center gap-1.5 p-2 border border-dashed border-white/20 hover:border-brand-500 rounded-xl cursor-pointer bg-black/40 hover:bg-black/60 transition text-center text-xs">
-                                  <input 
-                                    type="file" 
-                                    accept="image/*" 
-                                    capture="environment"
-                                    className="hidden" 
-                                    onChange={handleSealPhotoUpload} 
-                                  />
-                                  <Camera size={14} className="text-brand-400" />
-                                  <span>{uploadedSealPhoto ? 'Change Captured Photo' : 'Open Camera / Capture Seal'}</span>
-                                </label>
-                              </div>
-                              {uploadedSealPhoto && (
-                                <div className="mt-2 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center justify-between text-[11px] text-emerald-300 font-medium">
-                                  <span>Bullet Seal PDF Compiled ✅</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const link = document.createElement('a');
-                                      link.href = uploadedSealPhoto;
-                                      link.download = `Seal_Photo_Verification_${c.caseNo}.pdf`;
-                                      document.body.appendChild(link);
-                                      link.click();
-                                      document.body.removeChild(link);
-                                    }}
-                                    className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-bold hover:underline"
-                                  >
-                                    <Download size={11} /> View / Save
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* 3. Dynamic invoice charges setup inside expanded panel */}
-                        <div className="bg-white/5 p-4 rounded-2xl border border-white/10 space-y-3.5">
-                          <h4 className="text-xs font-bold text-brand-300 uppercase tracking-wider flex items-center gap-1.5 border-b border-white/5 pb-2">
-                            <DollarSign size={13} />
-                            3. Record Wharfage & Handling Charges
-                          </h4>
-                          
-                          <div className="space-y-3 text-xs">
-                            {/* Toggle standard dropdown or custom input */}
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="text-gray-400 font-medium">Charge Description</span>
-                              <button
-                                type="button"
-                                onClick={() => setCustomChargeInputActive(!customChargeInputActive)}
-                                className="text-brand-400 hover:text-brand-300 font-bold hover:underline"
-                              >
-                                {customChargeInputActive ? 'Select standard dropdown' : 'Add custom charge type'}
-                              </button>
-                            </div>
-
-                            {customChargeInputActive ? (
-                              <input
-                                type="text"
-                                placeholder="Enter custom charge name..."
-                                className="w-full bg-black/50 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500 text-xs font-medium"
-                                value={customChargeName}
-                                onChange={e => setCustomChargeName(e.target.value)}
-                              />
-                            ) : (
-                              <select
-                                className="w-full bg-black/50 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500 text-xs font-medium"
-                                value={newChargeLabel}
-                                onChange={e => setNewChargeLabel(e.target.value)}
-                              >
-                                <option value="">-- Select Charge Category --</option>
-                                {availableChargeTypes.map(opt => (
-                                  <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                              </select>
-                            )}
-
-                            {/* Charge Amount & Billing Arranged By */}
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="text-gray-400 block mb-1 text-[11px]">Amount (PKR) *</label>
-                                <input
-                                  type="number"
-                                  placeholder="e.g. 15000"
-                                  className="w-full bg-black/50 border border-white/15 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-brand-500 text-xs font-bold"
-                                  value={newChargeAmount}
-                                  onChange={e => setNewChargeAmount(e.target.value)}
-                                />
-                              </div>
-                              <div>
-                                <label className="text-gray-400 block mb-1 text-[11px]">Bill To / Arrange</label>
-                                <select
-                                  className="w-full bg-black/50 border border-white/15 rounded-xl px-3 py-2 text-white outline-none focus:border-brand-500 text-xs font-medium"
-                                  value={newChargeArrangedBy}
-                                  onChange={e => setNewChargeArrangedBy(e.target.value as any)}
-                                >
-                                  <option value="DPL">Bill Client (DPL)</option>
-                                  <option value="Client">Paid by Client Directly</option>
-                                </select>
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => handleAddCharge(c)}
-                              className="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition text-xs shadow-lg shadow-brand-600/20"
-                            >
-                              <Plus size={13} />
-                              <span>Add Charge to Case Bill</span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Display of currently added case charges */}
-                      <div className="bg-black/60 p-4 rounded-2xl border border-white/5 space-y-3">
-                        <h5 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
-                          <FileText size={13} className="text-emerald-400" />
-                          Consolidated Loading Invoice Ledger ({c.charges?.length || 0} applied)
-                        </h5>
-                        <p className="text-[10px] text-amber-300 font-medium">
-                          ⚠️ These charges are drafted under Case {c.caseNo}. They will officially post to the Client Ledger once you click complete loading and sail the container.
-                        </p>
-                        
-                        {(!c.charges || c.charges.length === 0) ? (
-                          <div className="text-center py-6 text-gray-500 text-xs">
-                            No port charges added to this container yet. Select options above to add Wharfage, Handling, or Seal charges.
-                          </div>
-                        ) : (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left text-xs">
-                              <thead>
-                                <tr className="text-gray-500 border-b border-white/5">
-                                  <th className="pb-1.5 font-bold">Charge Description</th>
-                                  <th className="pb-1.5 font-bold">Arrangement</th>
-                                  <th className="pb-1.5 font-bold text-right">Amount (PKR)</th>
-                                  <th className="pb-1.5 text-right font-bold">Action</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-white/5">
-                                {c.charges.map(ch => (
-                                  <tr key={ch.id} className="hover:bg-white/5">
-                                    <td className="py-2 text-white font-medium">{ch.description}</td>
-                                    <td className="py-2 text-gray-400">
-                                      {ch.arrangedBy === 'DPL' ? (
-                                        <span className="text-brand-300 font-semibold bg-brand-500/10 px-1.5 py-0.5 rounded border border-brand-500/10">Billed to Client</span>
-                                      ) : (
-                                        <span className="text-gray-400 font-medium bg-white/5 px-1.5 py-0.5 rounded">Paid by Client Direct</span>
-                                      )}
-                                    </td>
-                                    <td className="py-2 text-right font-mono font-bold text-gray-200">
-                                      PKR {Number(ch.amount || 0).toLocaleString()}
-                                    </td>
-                                    <td className="py-2 text-right">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleDeleteCharge(c, ch.id ? String(ch.id) : '')}
-                                        className="text-red-400 hover:text-red-300 p-1 hover:bg-red-500/10 rounded"
-                                        title="Delete charge"
-                                      >
-                                        <Trash2 size={13} />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Main Dispatched Actions / Sail Container */}
-                      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-3 border-t border-white/5">
-                        <div className="text-left text-xs">
-                          <span className="text-gray-400 leading-relaxed block">
-                            Verify all crew detail and bullet seal information. Completion is authoritative and irreversible.
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3 w-full sm:w-auto">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleExpand(c)}
-                            className="w-full sm:w-auto px-4 py-2 text-xs text-gray-400 hover:text-white transition-colors"
-                          >
-                            Close Panel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleCompleteLoading(c)}
-                            className="w-full sm:w-auto bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-black py-2.5 px-6 rounded-2xl flex items-center justify-center gap-2 transition shadow-xl shadow-emerald-600/20 text-xs uppercase tracking-wide"
-                          >
-                            <CheckCircle2 size={15} />
-                            <span>Mark Loading Complete & Sail</span>
-                          </button>
-                        </div>
-                      </div>
-
-                    </div>
-                  )}
+            {/* Section 1: Pending Cases with Required English Notice */}
+            <div className="space-y-3">
+              {/* English Warning / Prompt Message requested by user */}
+              <div className="p-4 bg-amber-500/10 border-l-4 border-amber-400 rounded-2xl flex items-start gap-3 shadow-md">
+                <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-0.5">
+                  <span className="font-bold text-amber-300 block">
+                    Important Notice: Pending Operations Requiring Immediate Attention
+                  </span>
+                  <p className="text-amber-200/90 leading-relaxed">
+                    Please complete these cases promptly and finalize their port loading operations without delay. Ensure bullet seals are verified, photos captured, and charges recorded before dispatch.
+                  </p>
                 </div>
-              );
-            })}
+              </div>
+
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Clock size={14} className="text-amber-400" />
+                  Pending Cases ({pendingCases.length})
+                </h3>
+                <span className="text-[11px] text-gray-400">Click any card to inspect particulars</span>
+              </div>
+
+              {loadingCases ? (
+                <div className="text-center py-12 text-gray-400 flex flex-col items-center gap-2">
+                  <RefreshCw size={24} className="animate-spin text-brand-400" />
+                  <span className="text-xs">Loading pending shipments...</span>
+                </div>
+              ) : pendingCases.length === 0 ? (
+                <div className="p-8 text-center bg-slate-900/30 rounded-2xl border border-dashed border-white/10 text-gray-400 text-xs">
+                  No cases currently pending loading operations at this time. All containers are up to date!
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {pendingCases.map(c => {
+                    const cntr = c.containers?.[0];
+                    return (
+                      <div
+                        key={c.id}
+                        onClick={() => setSelectedCaseForDetail(c)}
+                        className="bg-slate-900/80 hover:bg-slate-900 border border-white/10 hover:border-amber-500/40 rounded-2xl p-4 cursor-pointer transition-all space-y-3 group shadow-md"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono font-black text-amber-300 text-xs">{c.caseNo}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            Loading Pending
+                          </span>
+                        </div>
+
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Container:</span>
+                            <span className="text-white font-mono font-bold">{cntr?.number || 'TBD'} ({cntr?.size || '40ft'})</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Client:</span>
+                            <span className="text-gray-200 font-medium truncate max-w-[150px]">{c.clientName}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Assigned Truck:</span>
+                            <span className="text-gray-300 font-mono">{cntr?.vehicleNo || 'Awaiting Marker'}</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-gray-400">
+                          <span className="flex items-center gap-1">
+                            <MapPin size={11} className="text-brand-400" /> {c.pol} → {c.pod}
+                          </span>
+                          <span className="text-brand-300 font-bold group-hover:underline flex items-center gap-0.5">
+                            Inspect <ChevronRight size={12} />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Section 2: Completed Cases (Within Past 1 Week) */}
+            <div className="space-y-3 pt-4 border-t border-white/10">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-emerald-400" />
+                  Completed Cases (Past 1 Week: {completedCasesLastWeek.length})
+                </h3>
+                <span className="text-[11px] text-gray-400">Historical shipments completed within last 7 days</span>
+              </div>
+
+              {completedCasesLastWeek.length === 0 ? (
+                <div className="p-8 text-center bg-slate-900/30 rounded-2xl border border-dashed border-white/10 text-gray-400 text-xs">
+                  No cases completed in the past 7 days. Use "Search Case" above to search all historical cases across any timeframe.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {completedCasesLastWeek.map(c => {
+                    const cntr = c.containers?.[0];
+                    return (
+                      <div
+                        key={c.id}
+                        onClick={() => setSelectedCaseForDetail(c)}
+                        className="bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-emerald-500/40 rounded-2xl p-4 cursor-pointer transition-all space-y-3 group shadow-md"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono font-black text-white text-xs">{c.caseNo}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                            <CheckCircle2 size={10} /> Dispatched / Completed
+                          </span>
+                        </div>
+
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Container:</span>
+                            <span className="text-gray-200 font-mono">{cntr?.number || 'TBD'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Client:</span>
+                            <span className="text-gray-300 font-medium truncate max-w-[150px]">{c.clientName}</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-gray-400">
+                          <span className="flex items-center gap-1">
+                            <MapPin size={11} className="text-brand-400" /> {c.pol} → {c.pod}
+                          </span>
+                          <span className="text-emerald-400 font-bold group-hover:underline flex items-center gap-0.5">
+                            View <ChevronRight size={12} />
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
           </div>
         )}
 
-      </div>
+        {/* ============================================================ */}
+        {/* VIEW 2: CURRENT CASES (Pending Cases list -> Opens Workflow + Create Bill) */}
+        {/* ============================================================ */}
+        {activeTab === 'current' && (
+          <div className="p-6 max-w-7xl w-full mx-auto space-y-6">
+            
+            {/* Header & Terminal Filter */}
+            <div className="bg-slate-900/60 p-4 sm:p-5 rounded-3xl border border-white/10 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shadow-xl">
+              <div>
+                <h2 className="text-base font-bold text-white tracking-wide">
+                  {isDestinationStaff ? 'Current Destination Offloading Operations' : 'Current Pending Loading Cases'}
+                </h2>
+                <p className="text-xs text-gray-400">
+                  Select any pending container to open workflow, verify seals, create loading bills, or dispatch
+                </p>
+              </div>
 
-      {/* Workflow Step Modal for Loading Port Staff */}
-      {selectedWorkflowCase && (
-        <WorkflowStepModal
-          isOpen={!!selectedWorkflowCase}
-          onClose={() => setSelectedWorkflowCase(null)}
-          targetCase={selectedWorkflowCase.targetCase}
-          stepStatus={selectedWorkflowCase.stepStatus}
-          stepIndex={selectedWorkflowCase.stepIndex}
-          availableVehicles={vehicles}
-          userRole={UserRole.LOADING_PORT_STAFF}
-          userRoles={userRoles}
-          onSaveCase={async (updatedCase) => {
-            try {
-              await saveCaseToFirestore(updatedCase);
-              showFeedback(`✓ Workflow updated for Case ${updatedCase.caseNo}`);
-            } catch (e) {
-              console.error(e);
-            }
-            setSelectedWorkflowCase(null);
+              {/* Port Filter Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 custom-scrollbar">
+                {[
+                  { id: 'ALL', label: 'All Terminals' },
+                  { id: 'KICT', label: 'KICT' },
+                  { id: 'QICT', label: 'Port Qasim' },
+                  { id: 'SAPT', label: 'SAPT' },
+                  { id: 'KPT', label: 'KPT' }
+                ].map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => setActivePortFilter(p.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition ${
+                      activePortFilter === p.id
+                        ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                        : 'bg-white/5 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* List of Pending Containers for Updating */}
+            {currentFilteredCases.length === 0 ? (
+              <div className="p-12 text-center bg-slate-900/30 rounded-3xl border border-dashed border-white/10 space-y-2">
+                <Ship size={36} className="mx-auto text-gray-500 opacity-60" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">No pending cases under this terminal</h3>
+                <p className="text-xs text-gray-400 max-w-sm mx-auto">
+                  All containers under this filter have completed their workflow. Switch terminal tabs to view other active cases.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                  <span>Pending Container Shipments ({currentFilteredCases.length})</span>
+                  <span>Click to open workflow & bill generator</span>
+                </div>
+
+                {currentFilteredCases.map(c => {
+                  const mainCntr = c.containers?.[0];
+                  return (
+                    <div
+                      key={c.id}
+                      onClick={() => setSelectedCaseForWorkflow(c)}
+                      className="p-4 sm:p-5 bg-slate-900/80 hover:bg-slate-900 border border-white/10 hover:border-amber-500/50 rounded-3xl cursor-pointer transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 group shadow-md"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-10 h-10 rounded-2xl bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0 border border-amber-500/20 font-bold">
+                          <Ship size={18} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-black text-white font-mono">{mainCntr?.number || 'Container TBD'}</span>
+                            <span className="bg-white/5 border border-white/10 text-[10px] text-gray-400 font-bold px-2 py-0.5 rounded">
+                              {mainCntr?.size || '40ft'}
+                            </span>
+                            <span className="font-mono text-amber-400 text-xs font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              {c.caseNo}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1 text-[11px] text-gray-400 font-medium">
+                            <span className="text-gray-300 font-semibold">{c.clientName}</span>
+                            <span className="text-slate-600">•</span>
+                            <span className="flex items-center gap-1"><MapPin size={11} className="text-brand-400" /> {c.pol} → {c.pod}</span>
+                            <span className="text-slate-600">•</span>
+                            <span>Assigned Truck: <span className="text-gray-200 font-mono font-bold">{mainCntr?.vehicleNo || 'TBD'}</span></span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-3 sm:pt-0 border-white/10">
+                        <span className="bg-amber-400/10 text-amber-300 border border-amber-400/20 text-xs font-bold px-3 py-1.5 rounded-xl flex items-center gap-1">
+                          <Clock size={12} /> Update Workflow
+                        </span>
+                        <ChevronRight size={18} className="text-gray-500 group-hover:text-white group-hover:translate-x-1 transition-all" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* VIEW 3: FINANCE (Download Loading Bill + Download Ledger + Add Payment + 2 Sections) */}
+        {/* ============================================================ */}
+        {activeTab === 'finance' && (
+          <div className="p-6 max-w-7xl w-full mx-auto space-y-6">
+            
+            {/* Top Bar with 3 Main Actions: Download Loading Bill, Download Client Ledger, Add Payment */}
+            <div className="bg-slate-900/60 p-4 sm:p-5 rounded-3xl border border-white/10 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 shadow-xl">
+              <div>
+                <h2 className="text-base font-bold text-white tracking-wide">Port Operations Private Finance Desk</h2>
+                <p className="text-xs text-gray-400">
+                  Manage port loading bills, client ledgers, and disbursement payments for ID <span className="text-amber-400 font-mono font-bold">{staffUserId}</span>
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* 1. Download Loading Bill Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowDownloadBillModal(true)}
+                  className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition active:scale-95"
+                >
+                  <Download size={14} />
+                  <span>Download Loading Bill</span>
+                </button>
+
+                {/* 2. Download Client Ledger Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowDownloadLedgerModal(true)}
+                  className="bg-brand-600 hover:bg-brand-500 text-white font-bold px-4 py-2.5 rounded-2xl text-xs flex items-center gap-1.5 shadow-lg shadow-brand-600/20 transition active:scale-95"
+                >
+                  <FileText size={14} />
+                  <span>Download Client Ledger</span>
+                </button>
+
+                {/* 3. Add Payment Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowAddPaymentModal(true)}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-2xl text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/20 transition active:scale-95"
+                >
+                  <Plus size={14} />
+                  <span>Add Payment</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Section 1: Bills Created in Past 1 Week */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <Receipt size={14} className="text-amber-400" />
+                  Recent Loading Bills (Past 1 Week: {billsLastWeek.length})
+                </h3>
+                <span className="text-[11px] text-gray-400">Official bills created under ID: {staffUserId}</span>
+              </div>
+
+              {billsLastWeek.length === 0 ? (
+                <div className="p-8 text-center bg-slate-900/30 rounded-2xl border border-dashed border-white/10 text-gray-400 text-xs">
+                  No loading bills generated in the past 7 days. Click "Download Loading Bill" above to search older bills, or create one in Current Cases.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {billsLastWeek.map(b => (
+                    <div
+                      key={b.id || b.billNo}
+                      className="bg-slate-900/80 border border-white/10 rounded-2xl p-4 space-y-3 shadow-md"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-black text-amber-300 text-xs">{b.billNo}</span>
+                        <span className="text-[10px] font-mono text-gray-400">{b.date}</span>
+                      </div>
+
+                      <div className="space-y-1 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Client:</span>
+                          <span className="text-white font-semibold truncate max-w-[160px]">{b.clientName}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Case / Container:</span>
+                          <span className="text-gray-200 font-mono">{b.caseNo} • {b.containerNo}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Total Charges:</span>
+                          <span className="text-emerald-400 font-mono font-bold">
+                            PKR {b.totalAmount.toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                        <span className="text-[10px] text-gray-400">
+                          {b.charges?.length || 0} itemized heads
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            downloadLoadingBillPdf({
+                              billNo: b.billNo,
+                              caseNo: b.caseNo,
+                              clientName: b.clientName,
+                              containerNo: b.containerNo,
+                              vehicleNo: b.vehicleNo,
+                              driverName: b.driverName,
+                              portTerminal: b.portTerminal,
+                              date: b.date,
+                              items: (b.charges || []).map(ch => ({
+                                head: ch.head,
+                                amount: ch.amount,
+                                receiptName: ch.receiptName,
+                                receiptUrl: ch.receiptUrl,
+                                remarks: ch.description
+                              })),
+                              totalAmount: b.totalAmount,
+                              remarks: b.remarks,
+                              officerName: staffUserName,
+                              branding: { companyName, customLogo }
+                            }).catch(console.error);
+                          }}
+                          className="bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold px-3 py-1 rounded-xl text-[11px] flex items-center gap-1 transition"
+                        >
+                          <Download size={11} /> Download PDF
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Section 2: Containers with Pending Payments */}
+            <div className="space-y-3 pt-4 border-t border-white/10">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <CreditCard size={14} className="text-red-400" />
+                  Containers with Pending Payments ({pendingPaymentContainers.length})
+                </h3>
+                <span className="text-[11px] text-gray-400">Containers awaiting client settlement</span>
+              </div>
+
+              {pendingPaymentContainers.length === 0 ? (
+                <div className="p-8 text-center bg-slate-900/30 rounded-2xl border border-dashed border-white/10 text-gray-400 text-xs">
+                  🎉 Great job! No containers have pending outstanding payments at this time.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                  {pendingPaymentContainers.map(b => {
+                    const balance = Number(b.totalAmount) - (Number(b.paidAmount) || 0);
+                    return (
+                      <div
+                        key={b.id || b.billNo}
+                        className="bg-slate-900/80 border border-red-500/20 rounded-2xl p-4 space-y-3 shadow-md"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono font-bold text-white text-xs">{b.containerNo}</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
+                            Unpaid Balance
+                          </span>
+                        </div>
+
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Client:</span>
+                            <span className="text-gray-200 font-semibold truncate max-w-[160px]">{b.clientName}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Bill No:</span>
+                            <span className="text-amber-400 font-mono">{b.billNo}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Total Billed:</span>
+                            <span className="text-gray-300 font-mono">PKR {b.totalAmount.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Outstanding:</span>
+                            <span className="text-red-400 font-mono font-bold">PKR {balance.toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-white/5 flex items-center justify-between">
+                          <span className="text-[10px] text-gray-400">Case: {b.caseNo}</span>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddPaymentModal(true)}
+                            className="bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-300 font-bold px-3 py-1 rounded-xl text-[11px] flex items-center gap-1 transition"
+                          >
+                            <Plus size={11} /> Record Payment
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
+      </main>
+
+      {/* ============================================================ */}
+      {/* MODALS */}
+      {/* ============================================================ */}
+
+      {/* 1. Case Details Modal (Particulars + Documents Read-only) */}
+      {selectedCaseForDetail && (
+        <PortCaseDetailModal
+          isOpen={!!selectedCaseForDetail}
+          onClose={() => setSelectedCaseForDetail(null)}
+          targetCase={selectedCaseForDetail}
+          isDestinationStaff={isDestinationStaff}
+          staffName={staffUserName}
+        />
+      )}
+
+      {/* 2. Search Case Modal */}
+      {showSearchModal && (
+        <PortSearchCaseModal
+          isOpen={showSearchModal}
+          onClose={() => setShowSearchModal(false)}
+          cases={cases}
+          onSelectCase={(c) => {
+            setSelectedCaseForDetail(c);
           }}
         />
       )}
 
-      {/* Make Loading Bill Modal */}
-      {selectedBillCase && (
-        <LoadingBillModal
-          isOpen={!!selectedBillCase}
-          onClose={() => setSelectedBillCase(null)}
-          targetCase={selectedBillCase}
-          onSaveBill={async (billData, newCharges, newDocs) => {
-            const existingCharges = selectedBillCase.charges || [];
-            const updatedCharges = [...existingCharges];
-            newCharges.forEach(chg => {
-              if (!updatedCharges.some(c => c.description === chg.description)) {
-                updatedCharges.push(chg);
-              }
-            });
-            const existingDocs = selectedBillCase.documents || [];
-            const updatedDocs = [...existingDocs];
-            newDocs.forEach((doc: any) => {
-              if (!updatedDocs.some((d: any) => d.url === doc.url)) {
-                updatedDocs.push(doc);
-              }
-            });
-            const updatedCase: Case = {
-              ...selectedBillCase,
-              charges: updatedCharges,
-              documents: updatedDocs
-            };
-            try {
-              await saveCaseToFirestore(updatedCase);
-              showFeedback(`✓ Loading Bill generated for Case ${selectedBillCase.caseNo}`);
-            } catch (e) {
-              console.error(e);
-            }
-            setSelectedBillCase(null);
+      {/* 3. Workflow & Update Modal for Current Cases */}
+      {selectedCaseForWorkflow && (
+        <PortWorkflowModal
+          isOpen={!!selectedCaseForWorkflow}
+          onClose={() => setSelectedCaseForWorkflow(null)}
+          targetCase={selectedCaseForWorkflow}
+          staffUserId={staffUserId}
+          staffName={staffUserName}
+          isDestinationStaff={isDestinationStaff}
+          onSuccess={showToast}
+        />
+      )}
+
+      {/* 4. Download Loading Bill Search Modal */}
+      {showDownloadBillModal && (
+        <DownloadLoadingBillSearchModal
+          isOpen={showDownloadBillModal}
+          onClose={() => setShowDownloadBillModal(false)}
+          bills={staffBills}
+          staffName={staffUserName}
+        />
+      )}
+
+      {/* 5. Download Client Ledger Modal */}
+      {showDownloadLedgerModal && (
+        <DownloadClientLedgerModal
+          isOpen={showDownloadLedgerModal}
+          onClose={() => setShowDownloadLedgerModal(false)}
+          ledgerEntries={staffLedger}
+          bills={staffBills}
+          staffUserId={staffUserId}
+          staffName={staffUserName}
+        />
+      )}
+
+      {/* 6. Add Payment Modal */}
+      {showAddPaymentModal && (
+        <AddStaffPaymentModal
+          isOpen={showAddPaymentModal}
+          onClose={() => setShowAddPaymentModal(false)}
+          staffUserId={staffUserId}
+          staffName={staffUserName}
+          clients={uniqueClients}
+          onPaymentAdded={(entry) => {
+            showToast(`✓ Payment of PKR ${entry.credit.toLocaleString()} added to ${entry.clientName}'s ledger.`);
           }}
         />
       )}
+
     </div>
   );
 };

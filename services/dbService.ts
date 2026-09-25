@@ -18,7 +18,7 @@ import {
   getActiveDbUserSession,
   clearActiveDbUserSession
 } from './firebase';
-import { Case, FinanceEntry, Vehicle, AppNotification, AppUser, Client, UserRole, RecurringFinanceTemplate, DestinationStaff, StaffLedgerEntry, Vendor } from '../types';
+import { Case, FinanceEntry, Vehicle, AppNotification, AppUser, Client, UserRole, RecurringFinanceTemplate, DestinationStaff, StaffLedgerEntry, Vendor, StaffLoadingBill, StaffPrivateLedgerEntry } from '../types';
 import { safeAppStorage } from './storage';
 
 /**
@@ -352,8 +352,12 @@ export const DEFAULT_DATABASE_USERS: AppUser[] = [
   { id: 3, userId: 'casemanager', password: 'dpl01234', name: 'Case Manager', role: UserRole.OPERATIONS_MANAGER, roles: [UserRole.OPERATIONS_MANAGER], designation: 'Operations Manager', contact: '0321-9876543', email: 'casemanager@docks.com', status: 'ACTIVE', isAdmin: false, baseSalary: 95000 },
   { id: 4, userId: 'vehiclemanager', password: 'dpl01234', name: 'Vehicles Manager', role: UserRole.VEHICLE_MANAGER, roles: [UserRole.VEHICLE_MANAGER], designation: 'Fleet & Logistics Incharge', contact: '0301-2233445', email: 'transport@docks.com', status: 'ACTIVE', baseSalary: 85000 },
   { id: 5, userId: 'documentmanager', password: 'dpl01234', name: 'Documentation Incharge', role: UserRole.OPERATIONS_MANAGER, roles: [UserRole.OPERATIONS_MANAGER], designation: 'Documentation & Clearing Officer', contact: '0304-5566778', email: 'docs@docks.com', status: 'ACTIVE', baseSalary: 75000 },
-  { id: 6, userId: 'loading01', password: 'dpl01234', name: 'Loading Staff', role: UserRole.LOADING_PORT_STAFF, roles: [UserRole.LOADING_PORT_STAFF], designation: 'Loading Port Supervisor', contact: '0302-3344556', email: 'loading@docks.com', status: 'ACTIVE', baseSalary: 65000 },
-  { id: 7, userId: 'lahore', password: 'dpl01234', name: 'Destination Officer (Lahore)', role: UserRole.DESTINATION_PORT_STAFF, roles: [UserRole.DESTINATION_PORT_STAFF], designation: 'Destination Officer (Lahore)', contact: '0303-4455667', email: 'lahore.destination@docks.com', status: 'ACTIVE', baseSalary: 70000 },
+  { id: 6, userId: 'mohsin', password: 'dpl01234', name: 'Mohsin Khan', role: UserRole.LOADING_PORT_STAFF, roles: [UserRole.LOADING_PORT_STAFF], designation: 'Port Loading Officer', contact: '0302-3344556', email: 'mohsin.loading@docks.com', status: 'ACTIVE', baseSalary: 75000 },
+  { id: 11, userId: 'shahid', password: 'dpl01234', name: 'Shahid Khan', role: UserRole.LOADING_PORT_STAFF, roles: [UserRole.LOADING_PORT_STAFF], designation: 'Port Loading Officer', contact: '0302-7788991', email: 'shahid.loading@docks.com', status: 'ACTIVE', baseSalary: 75000 },
+  { id: 12, userId: 'danish', password: 'dpl01234', name: 'Danish Khan', role: UserRole.LOADING_PORT_STAFF, roles: [UserRole.LOADING_PORT_STAFF], designation: 'Port Loading Officer', contact: '0302-1122334', email: 'danish.loading@docks.com', status: 'ACTIVE', baseSalary: 75000 },
+  { id: 13, userId: 'loading01', password: 'dpl01234', name: 'Loading Staff Desk', role: UserRole.LOADING_PORT_STAFF, roles: [UserRole.LOADING_PORT_STAFF], designation: 'Loading Port Supervisor', contact: '0302-3344556', email: 'loading@docks.com', status: 'ACTIVE', baseSalary: 65000 },
+  { id: 14, userId: 'unloading01', password: 'dpl01234', name: 'Offloading Staff (Karachi)', role: UserRole.UNLOADING_PORT_STAFF, roles: [UserRole.UNLOADING_PORT_STAFF], designation: 'Offloading Port Supervisor', contact: '0302-5566778', email: 'unloading@docks.com', status: 'ACTIVE', baseSalary: 65000 },
+  { id: 7, userId: 'lahore', password: 'dpl01234', name: 'Rashid Khan (Lahore)', role: UserRole.DESTINATION_PORT_STAFF, roles: [UserRole.DESTINATION_PORT_STAFF], designation: 'Destination Officer (Lahore)', contact: '0303-4455667', email: 'lahore.destination@docks.com', status: 'ACTIVE', baseSalary: 70000 },
   { id: 8, userId: 'peshawar', password: 'dpl01234', name: 'Destination Officer (Peshawar)', role: UserRole.DESTINATION_PORT_STAFF, roles: [UserRole.DESTINATION_PORT_STAFF], designation: 'Destination Officer (Peshawar)', contact: '0303-9988776', email: 'peshawar.destination@docks.com', status: 'ACTIVE', baseSalary: 70000 },
   { id: 10, userId: '', password: '', name: 'Tariq Mehmood', role: UserRole.OFFICE_STAFF, roles: [UserRole.OFFICE_STAFF], designation: 'Head Office Coordinator', contact: '0312-7788990', email: 'tariq.office@docks.com', status: 'ACTIVE', baseSalary: 55000 },
   { id: 9, userId: 'client01', password: 'dpl01234', name: 'Client User', role: UserRole.CLIENT, roles: [UserRole.CLIENT], designation: 'Corporate Importer', contact: '021-111-222-333', email: 'client01@docks.com', status: 'ACTIVE', clientName: 'Client Account' }
@@ -501,6 +505,9 @@ export async function authenticateDatabaseUser(
   }
 
     // 3. Verify status
+    if (matchedUser.status === 'SUSPENDED' || (matchedUser as any).isSuspended) {
+      throw new Error('This account has been suspended by the administrator. Login access is currently blocked. (Admin ki taraf se yeh ID suspend ki gayi hai. Baraye meharbani administration se rabta karein.)');
+    }
     if (matchedUser.status === 'INACTIVE') {
       throw new Error('This database account is currently marked as INACTIVE. Please contact administration.');
     }
@@ -1432,3 +1439,151 @@ export async function deleteRecurringTemplateFromFirestore(id: string): Promise<
     console.warn(`Firestore deleteRecurringTemplate warning:`, error);
   }
 }
+
+// ==========================================
+// STAFF PRIVATE FINANCE (Bills & Client Ledgers)
+// Isolated per Staff User ID (e.g. mohsin, shahid, danish, lahore)
+// Does NOT touch or pollute Company Finance
+// ==========================================
+
+export function subscribeToStaffBills(
+  staffUserId: string,
+  onData: (bills: StaffLoadingBill[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = 'staff_loading_bills';
+  const localKey = `dpl_staff_bills_${staffUserId.toLowerCase().trim()}`;
+  
+  // Quick initial load from local storage
+  const cached = safeAppStorage.getJSON<StaffLoadingBill[]>(localKey, []);
+  if (cached.length > 0) {
+    onData(cached);
+  }
+
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const allBills: StaffLoadingBill[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as StaffLoadingBill;
+        allBills.push({ ...data, id: docSnap.id });
+      });
+
+      // Filter by staff user ID unless admin viewing all
+      const normalizedStaffId = staffUserId.toLowerCase().trim();
+      const filtered = normalizedStaffId === 'admin' 
+        ? allBills 
+        : allBills.filter(b => (b.staffUserId || '').toLowerCase().trim() === normalizedStaffId);
+
+      safeAppStorage.setJSON(localKey, filtered);
+      onData(filtered);
+    },
+    (error) => {
+      console.warn(`Firestore subscription notice on ${path}:`, error);
+      if (onError) onError(error);
+      const fallback = safeAppStorage.getJSON<StaffLoadingBill[]>(localKey, []);
+      onData(fallback);
+    }
+  );
+}
+
+export async function saveStaffBillToFirestore(bill: StaffLoadingBill): Promise<void> {
+  const path = 'staff_loading_bills';
+  const docId = bill.id || `bill_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const staffUserId = (bill.staffUserId || 'loading01').toLowerCase().trim();
+  const localKey = `dpl_staff_bills_${staffUserId}`;
+
+  try {
+    const payload = sanitizeForFirestore({
+      ...bill,
+      id: docId,
+      staffUserId,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(doc(db, path, docId), payload, { merge: true });
+  } catch (error) {
+    console.warn(`Firestore saveStaffBill warning:`, error);
+  }
+
+  // Update local storage
+  const current = safeAppStorage.getJSON<StaffLoadingBill[]>(localKey, []);
+  const existingIdx = current.findIndex(b => b.id === docId || b.billNo === bill.billNo);
+  if (existingIdx >= 0) {
+    current[existingIdx] = { ...bill, id: docId };
+  } else {
+    current.unshift({ ...bill, id: docId });
+  }
+  safeAppStorage.setJSON(localKey, current);
+}
+
+export function subscribeToStaffPrivateLedger(
+  staffUserId: string,
+  onData: (entries: StaffPrivateLedgerEntry[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = 'staff_private_ledgers';
+  const localKey = `dpl_staff_ledger_${staffUserId.toLowerCase().trim()}`;
+
+  const cached = safeAppStorage.getJSON<StaffPrivateLedgerEntry[]>(localKey, []);
+  if (cached.length > 0) {
+    onData(cached);
+  }
+
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const allEntries: StaffPrivateLedgerEntry[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as StaffPrivateLedgerEntry;
+        allEntries.push({ ...data, id: docSnap.id });
+      });
+
+      const normalizedStaffId = staffUserId.toLowerCase().trim();
+      const filtered = normalizedStaffId === 'admin'
+        ? allEntries
+        : allEntries.filter(e => (e.staffUserId || '').toLowerCase().trim() === normalizedStaffId);
+
+      // Sort by date ascending for ledger order
+      filtered.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      safeAppStorage.setJSON(localKey, filtered);
+      onData(filtered);
+    },
+    (error) => {
+      console.warn(`Firestore subscription notice on ${path}:`, error);
+      if (onError) onError(error);
+      const fallback = safeAppStorage.getJSON<StaffPrivateLedgerEntry[]>(localKey, []);
+      onData(fallback);
+    }
+  );
+}
+
+export async function saveStaffPrivateLedgerEntryToFirestore(entry: StaffPrivateLedgerEntry): Promise<void> {
+  const path = 'staff_private_ledgers';
+  const docId = entry.id || `pled_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const staffUserId = (entry.staffUserId || 'loading01').toLowerCase().trim();
+  const localKey = `dpl_staff_ledger_${staffUserId}`;
+
+  try {
+    const payload = sanitizeForFirestore({
+      ...entry,
+      id: docId,
+      staffUserId,
+      createdAt: entry.createdAt || new Date().toISOString()
+    });
+    await setDoc(doc(db, path, docId), payload, { merge: true });
+  } catch (error) {
+    console.warn(`Firestore saveStaffPrivateLedgerEntry warning:`, error);
+  }
+
+  // Update local storage
+  const current = safeAppStorage.getJSON<StaffPrivateLedgerEntry[]>(localKey, []);
+  const existingIdx = current.findIndex(e => e.id === docId);
+  if (existingIdx >= 0) {
+    current[existingIdx] = { ...entry, id: docId };
+  } else {
+    current.push({ ...entry, id: docId });
+  }
+  safeAppStorage.setJSON(localKey, current);
+}
+

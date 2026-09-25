@@ -293,6 +293,7 @@ const App: React.FC = () => {
       return (
         <ClientPortal 
           customLogo={customLogo} 
+          currentClientName={currentClientName}
           onSwitchMode={handleSwitchMode}
           onOpenAuthModal={() => setIsAuthModalOpen(true)}
           onSignOut={handleSignOut}
@@ -304,12 +305,19 @@ const App: React.FC = () => {
       );
     }
 
-    // Route Loading Port Staff directly to their dedicated workspace
-    if (currentRole === UserRole.LOADING_PORT_STAFF) {
+    // Route Loading Port Staff and Destination / Unloading Staff directly to their dedicated workspace
+    if (
+      currentRole === UserRole.LOADING_PORT_STAFF || 
+      currentRole === UserRole.UNLOADING_PORT_STAFF || 
+      currentRole === UserRole.DESTINATION_PORT_STAFF
+    ) {
       return (
         <LoadingPortStaffPortal 
           onSignOut={handleSignOut}
+          userRole={currentRole}
           userRoles={currentRoles}
+          staffUserId={safeAppStorage.getItem('dpl_current_user_id') || 'mohsin'}
+          staffUserName={safeAppStorage.getItem('dpl_current_user_name') || 'Mohsin Khan'}
         />
       );
     }

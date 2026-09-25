@@ -42,15 +42,19 @@ export const ClientLedgerModal: React.FC<ClientLedgerModalProps> = ({
   if (!isOpen) return null;
 
   // Filter cases for this client
-  const clientCases = cases.filter(c => 
-    c.client?.toLowerCase().trim() === client.name.toLowerCase().trim()
-  );
+  const clientNameNormalized = client.name.toLowerCase().trim();
+  const clientCases = cases.filter(c => {
+    const cClient = (c.clientName || c.client || (c.extractedData as any)?.cargoOwner || (c.extractedData as any)?.consigneeName || '').toLowerCase().trim();
+    return cClient === clientNameNormalized || cClient.includes(clientNameNormalized) || clientNameNormalized.includes(cClient);
+  });
 
   // Filter financial transactions for this client
-  const clientFinances = finances.filter(f => 
-    (f.party && f.party.toLowerCase().trim() === client.name.toLowerCase().trim()) ||
-    (f.clientName && f.clientName.toLowerCase().trim() === client.name.toLowerCase().trim())
-  );
+  const clientFinances = finances.filter(f => {
+    const p1 = (f.party || '').toLowerCase().trim();
+    const p2 = (f.clientName || '').toLowerCase().trim();
+    return p1 === clientNameNormalized || p1.includes(clientNameNormalized) || clientNameNormalized.includes(p1) ||
+           p2 === clientNameNormalized || p2.includes(clientNameNormalized) || clientNameNormalized.includes(p2);
+  });
 
   // Build unified chronological rows
   const rawRows: Omit<LedgerRow, 'runningBalance'>[] = [];
@@ -59,21 +63,24 @@ export const ClientLedgerModal: React.FC<ClientLedgerModalProps> = ({
   clientCases.forEach(c => {
     // Calculate total case amount
     const chargesSum = Array.isArray(c.charges)
-      ? c.charges.reduce((sum, ch) => sum + (Number(ch.amount || ch.defaultAmount) || 0), 0)
+      ? c.charges.reduce((sum, ch) => sum + (Number(ch.amount || (ch as any).defaultAmount) || 0), 0)
       : 0;
     const totalBilled = Number(c.totalAmount) || chargesSum || 0;
 
     const caseDate = c.createdAt 
       ? new Date(c.createdAt).toISOString().split('T')[0]
-      : (c.date || todayStr);
+      : (c.registrationDate || c.date || todayStr);
+
+    const ref = c.caseNo || c.caseNumber || (c.invoiceNo) || `CASE-${c.id}`;
+    const blInfo = c.extractedData?.blNumber || c.blNumber || (c as any).gdNumber || 'N/A';
 
     if (totalBilled > 0) {
       rawRows.push({
         id: `case_${c.id}`,
         date: caseDate,
         type: 'INVOICE',
-        refNumber: c.caseNumber || `CASE-${c.id}`,
-        description: `Case Billing: ${c.category || 'Logistics'} - ${c.shippingLine || ''} (BL: ${c.blNumber || c.gdNumber || 'N/A'})`,
+        refNumber: ref,
+        description: `Case Billing: ${c.category || 'Logistics'} - ${c.pol || ''} to ${c.pod || ''} (BL: ${blInfo})`,
         debit: totalBilled,
         credit: 0
       });
@@ -85,8 +92,8 @@ export const ClientLedgerModal: React.FC<ClientLedgerModalProps> = ({
         id: `case_adv_${c.id}`,
         date: caseDate,
         type: 'PAYMENT',
-        refNumber: `ADV-${c.caseNumber || c.id}`,
-        description: `Advance Payment Received on Case ${c.caseNumber || c.id}`,
+        refNumber: `ADV-${ref}`,
+        description: `Advance Payment Received on Case ${ref}`,
         debit: 0,
         credit: Number(c.advancePaid)
       });

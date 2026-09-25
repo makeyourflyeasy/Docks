@@ -9,7 +9,7 @@ import {
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
 import { autoFillCaseData, downloadFile, docDataCache, detectShippingDocumentType } from '../services/geminiService';
-import { downloadCasePdf, sharePdfFile, downloadCustomsDeliveryOrderPdf } from '../services/pdfExportService';
+import { downloadCasePdf, sharePdfFile, downloadCustomsDeliveryOrderPdf, downloadLoadingBillPdf } from '../services/pdfExportService';
 import { PdfViewerModal } from './PdfViewerModal';
 import { detectMimeType, compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
 import { Container, ExtractedData, CaseStatus, Case, MockDocument, UserRole, CaseCharge, Client, ClientDefaultCharge, CaseStepDetail, WORKFLOW_8_STEPS, Vehicle } from '../types';
@@ -7247,6 +7247,212 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
                     <span>Download</span>
                   </button>
                 </div>
+
+                {/* 2.5 Port Loading Bill / Unloading Bill Section (Permanent Case Record) */}
+                {(() => {
+                  const portBills: Array<{
+                    id: string;
+                    name: string;
+                    type: string;
+                    url?: string;
+                    billNo?: string;
+                    amount?: number;
+                    officer?: string;
+                    containerNo?: string;
+                    billData?: any;
+                  }> = [];
+
+                  // Check selectedCase.loadingBills
+                  if (Array.isArray((selectedCase as any).loadingBills)) {
+                    (selectedCase as any).loadingBills.forEach((b: any, bIdx: number) => {
+                      portBills.push({
+                        id: b.id || `lb_${bIdx}`,
+                        name: `Loading Bill - ${b.billNo || b.id}.pdf`,
+                        type: 'Port Loading Bill',
+                        url: b.pdfUrl,
+                        billNo: b.billNo,
+                        amount: b.totalAmount,
+                        officer: b.staffName,
+                        containerNo: b.containerNo,
+                        billData: b
+                      });
+                    });
+                  }
+
+                  // Also check selectedCase.documents for Loading Bill or Unloading Bill
+                  if (Array.isArray(selectedCase.documents)) {
+                    selectedCase.documents.forEach((d: any, dIdx: number) => {
+                      const dType = (d.type || '').toLowerCase();
+                      const dName = (d.name || '').toLowerCase();
+                      if (dType.includes('loading bill') || dType.includes('unloading bill') || dName.includes('loading bill') || dName.includes('loading_bill') || dName.includes('unloading bill')) {
+                        const billNo = d.billNo || (d.name ? d.name.replace(/\.pdf$/i, '').replace(/^Loading_Bill_/i, '').replace(/^Loading Bill - /i, '') : `LB-${dIdx + 1}`);
+                        if (!portBills.some(pb => pb.billNo === billNo || pb.name === d.name)) {
+                          portBills.push({
+                            id: d.id || `doc_lb_${dIdx}`,
+                            name: d.name || `Loading Bill - ${billNo}.pdf`,
+                            type: dType.includes('unloading') ? 'Port Unloading Bill' : 'Port Loading Bill',
+                            url: d.url,
+                            billNo,
+                            amount: d.totalAmount,
+                            officer: d.officer,
+                            containerNo: d.containerNo || selectedCase.containerNumber,
+                            billData: d.billData
+                          });
+                        }
+                      }
+                    });
+                  }
+
+                  return portBills.map((pb, pbIdx) => {
+                    const handleDownloadPortBill = async () => {
+                      if (pb.url) {
+                        const a = document.createElement('a');
+                        a.href = pb.url;
+                        a.download = pb.name;
+                        a.rel = 'noopener noreferrer';
+                        document.body.appendChild(a);
+                        a.click();
+                        setTimeout(() => {
+                          if (document.body.contains(a)) document.body.removeChild(a);
+                        }, 400);
+                        return;
+                      }
+
+                      // Dynamic generation if url is missing
+                      try {
+                        setIsDownloadingPdf(true);
+                        const bData = pb.billData || {
+                          billNo: pb.billNo || `LB-${Date.now()}`,
+                          caseNo: selectedCase.caseNo,
+                          clientName: selectedCase.clientName,
+                          containerNo: pb.containerNo || selectedCase.containerNumber || '',
+                          portTerminal: selectedCase.pol || 'Port Terminal',
+                          date: new Date().toISOString().slice(0, 10),
+                          items: (selectedCase.charges || []).map((c: any) => ({
+                            head: c.description || 'Port Charge',
+                            amount: Number(c.amount) || 0,
+                            receiptUrl: c.receiptUrl
+                          })),
+                          totalAmount: pb.amount || (selectedCase.charges || []).reduce((sum: number, c: any) => sum + (Number(c.amount) || 0), 0),
+                          officerName: pb.officer || 'Port Staff Desk',
+                          branding: { companyName, customLogo: activeLogo }
+                        };
+                        await downloadLoadingBillPdf(bData);
+                      } catch (err) {
+                        console.error('Failed to download port bill:', err);
+                        alert('Could not download bill PDF.');
+                      } finally {
+                        setIsDownloadingPdf(false);
+                      }
+                    };
+
+                    return (
+                      <div key={'pb-' + pbIdx} className="p-3.5 sm:p-4 flex items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors bg-emerald-500/[0.03]">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 flex items-center justify-center shrink-0">
+                            <Receipt size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-bold text-white truncate">{pb.name}</h4>
+                              <span className="text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                                {pb.type}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-400 truncate">
+                              {pb.containerNo ? `Container: ${pb.containerNo} • ` : ''}
+                              {pb.amount ? `Total: PKR ${Number(pb.amount).toLocaleString()} • ` : ''}
+                              {pb.officer ? `Staff: ${pb.officer} • ` : ''}
+                              Permanent Case Record (Protected from ID Deletion)
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isDownloadingPdf}
+                          onClick={handleDownloadPortBill}
+                          className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-600/20 transition-all shrink-0 cursor-pointer active:scale-95"
+                          title="Download Port Bill PDF"
+                        >
+                          <Download size={13} />
+                          <span>Download</span>
+                        </button>
+                      </div>
+                    );
+                  });
+                })()}
+
+                {/* 2.6 Customs Delivery Order (DO / NOC) */}
+                {(() => {
+                  const hasDoDoc = (selectedCase.documents || []).find((d: any) => 
+                    (d.type || '').toLowerCase().includes('delivery order') || 
+                    (d.name || '').toLowerCase().includes('delivery_order') ||
+                    (d.name || '').toLowerCase().includes('delivery order')
+                  );
+                  const doUrl = hasDoDoc?.url || selectedCase.autoGeneratedDoUrl;
+                  const isDestinationDone = isDestinationUnloadedAndGateOut(selectedCase) || selectedCase.status === CaseStatus.COMPLETED || selectedCase.status === CaseStatus.DESTINATION_PORT_ARRIVAL;
+
+                  if (!doUrl && !isDestinationDone) return null;
+
+                  const handleDownloadDO = async () => {
+                    if (doUrl) {
+                      const a = document.createElement('a');
+                      a.href = doUrl;
+                      a.download = hasDoDoc?.name || `Customs_Delivery_Order_${selectedCase.caseNo}.pdf`;
+                      a.rel = 'noopener noreferrer';
+                      document.body.appendChild(a);
+                      a.click();
+                      setTimeout(() => {
+                        if (document.body.contains(a)) document.body.removeChild(a);
+                      }, 400);
+                      return;
+                    }
+
+                    try {
+                      setIsDownloadingPdf(true);
+                      await downloadCustomsDeliveryOrderPdf({
+                        targetCase: selectedCase,
+                        branding: { companyName, customLogo: activeLogo }
+                      });
+                    } catch (err) {
+                      console.error('Failed to generate DO:', err);
+                      alert('Could not generate Delivery Order PDF.');
+                    } finally {
+                      setIsDownloadingPdf(false);
+                    }
+                  };
+
+                  return (
+                    <div className="p-3.5 sm:p-4 flex items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors bg-teal-500/[0.03]">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-teal-500/15 text-teal-300 border border-teal-500/25 flex items-center justify-center shrink-0">
+                          <FileCheck size={18} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-bold text-white truncate">Customs Delivery Order (DO / NOC)</h4>
+                            <span className="text-[10px] font-mono font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded-full">
+                              Official DO
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-400 truncate">
+                            Port Destination Container Release & Offloading NOC • Case #{selectedCase.caseNo}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isDownloadingPdf}
+                        onClick={handleDownloadDO}
+                        className="bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-teal-600/20 transition-all shrink-0 cursor-pointer active:scale-95"
+                        title="Download Customs Delivery Order PDF"
+                      >
+                        <Download size={13} />
+                        <span>Download</span>
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {/* 3. Usse niche: Sare uploaded document honge jinke naam likhe a rahe honge aur aage download ka button hoga */}
                 {selectedCase.documents && selectedCase.documents.length > 0 ? (

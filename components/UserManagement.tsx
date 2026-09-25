@@ -160,7 +160,8 @@ const UserManagement: React.FC = () => {
     preferredRoutes: 'Karachi - Lahore - Peshawar',
     ntn: '',
     officeAddress: '',
-    whatsappNumber: ''
+    whatsappNumber: '',
+    status: 'ACTIVE' as 'ACTIVE' | 'SUSPENDED'
   });
 
   // Open primary create button
@@ -232,7 +233,8 @@ const UserManagement: React.FC = () => {
       preferredRoutes: 'Karachi - Lahore - Peshawar',
       ntn: '',
       officeAddress: '',
-      whatsappNumber: ''
+      whatsappNumber: '',
+      status: 'ACTIVE'
     });
 
     if (roleType === 'TRANSPORTER') setActiveTab('transporters');
@@ -276,7 +278,8 @@ const UserManagement: React.FC = () => {
       preferredRoutes: (user as any).preferredRoutes || 'Karachi - Lahore - Peshawar',
       ntn: (user as any).ntn || '',
       officeAddress: (user as any).officeAddress || '',
-      whatsappNumber: (user as any).whatsappNumber || ''
+      whatsappNumber: (user as any).whatsappNumber || '',
+      status: (user.status as any) === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE'
     });
 
     setIsEditing(true);
@@ -304,7 +307,8 @@ const UserManagement: React.FC = () => {
         role: primaryRole as UserRole,
         roles: assignedRoles as UserRole[],
         designation: formData.designation.trim(),
-        status: 'ACTIVE',
+        status: formData.status || 'ACTIVE',
+        isSuspended: formData.status === 'SUSPENDED',
         isAdmin: assignedRoles.includes(UserRole.ADMIN),
         userId: formData.generatedId.trim(),
         password: formData.generatedPass.trim(),
@@ -348,7 +352,8 @@ const UserManagement: React.FC = () => {
         role: primaryRole as UserRole,
         roles: assignedRoles as UserRole[],
         designation: formData.designation.trim(),
-        status: 'ACTIVE',
+        status: formData.status || 'ACTIVE',
+        isSuspended: formData.status === 'SUSPENDED',
         isAdmin: assignedRoles.includes(UserRole.ADMIN),
         userId: formData.generatedId.trim(),
         password: formData.generatedPass.trim(),
@@ -406,6 +411,28 @@ const UserManagement: React.FC = () => {
       console.warn("Notice deleting target:", err);
     } finally {
       setDeleteTarget(null);
+    }
+  };
+
+  const handleToggleSuspendUser = async (user: AppUser) => {
+    const isSuspended = user.status === 'SUSPENDED';
+    const newStatus = isSuspended ? 'ACTIVE' : 'SUSPENDED';
+    const promptMsg = isSuspended
+      ? `Reactivate account for ${user.name} (${user.userId})?\n\nThey will be allowed to log into the system again.`
+      : `Suspend account for ${user.name} (${user.userId})?\n\nThey will NOT be allowed to log into the portal. The ID and all data will remain safely preserved in the database.`;
+
+    if (!confirm(promptMsg)) return;
+
+    const updatedUser: AppUser = {
+      ...user,
+      status: newStatus
+    };
+
+    setUsers(prev => prev.map(u => String(u.id) === String(user.id) ? updatedUser : u));
+    try {
+      await saveUserToFirestore(updatedUser);
+    } catch (err) {
+      console.warn("Notice updating user suspend status:", err);
     }
   };
 
@@ -665,8 +692,16 @@ const UserManagement: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <span className="text-green-400 text-[11px] font-bold flex items-center gap-1 shrink-0 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_currentColor]"></span> {user.status || 'ACTIVE'}
+                  <span className={`text-[11px] font-bold flex items-center gap-1 shrink-0 px-2 py-0.5 rounded-full border ${
+                    user.status === 'SUSPENDED'
+                      ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+                      : 'text-green-400 bg-green-500/10 border-green-500/20'
+                  }`}>
+                    {user.status === 'SUSPENDED' ? (
+                      <Lock size={10} className="text-amber-400" />
+                    ) : (
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_currentColor]"></span>
+                    )} {user.status || 'ACTIVE'}
                   </span>
                 </div>
 
@@ -705,6 +740,17 @@ const UserManagement: React.FC = () => {
                     <CreditCard size={14} /> Dual Ledgers
                   </button>
                   <div className="flex items-center gap-1 shrink-0">
+                    <button 
+                      onClick={() => handleToggleSuspendUser(user)}
+                      className={`p-2 rounded-xl transition-colors ${
+                        user.status === 'SUSPENDED'
+                          ? 'text-amber-400 hover:text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30'
+                          : 'text-gray-400 hover:text-amber-400 bg-white/5 hover:bg-white/10'
+                      }`}
+                      title={user.status === 'SUSPENDED' ? 'Reactivate / Unsuspend User Account' : 'Suspend User (Block Login)'}
+                    >
+                      {user.status === 'SUSPENDED' ? <Unlock size={14} /> : <Lock size={14} />}
+                    </button>
                     <button 
                       onClick={() => handleEditUser(user)}
                       className="text-gray-300 hover:text-white p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
@@ -783,18 +829,37 @@ const UserManagement: React.FC = () => {
                         </span>
                       </td>
                       <td className="p-4">
-                        <span className="text-green-400 text-xs font-bold flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_currentColor]"></span> {user.status || 'ACTIVE'}
+                        <span className={`text-xs font-bold flex items-center gap-1.5 px-2 py-0.5 rounded-full border w-fit ${
+                          user.status === 'SUSPENDED'
+                            ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+                            : 'text-green-400 bg-green-500/10 border-green-500/20'
+                        }`}>
+                          {user.status === 'SUSPENDED' ? (
+                            <Lock size={11} className="text-amber-400" />
+                          ) : (
+                            <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_currentColor]"></span>
+                          )} {user.status || 'ACTIVE'}
                         </span>
                       </td>
                       <td className="p-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             onClick={() => setSelectedStaffUser(user)}
                             className="text-emerald-400 hover:text-emerald-300 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors text-xs flex items-center gap-1 font-semibold"
                             title="View Salary & Daily Routine Ledgers"
                           >
                             <CreditCard size={14} /> Dual Ledgers
+                          </button>
+                          <button 
+                            onClick={() => handleToggleSuspendUser(user)}
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              user.status === 'SUSPENDED'
+                                ? 'text-amber-400 hover:text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30'
+                                : 'text-gray-400 hover:text-amber-400 bg-white/5 hover:bg-white/10'
+                            }`}
+                            title={user.status === 'SUSPENDED' ? 'Reactivate / Unsuspend User (Allow Login)' : 'Suspend User (Block Login)'}
+                          >
+                            {user.status === 'SUSPENDED' ? <Unlock size={15} /> : <Lock size={15} />}
                           </button>
                           <button 
                             onClick={() => handleEditUser(user)}
@@ -1016,9 +1081,19 @@ const UserManagement: React.FC = () => {
                       <p className="text-xs text-gray-400 font-mono">{trans.userId || 'N/A'} • Transporter/Broker</p>
                     </div>
                   </div>
-                  <span className="text-[10px] bg-amber-500/10 border border-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-medium">
-                    Fleet Partner
-                  </span>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="text-[10px] bg-amber-500/10 border border-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-medium">
+                      Fleet Partner
+                    </span>
+                    <span className={`text-[10px] font-bold flex items-center gap-1 px-2 py-0.5 rounded-full border ${
+                      trans.status === 'SUSPENDED'
+                        ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+                        : 'text-green-400 bg-green-500/10 border-green-500/20'
+                    }`}>
+                      {trans.status === 'SUSPENDED' ? <Lock size={9} /> : <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_currentColor]"></span>}
+                      {trans.status || 'ACTIVE'}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="bg-white/5 rounded-xl p-2.5 border border-white/5 space-y-1 text-xs">
@@ -1043,6 +1118,17 @@ const UserManagement: React.FC = () => {
                     Portal ID: <strong className="text-amber-300 font-mono">{trans.userId || 'TRP-N/A'}</strong>
                   </span>
                   <div className="flex items-center gap-1">
+                    <button 
+                      onClick={() => handleToggleSuspendUser(trans)}
+                      className={`p-1.5 rounded-xl transition-colors ${
+                        trans.status === 'SUSPENDED'
+                          ? 'text-amber-400 hover:text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30'
+                          : 'text-gray-400 hover:text-amber-400 bg-white/5 hover:bg-white/10'
+                      }`}
+                      title={trans.status === 'SUSPENDED' ? 'Reactivate / Unsuspend Transporter Account' : 'Suspend Transporter (Block Login)'}
+                    >
+                      {trans.status === 'SUSPENDED' ? <Unlock size={14} /> : <Lock size={14} />}
+                    </button>
                     <button 
                       onClick={() => handleEditUser(trans)}
                       className="text-gray-300 hover:text-white p-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
@@ -1072,6 +1158,7 @@ const UserManagement: React.FC = () => {
                     <th className="p-4">Contact Phone</th>
                     <th className="p-4">Portal ID</th>
                     <th className="p-4">Preferred Transit Routes</th>
+                    <th className="p-4">Status</th>
                     <th className="p-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -1096,8 +1183,29 @@ const UserManagement: React.FC = () => {
                       <td className="p-4 text-xs text-gray-300">
                         {(trans as any).preferredRoutes || 'Standard Transit Routes'}
                       </td>
+                      <td className="p-4">
+                        <span className={`text-xs font-bold flex items-center gap-1.5 px-2 py-0.5 rounded-full border w-fit ${
+                          trans.status === 'SUSPENDED'
+                            ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+                            : 'text-green-400 bg-green-500/10 border-green-500/20'
+                        }`}>
+                          {trans.status === 'SUSPENDED' ? <Lock size={11} className="text-amber-400" /> : <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_currentColor]"></span>}
+                          {trans.status || 'ACTIVE'}
+                        </span>
+                      </td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <button 
+                            onClick={() => handleToggleSuspendUser(trans)}
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              trans.status === 'SUSPENDED'
+                                ? 'text-amber-400 hover:text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30'
+                                : 'text-gray-400 hover:text-amber-400 bg-white/5 hover:bg-white/10'
+                            }`}
+                            title={trans.status === 'SUSPENDED' ? 'Reactivate / Unsuspend Transporter (Allow Login)' : 'Suspend Transporter (Block Login)'}
+                          >
+                            {trans.status === 'SUSPENDED' ? <Unlock size={15} /> : <Lock size={15} />}
+                          </button>
                           <button 
                             onClick={() => handleEditUser(trans)}
                             className="text-gray-300 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
@@ -1383,8 +1491,16 @@ const UserManagement: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                      <span className="text-green-400 text-[11px] font-bold flex items-center gap-1 shrink-0 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_currentColor]"></span> {user.status || 'ACTIVE'}
+                      <span className={`text-[11px] font-bold flex items-center gap-1 shrink-0 px-2 py-0.5 rounded-full border ${
+                        user.status === 'SUSPENDED'
+                          ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+                          : 'text-green-400 bg-green-500/10 border-green-500/20'
+                      }`}>
+                        {user.status === 'SUSPENDED' ? (
+                          <Lock size={10} className="text-amber-400" />
+                        ) : (
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_6px_currentColor]"></span>
+                        )} {user.status || 'ACTIVE'}
                       </span>
                     </div>
 
@@ -1412,6 +1528,17 @@ const UserManagement: React.FC = () => {
                         title="View Salary & Daily Routine Ledgers"
                       >
                         <CreditCard size={12} /> Ledgers
+                      </button>
+                      <button 
+                        onClick={() => handleToggleSuspendUser(user)}
+                        className={`p-1.5 rounded-xl transition-colors ${
+                          user.status === 'SUSPENDED'
+                            ? 'text-amber-400 hover:text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30'
+                            : 'text-gray-400 hover:text-amber-400 bg-white/5 hover:bg-white/10'
+                        }`}
+                        title={user.status === 'SUSPENDED' ? 'Reactivate / Unsuspend User Account' : 'Suspend User ID (Block Login)'}
+                      >
+                        {user.status === 'SUSPENDED' ? <Unlock size={13} /> : <Lock size={13} />}
                       </button>
                       <button 
                         onClick={() => handleEditUser(user)}
@@ -1483,18 +1610,37 @@ const UserManagement: React.FC = () => {
                             </span>
                           </td>
                           <td className="p-4">
-                            <span className="text-green-400 text-xs font-bold flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_currentColor]"></span> {user.status || 'ACTIVE'}
+                            <span className={`text-xs font-bold flex items-center gap-1.5 px-2 py-0.5 rounded-full border w-fit ${
+                              user.status === 'SUSPENDED'
+                                ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+                                : 'text-green-400 bg-green-500/10 border-green-500/20'
+                            }`}>
+                              {user.status === 'SUSPENDED' ? (
+                                <Lock size={11} className="text-amber-400" />
+                              ) : (
+                                <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_currentColor]"></span>
+                              )} {user.status || 'ACTIVE'}
                             </span>
                           </td>
                           <td className="p-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
+                            <div className="flex items-center justify-end gap-1.5">
                               <button
                                 onClick={() => setSelectedStaffUser(user)}
                                 className="text-emerald-400 hover:text-emerald-300 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors text-xs flex items-center gap-1 font-semibold"
                                 title="View Salary & Daily Routine Ledgers"
                               >
                                 <CreditCard size={14} /> Dual Ledgers
+                              </button>
+                              <button 
+                                onClick={() => handleToggleSuspendUser(user)}
+                                className={`p-1.5 rounded-lg transition-colors ${
+                                  user.status === 'SUSPENDED'
+                                    ? 'text-amber-400 hover:text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30'
+                                    : 'text-gray-400 hover:text-amber-400 bg-white/5 hover:bg-white/10'
+                                }`}
+                                title={user.status === 'SUSPENDED' ? 'Reactivate / Unsuspend User Account' : 'Suspend User (Block Login)'}
+                              >
+                                {user.status === 'SUSPENDED' ? <Unlock size={15} /> : <Lock size={15} />}
                               </button>
                               <button 
                                 onClick={() => handleEditUser(user)}
@@ -2041,6 +2187,42 @@ const UserManagement: React.FC = () => {
                       />
                     </div>
                   </div>
+
+                  {/* Account Login Status (Active vs Suspended) */}
+                  <div className="pt-2.5 mt-1 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <span className="text-gray-300 text-xs font-semibold block">Account Status & Login Access</span>
+                      <span className="text-[10px] text-gray-400">
+                        {formData.status === 'SUSPENDED' 
+                          ? 'Suspended (Blocked): User cannot log in. Data remains preserved safely.' 
+                          : 'Active: Employee can log in and execute operations.'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, status: 'ACTIVE' }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                          formData.status !== 'SUSPENDED'
+                            ? 'bg-green-500/20 text-green-300 border border-green-500/40 shadow-sm'
+                            : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
+                        }`}
+                      >
+                        <Check size={12} /> Active
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, status: 'SUSPENDED' }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                          formData.status === 'SUSPENDED'
+                            ? 'bg-amber-500/25 text-amber-300 border border-amber-500/50 shadow-sm'
+                            : 'bg-white/5 text-gray-400 hover:text-amber-300 border border-white/10'
+                        }`}
+                      >
+                        <Lock size={12} /> Suspend (Block Login)
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -2123,6 +2305,42 @@ const UserManagement: React.FC = () => {
                         onChange={(e) => setFormData({ ...formData, generatedPass: e.target.value })}
                         className="w-full bg-black/40 border border-white/15 rounded-lg p-1.5 text-white text-xs font-bold outline-none"
                       />
+                    </div>
+                  </div>
+
+                  {/* Account Login Status (Active vs Suspended) */}
+                  <div className="pt-2.5 mt-1 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <span className="text-gray-300 text-xs font-semibold block">Portal Login Status</span>
+                      <span className="text-[10px] text-gray-400">
+                        {formData.status === 'SUSPENDED' 
+                          ? 'Suspended (Blocked): Transporter / Broker login blocked. Profile preserved in DB.' 
+                          : 'Active: Transporter / Broker can log into portal.'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, status: 'ACTIVE' }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                          formData.status !== 'SUSPENDED'
+                            ? 'bg-green-500/20 text-green-300 border border-green-500/40 shadow-sm'
+                            : 'bg-white/5 text-gray-400 hover:text-white border border-white/10'
+                        }`}
+                      >
+                        <Check size={12} /> Active
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, status: 'SUSPENDED' }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                          formData.status === 'SUSPENDED'
+                            ? 'bg-amber-500/25 text-amber-300 border border-amber-500/50 shadow-sm'
+                            : 'bg-white/5 text-gray-400 hover:text-amber-300 border border-white/10'
+                        }`}
+                      >
+                        <Lock size={12} /> Suspend (Block Login)
+                      </button>
                     </div>
                   </div>
                 </div>

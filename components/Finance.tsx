@@ -1133,7 +1133,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   // Cashbook Summary
   const cashbookSummary = useMemo(() => {
     const totalIncome = financeData
-      .filter(f => f.type === 'INCOME')
+      .filter(f => f.type === 'INCOME' && f.status !== 'PENDING' && (f.status as any) !== 'REJECTED')
       .reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
     const totalExpense = financeData
       .filter(f => f.type === 'EXPENSE')
@@ -1150,7 +1150,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const treasuryBreakdown = useMemo(() => {
     // 1. Drawer Cash (Physical Cash in Office Drawer / Counter)
     const drawerEntries = financeData.filter(e => e.paymentMethod !== 'BANK');
-    const drawerInflow = drawerEntries.filter(e => e.type === 'INCOME').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const drawerInflow = drawerEntries.filter(e => e.type === 'INCOME' && e.status !== 'PENDING' && (e.status as any) !== 'REJECTED').reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const drawerOutflow = drawerEntries.filter(e => e.type === 'EXPENSE').reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const drawerNet = drawerInflow - drawerOutflow;
 
@@ -1164,7 +1164,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           (e.bankId && String(e.bankId) === String(bank.id))
         )
       );
-      const inflow = bankEntries.filter(e => e.type === 'INCOME').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const inflow = bankEntries.filter(e => e.type === 'INCOME' && e.status !== 'PENDING' && (e.status as any) !== 'REJECTED').reduce((s, e) => s + (Number(e.amount) || 0), 0);
       const outflow = bankEntries.filter(e => e.type === 'EXPENSE').reduce((s, e) => s + (Number(e.amount) || 0), 0);
       const net = inflow - outflow;
       return {
@@ -1184,7 +1184,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     );
 
     if (unassignedBankEntries.length > 0) {
-      const uInflow = unassignedBankEntries.filter(e => e.type === 'INCOME').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+      const uInflow = unassignedBankEntries.filter(e => e.type === 'INCOME' && e.status !== 'PENDING' && (e.status as any) !== 'REJECTED').reduce((s, e) => s + (Number(e.amount) || 0), 0);
       const uOutflow = unassignedBankEntries.filter(e => e.type === 'EXPENSE').reduce((s, e) => s + (Number(e.amount) || 0), 0);
       bankCards.push({
         id: 'other_bank',
@@ -1216,6 +1216,36 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     };
   }, [banks, financeData]);
 
+  // Pending Client Portal Deposits awaiting bank verification
+  const pendingClientDeposits = useMemo(() => {
+    return financeData.filter(f => f.type === 'INCOME' && f.status === 'PENDING');
+  }, [financeData]);
+
+  const [previewSlipModalUrl, setPreviewSlipModalUrl] = useState<string | null>(null);
+
+  const handleApproveClientDeposit = async (entry: FinanceEntry) => {
+    const updated: FinanceEntry = {
+      ...entry,
+      status: 'PAID'
+    };
+    setFinanceData(prev => prev.map(f => f.id === entry.id ? updated : f));
+    await updateFinanceInFirestore(updated).catch(e => console.warn(e));
+    logActivity(`Client Deposit Approved: PKR ${entry.amount.toLocaleString()} from ${entry.party}`, 'FINANCE');
+    alert(`Payment of PKR ${entry.amount.toLocaleString()} from "${entry.party}" verified and credited to client ledger!`);
+    handleDirectDownloadReceipt(updated);
+  };
+
+  const handleRejectClientDeposit = async (entry: FinanceEntry) => {
+    if (!window.confirm(`Decline deposit slip of PKR ${entry.amount.toLocaleString()} from ${entry.party}?`)) return;
+    const updated: FinanceEntry = {
+      ...entry,
+      status: 'REJECTED' as any
+    };
+    setFinanceData(prev => prev.map(f => f.id === entry.id ? updated : f));
+    await updateFinanceInFirestore(updated).catch(e => console.warn(e));
+    logActivity(`Client Deposit Rejected: PKR ${entry.amount.toLocaleString()} from ${entry.party}`, 'FINANCE');
+  };
+
   // Total Received Amount Summary: All payments received from 1st of current month to today
   const currentMonthReceivedSummary = useMemo(() => {
     const now = new Date();
@@ -1225,9 +1255,9 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     const todayStr = new Date().toISOString().split('T')[0];
     const monthName = now.toLocaleString('en-US', { month: 'long' });
 
-    // Filter all income payments from the 1st of this month to today
+    // Filter all verified income payments from the 1st of this month to today
     const receivedEntries = financeData.filter(f => {
-      if (f.type !== 'INCOME') return false;
+      if (f.type !== 'INCOME' || f.status === 'PENDING' || (f.status as any) === 'REJECTED') return false;
       const fDate = (f.date || '').slice(0, 10);
       return fDate >= startOfMonthStr;
     });
@@ -5796,6 +5826,115 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
           </button>
         </div>
       </div>
+
+      {/* Client Portal Online Deposit Slips - Verification Desk */}
+      {pendingClientDeposits.length > 0 && (
+        <div className="glass-card rounded-2xl p-5 border border-amber-500/40 bg-gradient-to-r from-amber-950/40 via-slate-900/90 to-amber-950/30 space-y-4 no-print shadow-xl shadow-amber-950/20 animate-fade-in">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+                <Clock size={20} className="animate-spin" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <span>Client Online Deposits — Verification Desk</span>
+                  <span className="bg-amber-500/20 text-amber-300 text-xs px-2.5 py-0.5 rounded-full border border-amber-500/30 font-semibold font-mono">
+                    {pendingClientDeposits.length} Pending
+                  </span>
+                </h3>
+                <p className="text-xs text-gray-300">
+                  Clients submitted bank deposit slips from the Client Portal. Verify funds with bank and click "Approve" to credit their ledger and company cashbook.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-white/10 bg-slate-950/80">
+            <table className="w-full text-left text-xs text-gray-200">
+              <thead className="bg-slate-900 uppercase font-semibold text-gray-400 border-b border-white/10">
+                <tr>
+                  <th className="p-3">Date</th>
+                  <th className="p-3">Client / Party</th>
+                  <th className="p-3">Method & Bank</th>
+                  <th className="p-3">Reference / TxID</th>
+                  <th className="p-3">Amount (PKR)</th>
+                  <th className="p-3 text-center">Proof Slip</th>
+                  <th className="p-3 text-right">Verification Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {pendingClientDeposits.map((dep) => (
+                  <tr key={dep.id} className="hover:bg-white/5 transition-colors">
+                    <td className="p-3 font-mono text-gray-300">{dep.date}</td>
+                    <td className="p-3 font-bold text-white text-sm">{dep.party}</td>
+                    <td className="p-3 text-gray-300">
+                      <span className="bg-white/5 px-2 py-0.5 rounded border border-white/10 text-[11px]">
+                        {dep.paymentMethod || 'BANK'} &bull; {dep.bankName || 'Meezan Bank'}
+                      </span>
+                    </td>
+                    <td className="p-3 font-mono text-amber-300">{dep.reference || 'N/A'}</td>
+                    <td className="p-3 font-mono font-bold text-emerald-400 text-sm">
+                      PKR {Number(dep.amount || 0).toLocaleString()}
+                    </td>
+                    <td className="p-3 text-center">
+                      {dep.slipUrl ? (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewSlipModalUrl(dep.slipUrl!)}
+                          className="px-2.5 py-1 rounded bg-brand-500/20 hover:bg-brand-500/30 text-brand-300 border border-brand-500/30 text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition"
+                        >
+                          <Eye size={13} /> View Slip
+                        </button>
+                      ) : (
+                        <span className="text-gray-500 italic text-[11px]">No image</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRejectClientDeposit(dep)}
+                          className="px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-semibold cursor-pointer transition"
+                        >
+                          Decline
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApproveClientDeposit(dep)}
+                          className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-600/30 cursor-pointer active:scale-95 transition"
+                        >
+                          <CheckCircle2 size={14} /> Approve & Credit
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Slip Preview Lightbox Modal */}
+      {previewSlipModalUrl && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-md cursor-zoom-out"
+          onClick={() => setPreviewSlipModalUrl(null)}
+        >
+          <button 
+            type="button"
+            className="absolute top-6 right-6 text-white/70 hover:text-white bg-black/60 p-2 rounded-full cursor-pointer"
+            onClick={() => setPreviewSlipModalUrl(null)}
+          >
+            <X size={26} />
+          </button>
+          <img 
+            src={previewSlipModalUrl} 
+            alt="Bank Deposit Slip Proof" 
+            className="max-w-full max-h-[90vh] object-contain rounded-xl border border-white/20 shadow-2xl" 
+          />
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div className="glass-card rounded-2xl overflow-hidden min-h-[500px] flex flex-col print:border-none print:shadow-none">

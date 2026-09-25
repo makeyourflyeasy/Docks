@@ -2066,7 +2066,7 @@ export interface CaseDeliveryOrderData {
 
 export async function downloadCustomsDeliveryOrderPdf(
   data: CaseDeliveryOrderData
-): Promise<{ success: boolean; filename: string; blobUrl: string }> {
+): Promise<{ success: boolean; filename: string; blobUrl: string; dataUrl?: string }> {
   try {
     const { targetCase } = data;
     const doc = new jsPDF({
@@ -2233,7 +2233,12 @@ export async function downloadCustomsDeliveryOrderPdf(
 
     const cleanCaseNo = targetCase.caseNo.replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `Delivery_Order_${cleanCaseNo}.pdf`;
-    return triggerDirectDownload(doc, filename);
+    let dataUrl: string | undefined = undefined;
+    try {
+      dataUrl = doc.output('datauristring');
+    } catch (_) {}
+    const result = await triggerDirectDownload(doc, filename);
+    return { ...result, dataUrl };
   } catch (error) {
     console.error('Failed to generate delivery order PDF:', error);
     throw error;
@@ -2835,7 +2840,7 @@ export interface LoadingBillData {
   branding?: BrandingInfo;
 }
 
-export async function downloadLoadingBillPdf(data: LoadingBillData): Promise<{ success: boolean; filename: string; blobUrl?: string }> {
+export async function downloadLoadingBillPdf(data: LoadingBillData): Promise<{ success: boolean; filename: string; blobUrl?: string; dataUrl?: string }> {
   try {
     const doc = new jsPDF({
       orientation: 'portrait',
@@ -3038,7 +3043,12 @@ export async function downloadLoadingBillPdf(data: LoadingBillData): Promise<{ s
 
     const cleanBillNo = (data.billNo || 'LB-' + Date.now()).replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `Loading_Bill_${cleanBillNo}.pdf`;
-    return triggerDirectDownload(doc, filename);
+    let dataUrl: string | undefined = undefined;
+    try {
+      dataUrl = doc.output('datauristring');
+    } catch (_) {}
+    const result = await triggerDirectDownload(doc, filename);
+    return { ...result, dataUrl };
   } catch (error) {
     console.error('Failed to generate Loading Bill PDF:', error);
     throw error;

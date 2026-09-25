@@ -1,14 +1,23 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   FolderKanban, DollarSign, Plus, Search, Filter, Calendar, 
   Truck, ArrowRight, CheckCircle2, Clock, AlertCircle, FileText, 
   Camera, Upload, X, Eye, ChevronRight, ShieldCheck, 
   MapPin, Anchor, Box, ArrowUpRight, ArrowDownLeft, CreditCard,
-  Building, RefreshCw, FileCheck, Layers, ExternalLink, User, Download, Loader2, LogOut, UserPlus
+  Building, RefreshCw, FileCheck, Layers, ExternalLink, User, Download, Loader2, LogOut, UserPlus,
+  Receipt, Printer
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
-import { downloadContainerInvoicePdf, downloadCasePdf, downloadClientLedgerPdf } from '../services/pdfExportService';
+import { 
+  downloadContainerInvoicePdf, 
+  downloadCasePdf, 
+  downloadClientLedgerPdf,
+  downloadLoadingBillPdf,
+  downloadCustomsDeliveryOrderPdf,
+  downloadReceivableInvoicePdf,
+  LoadingBillData
+} from '../services/pdfExportService';
 import { Case, CaseStatus, Container, FinanceEntry, ExtractedData, MockDocument, UserRole, Client, CaseCharge } from '../types';
 import { compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
 import TopModeSwitcher, { ModeOption } from './TopModeSwitcher';
@@ -56,12 +65,15 @@ export interface ClientPaymentEntry {
   slipUrl?: string;
   status: 'CONFIRMED' | 'PENDING';
   remarks?: string;
+  party?: string;
+  caseNo?: string;
 }
 
 const INITIAL_CLIENT_PAYMENTS: ClientPaymentEntry[] = [];
 
 interface ClientPortalProps {
   customLogo?: string | null;
+  currentClientName?: string;
   onSwitchToAdmin?: () => void;
   onSwitchMode?: (mode: ModeOption) => void;
   onOpenAuthModal?: () => void;
@@ -70,6 +82,7 @@ interface ClientPortalProps {
 
 const ClientPortal: React.FC<ClientPortalProps> = ({ 
   customLogo, 
+  currentClientName,
   onSwitchToAdmin,
   onSwitchMode,
   onOpenAuthModal,
@@ -85,8 +98,26 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
   const [casesList, setCasesList] = useState<Case[]>(INITIAL_CLIENT_CASES);
   const [paymentsList, setPaymentsList] = useState<ClientPaymentEntry[]>(INITIAL_CLIENT_PAYMENTS);
 
+  // Active Client Identity State (synced with storage and prop)
+  const [selectedClientName, setSelectedClientName] = useState<string>(() => {
+    return currentClientName || safeAppStorage.getItem('dpl_client_name') || 'Al-Khaleej Importers & Shipping Lines';
+  });
+
+  useEffect(() => {
+    if (currentClientName) {
+      setSelectedClientName(currentClientName);
+    }
+  }, [currentClientName]);
+
+  useEffect(() => {
+    if (selectedClientName) {
+      safeAppStorage.setItem('dpl_client_name', selectedClientName);
+    }
+  }, [selectedClientName]);
+
   const handleClientSaved = (savedClient: Client, appliedCharges: CaseCharge[]) => {
     setIsClientRegModalOpen(false);
+    setSelectedClientName(savedClient.name);
     safeAppStorage.setItem('dpl_client_name', savedClient.name);
     logActivity(`Client registered: ${savedClient.name} (${savedClient.defaultCaseCategory})`, 'CLIENT');
     alert(`Client profile for "${savedClient.name}" has been registered successfully! Default case category set to "${savedClient.defaultCaseCategory}".`);
@@ -106,13 +137,15 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
           .map((f, idx) => ({
             id: Number(f.id) || idx + 1,
             date: f.date,
-            amount: f.amount,
+            amount: Number(f.amount) || 0,
             paymentMethod: f.paymentMethod === 'CASH' ? 'CASH' : 'ONLINE_TRANSFER',
-            bankName: typeof f.bankId === 'string' ? f.bankId : String(f.bankId || 'Bank'),
-            referenceNo: f.reference || '',
+            bankName: f.bankName || (typeof f.bankId === 'string' ? f.bankId : 'HBL Corporate'),
+            referenceNo: f.reference || f.transactionId || '',
             slipUrl: f.slipUrl,
             status: f.status === 'PAID' ? 'CONFIRMED' : 'PENDING',
-            remarks: f.description
+            remarks: f.description,
+            party: f.party,
+            caseNo: f.caseNo
           }));
         setPaymentsList(clientPayments);
       }
@@ -123,6 +156,42 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
     };
   }, []);
   
+  // Available registered client names for switcher
+  const registeredClientOptions = useMemo(() => {
+    const fromCases = casesList.map(c => (c.clientName || c.client || (c.extractedData as any)?.cargoOwner || (c.extractedData as any)?.consigneeName || '').trim()).filter(Boolean);
+    const defaults = [
+      'Al-Khaleej Importers & Shipping Lines',
+      'Pak Afghan Transit Co',
+      'Khyber Logistics & Cargo',
+      'Global Traders Ltd'
+    ];
+    return Array.from(new Set([...defaults, ...fromCases]));
+  }, [casesList]);
+
+  // Client matcher helper
+  const isMatchClient = (name?: string) => {
+    if (!name) return false;
+    const a = name.toLowerCase().trim();
+    const b = selectedClientName.toLowerCase().trim();
+    return a === b || a.includes(b) || b.includes(a);
+  };
+
+  // Active Cases scoped to client
+  const activeCasesList = useMemo(() => {
+    const list = casesList.filter(c => {
+      const cClient = c.clientName || c.client || (c.extractedData as any)?.cargoOwner || (c.extractedData as any)?.consigneeName || '';
+      return isMatchClient(cClient);
+    });
+    // Fallback to all cases if none match exact filter so the view is never empty
+    return list.length > 0 ? list : casesList;
+  }, [casesList, selectedClientName]);
+
+  // Active Payments scoped to client
+  const activePaymentsList = useMemo(() => {
+    const list = paymentsList.filter(p => isMatchClient(p.party));
+    return list.length > 0 ? list : paymentsList;
+  }, [paymentsList, selectedClientName]);
+
   // Selected Case for Modal / Details
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -184,43 +253,171 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
   ]);
   const [newCaseDocs, setNewCaseDocs] = useState<{ name: string; url: string; type: string }[]>([]);
 
-  // Calculate Financial Metrics
-  const totalBilled = casesList.reduce((acc, c) => {
-    const cTotal = (c.charges || []).reduce((sum, ch) => sum + ch.amount, 0);
-    // If no explicit charges, fallback to route rate
-    if (cTotal > 0) return acc + cTotal;
-    const rate = getRouteRate(c.pol, c.pod);
-    const containerCount = c.containers.length || 1;
-    return acc + (rate * containerCount);
-  }, 0);
+  // Calculate Real Financial Metrics
+  const totalBilled = useMemo(() => {
+    return activeCasesList.reduce((acc, c) => {
+      const cTotal = (c.charges || []).reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0);
+      if (cTotal > 0) return acc + cTotal;
+      const rate = getRouteRate(c.pol, c.pod);
+      const containerCount = c.containers?.length || 1;
+      return acc + (rate * containerCount);
+    }, 0);
+  }, [activeCasesList]);
 
-  const totalPaid = paymentsList
-    .filter(p => p.status === 'CONFIRMED')
-    .reduce((acc, p) => acc + p.amount, 0);
+  const totalPaid = useMemo(() => {
+    return activePaymentsList
+      .filter(p => p.status === 'CONFIRMED')
+      .reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  }, [activePaymentsList]);
 
-  const pendingPaymentsTotal = paymentsList
-    .filter(p => p.status === 'PENDING')
-    .reduce((acc, p) => acc + p.amount, 0);
+  const pendingPaymentsTotal = useMemo(() => {
+    return activePaymentsList
+      .filter(p => p.status === 'PENDING')
+      .reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+  }, [activePaymentsList]);
 
   const remainingBalance = totalBilled - totalPaid;
 
-  // Containers count
-  const allContainers = casesList.flatMap(c => c.containers.map(cntr => ({ ...cntr, caseData: c })));
-  const thisMonthContainers = allContainers.filter(cntr => cntr.caseData.createdAt >= '2026-04-01').length;
-  const previousMonthContainers = 22; // historical baseline
+  // Containers count dynamically calculated
+  const allContainers = useMemo(() => {
+    return activeCasesList.flatMap(c => (c.containers || []).map(cntr => ({ ...cntr, caseData: c })));
+  }, [activeCasesList]);
+
+  const now = new Date();
+  const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevMonthPrefix = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+
+  const thisMonthContainers = allContainers.filter(cntr => (cntr.caseData.createdAt || '').startsWith(currentMonthPrefix)).length;
+  const previousMonthContainers = allContainers.filter(cntr => (cntr.caseData.createdAt || '').startsWith(prevMonthPrefix)).length;
 
   // In-Transit / Active Cases
-  const inTransitCases = casesList.filter(c => 
-    c.status === CaseStatus.IN_TRANSIT || 
-    c.status === CaseStatus.LOADING_PORT_PROCESSING ||
-    c.status === CaseStatus.SHIPPING_LINE_DO
-  );
+  const inTransitCases = useMemo(() => {
+    return activeCasesList.filter(c => 
+      c.status === CaseStatus.IN_TRANSIT || 
+      c.status === CaseStatus.LOADING_PORT_PROCESSING ||
+      c.status === CaseStatus.SHIPPING_LINE_DO
+    );
+  }, [activeCasesList]);
 
   // Available Stations / Routes
-  const availableRoutes = Array.from(new Set(casesList.map(c => `${c.pol} -> ${c.pod}`)));
+  const availableRoutes = useMemo(() => {
+    return Array.from(new Set(activeCasesList.map(c => `${c.pol} -> ${c.pod}`)));
+  }, [activeCasesList]);
+
+  // Dynamic Real-time Ledger Rows Calculation
+  const computedLedgerRows = useMemo(() => {
+    interface LedgerRowItem {
+      id: string;
+      date: string;
+      type: 'INVOICE' | 'PAYMENT' | 'OPENING';
+      description: string;
+      containerNo: string;
+      refNumber: string;
+      debit: number;
+      credit: number;
+      balance: number;
+    }
+
+    const items: Omit<LedgerRowItem, 'balance'>[] = [];
+
+    // 1. Add Debits from Case Invoices
+    activeCasesList.forEach(c => {
+      const route = `${c.pol} -> ${c.pod}`;
+      if (ledgerStationFilter !== 'ALL' && route !== ledgerStationFilter && c.pod !== ledgerStationFilter) {
+        return;
+      }
+
+      const caseDate = c.createdAt ? new Date(c.createdAt).toISOString().split('T')[0] : '2026-04-01';
+      const ref = c.invoiceNo || c.caseNo || `INV-${c.id}`;
+      const cntrList = (c.containers || []).map(cnt => cnt.number).filter(Boolean);
+      const cntrStr = cntrList.join(', ') || 'N/A';
+
+      const validCharges = (c.charges || []).filter(ch => (Number(ch.amount) || 0) > 0);
+      if (validCharges.length > 0) {
+        validCharges.forEach((ch, chIdx) => {
+          items.push({
+            id: `case_${c.id}_ch_${chIdx}`,
+            date: caseDate,
+            type: 'INVOICE',
+            description: `${ch.description || 'Freight Charges'} (${c.pol} to ${c.pod})`,
+            containerNo: cntrStr,
+            refNumber: ref,
+            debit: Number(ch.amount) || 0,
+            credit: 0
+          });
+        });
+      } else {
+        const rate = getRouteRate(c.pol, c.pod);
+        const count = c.containers?.length || 1;
+        const total = rate * count;
+        items.push({
+          id: `case_${c.id}_rate`,
+          date: caseDate,
+          type: 'INVOICE',
+          description: `Freight & Clearance: ${c.pol} to ${c.pod}`,
+          containerNo: cntrStr,
+          refNumber: ref,
+          debit: total,
+          credit: 0
+        });
+      }
+    });
+
+    // 2. Add Credits from Payments Received
+    activePaymentsList.forEach(p => {
+      if (p.status !== 'CONFIRMED') return;
+      items.push({
+        id: `pay_${p.id}`,
+        date: p.date,
+        type: 'PAYMENT',
+        description: `Bank Deposit / Transfer (${p.bankName} - ${p.paymentMethod.replace('_', ' ')})`,
+        containerNo: '-',
+        refNumber: p.referenceNo || `REC-${p.id}`,
+        debit: 0,
+        credit: Number(p.amount) || 0
+      });
+    });
+
+    // Sort chronologically
+    items.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    let running = 0;
+    const finalRows: LedgerRowItem[] = [];
+
+    // Opening Balance Row
+    const startOfPeriod = ledgerRangeType === 'CUSTOM' ? ledgerStartDate : `${currentMonthPrefix}-01`;
+    finalRows.push({
+      id: 'opn_bal',
+      date: startOfPeriod || '2026-04-01',
+      type: 'OPENING',
+      description: 'Opening Balance Brought Forward',
+      containerNo: '-',
+      refNumber: 'OPN-BAL',
+      debit: 0,
+      credit: 0,
+      balance: 0
+    });
+
+    items.forEach(row => {
+      if (ledgerRangeType === 'CUSTOM') {
+        if (ledgerStartDate && row.date < ledgerStartDate) return;
+        if (ledgerEndDate && row.date > ledgerEndDate) return;
+      } else if (ledgerRangeType === 'CURRENT_MONTH') {
+        if (!row.date.startsWith(currentMonthPrefix)) return;
+      }
+      running = running + row.debit - row.credit;
+      finalRows.push({
+        ...row,
+        balance: running
+      });
+    });
+
+    return finalRows;
+  }, [activeCasesList, activePaymentsList, ledgerRangeType, ledgerStartDate, ledgerEndDate, ledgerStationFilter, currentMonthPrefix]);
 
   // Filtered Cases for All Cases List
-  const filteredCases = casesList.filter(c => {
+  const filteredCases = activeCasesList.filter(c => {
     // General Search
     const matchesSearch = !searchQuery || 
       c.caseNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -337,7 +534,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
       return;
     }
 
-    const activeClient = safeAppStorage.getItem('dpl_client_name') || 'Client Account';
+    const activeClient = selectedClientName || safeAppStorage.getItem('dpl_client_name') || 'Client Account';
     const newPayment: ClientPaymentEntry = {
       id: Date.now(),
       date: new Date().toISOString().split('T')[0],
@@ -347,7 +544,8 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
       referenceNo: paymentForm.referenceNo,
       slipUrl: paymentForm.slipUrl || 'https://placehold.co/600x800/png?text=Deposit+Slip+Proof',
       status: 'PENDING',
-      remarks: paymentForm.remarks || 'Client online portal deposit'
+      remarks: paymentForm.remarks || 'Client online portal deposit',
+      party: activeClient
     };
 
     setPaymentsList([newPayment, ...paymentsList]);
@@ -363,6 +561,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
       party: activeClient,
       paymentMethod: newPayment.paymentMethod === 'CASH' ? 'CASH' : 'BANK',
       bankId: newPayment.bankName,
+      bankName: newPayment.bankName,
       reference: newPayment.referenceNo,
       status: 'PENDING',
       slipUrl: newPayment.slipUrl
@@ -450,18 +649,35 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
             <Logo className="h-10 w-auto" />
           </div>
           <div className="h-8 w-px bg-white/10 hidden sm:block"></div>
-          <div className="w-12 h-12 rounded-xl bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold text-lg shadow-lg shadow-brand-600/20">
-            GT
+          <div className="w-12 h-12 rounded-xl bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold text-lg shadow-lg shadow-brand-600/20 uppercase">
+            {selectedClientName ? selectedClientName.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('') : 'CL'}
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-bold text-white">Global Traders Ltd</h1>
-              <span className="bg-brand-500/20 text-brand-300 text-xs px-2.5 py-0.5 rounded-full border border-brand-500/30 font-medium flex items-center gap-1">
-                <ShieldCheck size={14} /> Client Portal (CLT-001)
+            <div className="flex flex-wrap items-center gap-2">
+              {registeredClientOptions.length > 1 ? (
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={selectedClientName}
+                    onChange={(e) => setSelectedClientName(e.target.value)}
+                    className="bg-slate-900 border border-brand-500/40 text-white font-bold text-base sm:text-lg rounded-xl px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer shadow-inner"
+                    title="Switch Client Account"
+                  >
+                    {registeredClientOptions.map((name) => (
+                      <option key={name} value={name} className="bg-slate-900 text-white font-normal py-1">
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <h1 className="text-xl sm:text-2xl font-bold text-white">{selectedClientName}</h1>
+              )}
+              <span className="bg-emerald-500/20 text-emerald-300 text-xs px-2.5 py-0.5 rounded-full border border-emerald-500/30 font-medium flex items-center gap-1">
+                <ShieldCheck size={14} /> Verified Corporate Client
               </span>
             </div>
             <p className="text-gray-400 text-xs sm:text-sm mt-0.5">
-              Dedicated Logistics, Afghan Transit & Customs Clearance Client Dashboard
+              Dedicated Logistics, Afghan Transit, Customs Clearance & Finance Management
             </p>
           </div>
         </div>
@@ -1426,7 +1642,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white print:text-black">Client Account Ledger</h3>
-                  <p className="text-gray-400 print:text-gray-600 text-xs">Global Traders Ltd • Docks (Pvt.) Ltd Financial Statement</p>
+                  <p className="text-gray-400 print:text-gray-600 text-xs">{selectedClientName} • {companyName} Financial Statement</p>
                 </div>
               </div>
               <button 
@@ -1444,7 +1660,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                   <Logo className="h-12 w-auto max-w-[200px] mb-2" />
                   <h2 className="text-xl font-bold text-black uppercase">{companyName}</h2>
                   <p className="text-xs text-gray-700">{subtitle || "Customs Clearance, Bonded Carrier & Freight Terminal Services"}</p>
-                  <p className="text-[11px] text-gray-600 mt-1">Client: Global Traders Ltd (CLT-001)</p>
+                  <p className="text-[11px] text-gray-600 mt-1">Client: {selectedClientName}</p>
                 </div>
                 <div className="text-right text-xs text-gray-700">
                   <p className="font-semibold text-black">OFFICIAL CLIENT LEDGER</p>
@@ -1511,9 +1727,9 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                 {/* 2. Station / Route Filter */}
                 <div>
                   <label className="text-xs text-gray-400 mb-1.5 block">Station / Route Filter:</label>
-                  {availableRoutes.length === 1 ? (
+                  {availableRoutes.length <= 1 ? (
                     <div className="bg-slate-900 border border-white/10 rounded-lg p-2 text-xs text-gray-300">
-                      Auto-Selected: <span className="font-semibold text-white">{availableRoutes[0]}</span>
+                      Route: <span className="font-semibold text-white">{availableRoutes[0] || 'All Active Routes'}</span>
                     </div>
                   ) : (
                     <select
@@ -1538,14 +1754,14 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
               {/* Header Letterhead for Print */}
               <div className="flex justify-between items-start border-b-2 border-brand-500 pb-4">
                 <div>
-                  <h2 className="text-xl font-bold text-white">DOCKS (PVT.) LTD</h2>
-                  <p className="text-xs text-gray-400">Customs Clearance, Bonded Carrier & Freight Management</p>
-                  <p className="text-xs text-brand-300 font-medium mt-1">Client Statement: Global Traders Ltd (CLT-001)</p>
+                  <h2 className="text-xl font-bold text-white uppercase">{companyName}</h2>
+                  <p className="text-xs text-gray-400">{subtitle || 'Customs Clearance, Bonded Carrier & Freight Management'}</p>
+                  <p className="text-xs text-brand-300 font-medium mt-1">Client Statement: {selectedClientName}</p>
                 </div>
                 <div className="text-right text-xs text-gray-400 space-y-0.5">
                   <p>Statement Date: {new Date().toLocaleDateString()}</p>
-                  <p>Route Filter: {ledgerStationFilter}</p>
-                  <p>Period: {ledgerRangeType === 'CURRENT_MONTH' ? 'Current Month (April 2026)' : `${ledgerStartDate} to ${ledgerEndDate}`}</p>
+                  <p>Route Filter: {ledgerStationFilter === 'ALL' ? 'All Stations' : ledgerStationFilter}</p>
+                  <p>Period: {ledgerRangeType === 'CURRENT_MONTH' ? 'Current Month' : `${ledgerStartDate} to ${ledgerEndDate}`}</p>
                 </div>
               </div>
 
@@ -1556,82 +1772,62 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                     <th className="p-3">Date</th>
                     <th className="p-3">Description / Route</th>
                     <th className="p-3">Container No</th>
-                    <th className="p-3">Invoice No</th>
+                    <th className="p-3">Reference / Inv</th>
                     <th className="p-3 text-right">Debit (PKR)</th>
                     <th className="p-3 text-right">Credit (PKR)</th>
                     <th className="p-3 text-right">Balance (PKR)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {/* Row 1: Opening Balance */}
-                  <tr className="bg-white/5 font-medium">
-                    <td className="p-3 font-mono">2026-04-01</td>
-                    <td className="p-3">Opening Balance Brought Forward</td>
-                    <td className="p-3 font-mono">-</td>
-                    <td className="p-3 font-mono">-</td>
-                    <td className="p-3 text-right font-mono">-</td>
-                    <td className="p-3 text-right font-mono">-</td>
-                    <td className="p-3 text-right font-mono font-bold text-white">PKR 0</td>
-                  </tr>
-
-                  {/* Row 2: Invoice DPL-26-000004 C1 */}
-                  <tr>
-                    <td className="p-3 font-mono">2026-04-12</td>
-                    <td className="p-3">Karachi to Chaman Freight & Handling</td>
-                    <td className="p-3 font-mono text-brand-300">MSKU-8876541</td>
-                    <td className="p-3 font-mono text-blue-400">INV-26-0004A</td>
-                    <td className="p-3 text-right font-mono text-amber-300">220,000</td>
-                    <td className="p-3 text-right font-mono">-</td>
-                    <td className="p-3 text-right font-mono font-bold">220,000</td>
-                  </tr>
-
-                  {/* Row 3: Invoice DPL-26-000004 C2 */}
-                  <tr>
-                    <td className="p-3 font-mono">2026-04-12</td>
-                    <td className="p-3">Karachi to Chaman Freight & Handling</td>
-                    <td className="p-3 font-mono text-brand-300">MSKU-8876542</td>
-                    <td className="p-3 font-mono text-blue-400">INV-26-0004B</td>
-                    <td className="p-3 text-right font-mono text-amber-300">220,000</td>
-                    <td className="p-3 text-right font-mono">-</td>
-                    <td className="p-3 text-right font-mono font-bold">440,000</td>
-                  </tr>
-
-                  {/* Row 4: Payment Received */}
-                  <tr className="bg-emerald-500/5">
-                    <td className="p-3 font-mono">2026-04-13</td>
-                    <td className="p-3 text-emerald-300">Bank Deposit (HBL #DEP-884210)</td>
-                    <td className="p-3 font-mono">-</td>
-                    <td className="p-3 font-mono text-emerald-400">REC-8842</td>
-                    <td className="p-3 text-right font-mono">-</td>
-                    <td className="p-3 text-right font-mono text-emerald-400 font-bold">100,000</td>
-                    <td className="p-3 text-right font-mono font-bold text-white">340,000</td>
-                  </tr>
-
-                  {/* Row 5: Bonded Carrier Case 3 */}
-                  <tr>
-                    <td className="p-3 font-mono">2026-04-14</td>
-                    <td className="p-3">Port Qasim to Lahore Bonded Transport</td>
-                    <td className="p-3 font-mono text-brand-300">HLCU-1122334</td>
-                    <td className="p-3 font-mono text-blue-400">INV-26-0003</td>
-                    <td className="p-3 text-right font-mono text-amber-300">130,000</td>
-                    <td className="p-3 text-right font-mono">-</td>
-                    <td className="p-3 text-right font-mono font-bold">470,000</td>
-                  </tr>
+                  {computedLedgerRows.map((row) => (
+                    <tr 
+                      key={row.id} 
+                      className={`hover:bg-white/5 transition-colors ${
+                        row.type === 'OPENING' ? 'bg-white/5 font-semibold text-gray-300' :
+                        row.type === 'PAYMENT' ? 'bg-emerald-500/5' : ''
+                      }`}
+                    >
+                      <td className="p-3 font-mono text-gray-300">{row.date}</td>
+                      <td className="p-3">
+                        <span className={row.type === 'PAYMENT' ? 'text-emerald-300 font-medium' : 'text-gray-200'}>
+                          {row.description}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono text-brand-300">{row.containerNo}</td>
+                      <td className="p-3 font-mono text-blue-400">{row.refNumber}</td>
+                      <td className="p-3 text-right font-mono text-amber-300">
+                        {row.debit > 0 ? row.debit.toLocaleString() : '-'}
+                      </td>
+                      <td className="p-3 text-right font-mono text-emerald-400 font-bold">
+                        {row.credit > 0 ? row.credit.toLocaleString() : '-'}
+                      </td>
+                      <td className="p-3 text-right font-mono font-bold text-white">
+                        PKR {row.balance.toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
 
                   {/* Summary Totals */}
-                  <tr className="bg-slate-950 font-bold border-t-2 border-brand-500 text-sm">
-                    <td colSpan={4} className="p-3 text-right text-white uppercase">Net Summary:</td>
-                    <td className="p-3 text-right text-amber-400 font-mono">570,000</td>
-                    <td className="p-3 text-right text-emerald-400 font-mono">100,000</td>
-                    <td className="p-3 text-right text-brand-400 font-mono text-base">PKR 470,000</td>
-                  </tr>
+                  {(() => {
+                    const totalDebits = computedLedgerRows.reduce((sum, r) => sum + r.debit, 0);
+                    const totalCredits = computedLedgerRows.reduce((sum, r) => sum + r.credit, 0);
+                    const netBalance = computedLedgerRows.length > 0 ? computedLedgerRows[computedLedgerRows.length - 1].balance : 0;
+                    return (
+                      <tr className="bg-slate-950 font-bold border-t-2 border-brand-500 text-sm">
+                        <td colSpan={4} className="p-3 text-right text-white uppercase">Net Summary:</td>
+                        <td className="p-3 text-right text-amber-400 font-mono">PKR {totalDebits.toLocaleString()}</td>
+                        <td className="p-3 text-right text-emerald-400 font-mono">PKR {totalCredits.toLocaleString()}</td>
+                        <td className="p-3 text-right text-brand-400 font-mono text-base">PKR {netBalance.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
 
               {/* Official Ledger Signatures for Print */}
               <div className="hidden print:flex justify-between items-end pt-8 pb-4 print-avoid-break">
                 <div className="text-xs text-gray-600">
-                  <p className="font-semibold text-black">Docks (Pvt.) Ltd — Client Accounts</p>
+                  <p className="font-semibold text-black">{companyName} — Client Accounts</p>
                   <p className="text-[10px]">Computer generated ledger statement • Valid without physical signature</p>
                   <p className="text-[9px] text-gray-500 mt-0.5">Printed on: {new Date().toLocaleString()}</p>
                 </div>
@@ -1647,7 +1843,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
 
             {/* Modal Footer */}
             <div className="p-4 bg-slate-950 border-t border-white/10 flex justify-between items-center no-print">
-              <span className="text-xs text-gray-500">Auto-Generated Client Ledger Sheet</span>
+              <span className="text-xs text-gray-500">Live Computed Client Ledger Sheet ({computedLedgerRows.length} Records)</span>
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowLedgerModal(false)}
@@ -1657,28 +1853,32 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                 </button>
                 <button
                   onClick={async () => {
+                    const totalDebits = computedLedgerRows.reduce((sum, r) => sum + r.debit, 0);
+                    const totalCredits = computedLedgerRows.reduce((sum, r) => sum + r.credit, 0);
+                    const netBalance = computedLedgerRows.length > 0 ? computedLedgerRows[computedLedgerRows.length - 1].balance : 0;
                     await downloadClientLedgerPdf({
-                      clientName: 'Al-Khaleej Importers & Shipping Lines',
+                      clientName: selectedClientName,
                       statementDate: new Date().toLocaleDateString(),
                       summary: {
-                        totalDebits: 570000,
-                        totalCredits: 100000,
-                        netBalance: 470000,
-                        totalContainers: 3
+                        totalDebits,
+                        totalCredits,
+                        netBalance,
+                        totalContainers: allContainers.length
                       },
-                      entries: [
-                        { date: '2026-04-01', reference: 'OPN-BAL', description: 'Opening Balance', debit: 0, credit: 0, balance: 0 },
-                        { date: '2026-04-05', reference: 'DPL-26-0001', description: 'Customs Clearance & Handling - [MSKU-9988221]', debit: 180000, credit: 0, balance: 180000 },
-                        { date: '2026-04-08', reference: 'DPL-26-0002', description: 'Afghan Transit Clearance - [TGHU-4455667]', debit: 260000, credit: 0, balance: 440000 },
-                        { date: '2026-04-10', reference: 'REC-8842', description: 'Bank Transfer Payment via Meezan Bank', debit: 0, credit: 100000, balance: 340000 },
-                        { date: '2026-04-14', reference: 'INV-26-0003', description: 'Port Qasim to Lahore Bonded Transport - [HLCU-1122334]', debit: 130000, credit: 0, balance: 470000 }
-                      ],
+                      entries: computedLedgerRows.map(r => ({
+                        date: r.date,
+                        reference: r.refNumber,
+                        description: r.description,
+                        debit: r.debit,
+                        credit: r.credit,
+                        balance: r.balance
+                      })),
                       companyName,
                       customLogo: activeLogo,
                       branding
                     });
                   }}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-600/30"
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-600/30 cursor-pointer active:scale-95"
                 >
                   <Download size={15} />
                   <span>Download Ledger (PDF)</span>
@@ -1941,7 +2141,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 bg-slate-900/40">
-                        {casesList.flatMap(c => c.containers.map((cntr, idx) => {
+                        {activeCasesList.flatMap(c => (c.containers || []).map((cntr, idx) => {
                           const rate = getRouteRate(c.pol, c.pod);
                           const invNum = `INV-26-${c.caseNo.split('-').pop()}${String.fromCharCode(65 + idx)}`;
                           return (
@@ -1963,7 +2163,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                                     rate: rate,
                                     blNo: c.extractedData?.blNumber
                                   })}
-                                  className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-lg text-xs font-medium ml-auto flex items-center gap-1 transition"
+                                  className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-lg text-xs font-medium ml-auto flex items-center gap-1 transition cursor-pointer"
                                 >
                                   <Eye size={13} /> View Invoice
                                 </button>
@@ -1980,8 +2180,8 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                 <div className="bg-slate-950 p-6 rounded-2xl border border-white/10 space-y-6" id="container-invoice-sheet">
                   <div className="flex justify-between items-start border-b-2 border-brand-500 pb-4">
                     <div>
-                      <h2 className="text-2xl font-bold text-white">DOCKS (PVT.) LTD</h2>
-                      <p className="text-xs text-gray-400">Freight Forwarding, Logistics & Customs Terminal Operator</p>
+                      <h2 className="text-2xl font-bold text-white uppercase">{companyName}</h2>
+                      <p className="text-xs text-gray-400">{subtitle || 'Freight Forwarding, Logistics & Customs Terminal Operator'}</p>
                       <p className="text-xs text-brand-300 font-semibold mt-1">CONTAINER FREIGHT INVOICE</p>
                     </div>
                     <div className="text-right text-xs text-gray-300 space-y-1">
@@ -1995,7 +2195,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                     <div>
                       <p className="text-gray-400 font-semibold uppercase text-[10px]">Billed To (Client):</p>
                       <p className="font-bold text-white text-sm">{selectedInvoiceContainer.clientName}</p>
-                      <p className="text-gray-300">Account ID: CLT-001</p>
+                      <p className="text-gray-300">Account: Verified Corporate Client</p>
                       <p className="text-gray-300">B/L No: {selectedInvoiceContainer.blNo || 'N/A'}</p>
                     </div>
                     <div className="text-right">
@@ -2261,11 +2461,268 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
                 </div>
               )}
 
+              {/* Official Downloadable Documents Section (Bills, Delivery Orders, Invoices, Dossier) */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-brand-300">
+                    <FileCheck size={15} /> Official Case Documents & Downloads:
+                  </span>
+                  <span className="text-[11px] text-gray-400 font-normal">
+                    Permanent Case Archives
+                  </span>
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  
+                  {/* 1. Complete Case Dossier Document */}
+                  <div className="p-3.5 rounded-xl border border-brand-500/30 bg-brand-500/10 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-brand-600/20 text-brand-400 flex items-center justify-center shrink-0">
+                        <FileText size={18} />
+                      </div>
+                      <div className="min-w-0">
+                        <h5 className="text-xs font-bold text-white truncate">Complete Case Dossier</h5>
+                        <p className="text-[11px] text-gray-400">Full Case Profile, Route & Containers</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => downloadCasePdf(selectedCase)}
+                      className="px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
+                    >
+                      <Download size={13} /> Dossier
+                    </button>
+                  </div>
+
+                  {/* 2. Commercial Freight Invoice */}
+                  <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-amber-600/20 text-amber-400 flex items-center justify-center shrink-0">
+                        <DollarSign size={18} />
+                      </div>
+                      <div className="min-w-0">
+                        <h5 className="text-xs font-bold text-white truncate">Commercial Freight Invoice</h5>
+                        <p className="text-[11px] text-gray-400">Case Billing & Terminal Charges</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const rate = getRouteRate(selectedCase.pol, selectedCase.pod);
+                        const cntr = selectedCase.containers?.[0] || { id: 1, number: selectedCase.containerNumber || 'MSKU-0000000', size: '40ft', weight: 28000, status: 'Completed' };
+                        await downloadContainerInvoicePdf({
+                          invoiceNo: selectedCase.invoiceNo || selectedCase.caseNo || `INV-${selectedCase.id}`,
+                          clientName: selectedCase.clientName,
+                          containerNo: cntr.number || 'MSKU-0000000',
+                          size: (cntr as any).size || '40ft',
+                          weight: (cntr as any).weight || 28000,
+                          sealNo: (cntr as any).sealNo,
+                          route: `${selectedCase.pol} -> ${selectedCase.pod}`,
+                          rate: rate,
+                          date: selectedCase.createdAt || new Date().toISOString().split('T')[0],
+                          blNo: selectedCase.extractedData?.blNumber,
+                          companyName,
+                          customLogo: activeLogo,
+                          branding
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
+                    >
+                      <Download size={13} /> Invoice
+                    </button>
+                  </div>
+
+                  {/* 3. Customs Delivery Order (DO / NOC) */}
+                  <div className="p-3.5 rounded-xl border border-blue-500/30 bg-blue-500/10 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0">
+                        <ShieldCheck size={18} />
+                      </div>
+                      <div className="min-w-0">
+                        <h5 className="text-xs font-bold text-white truncate">Customs Delivery Order (DO / NOC)</h5>
+                        <p className="text-[11px] text-gray-400">Shipping Line Terminal Release</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await downloadCustomsDeliveryOrderPdf({
+                            targetCase: selectedCase,
+                            branding: { companyName, customLogo: activeLogo },
+                            officerName: 'Customs Officer'
+                          });
+                        } catch (err) {
+                          console.error(err);
+                          alert('Could not download Customs DO.');
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
+                    >
+                      <Download size={13} /> DO / NOC
+                    </button>
+                  </div>
+
+                  {/* 4. Port Loading & Unloading Bills */}
+                  {(() => {
+                    const portBills: Array<{
+                      id: string;
+                      name: string;
+                      type: string;
+                      url?: string;
+                      billNo?: string;
+                      amount?: number;
+                      officer?: string;
+                      containerNo?: string;
+                      billData?: any;
+                    }> = [];
+
+                    if (Array.isArray((selectedCase as any).loadingBills)) {
+                      (selectedCase as any).loadingBills.forEach((b: any, idx: number) => {
+                        portBills.push({
+                          id: b.id || `lb_${idx}`,
+                          name: `Loading Bill - ${b.billNo || b.id}.pdf`,
+                          type: 'Port Loading Bill',
+                          url: b.pdfUrl,
+                          billNo: b.billNo,
+                          amount: b.totalAmount,
+                          officer: b.staffName,
+                          containerNo: b.containerNo,
+                          billData: b
+                        });
+                      });
+                    }
+
+                    if (Array.isArray(selectedCase.documents)) {
+                      selectedCase.documents.forEach((d: any, idx: number) => {
+                        const dType = (d.type || '').toLowerCase();
+                        const dName = (d.name || '').toLowerCase();
+                        if (dType.includes('loading bill') || dType.includes('unloading bill') || dName.includes('loading bill') || dName.includes('unloading bill')) {
+                          const billNo = d.billNo || (d.name ? d.name.replace(/\.pdf$/i, '').replace(/^Loading_Bill_/i, '').replace(/^Loading Bill - /i, '') : `LB-${idx + 1}`);
+                          if (!portBills.some(pb => pb.billNo === billNo || pb.name === d.name)) {
+                            portBills.push({
+                              id: d.id || `doc_lb_${idx}`,
+                              name: d.name || `Loading Bill - ${billNo}.pdf`,
+                              type: dType.includes('unloading') ? 'Port Unloading Bill' : 'Port Loading Bill',
+                              url: d.url,
+                              billNo,
+                              amount: d.totalAmount,
+                              officer: d.officer,
+                              containerNo: d.containerNo || selectedCase.containerNumber,
+                              billData: d.billData
+                            });
+                          }
+                        }
+                      });
+                    }
+
+                    // If explicit bills exist, show them
+                    if (portBills.length > 0) {
+                      return portBills.map((pb, pbIdx) => (
+                        <div key={'pb-' + pbIdx} className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-9 h-9 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center shrink-0">
+                              <Receipt size={18} />
+                            </div>
+                            <div className="min-w-0">
+                              <h5 className="text-xs font-bold text-white truncate">{pb.name}</h5>
+                              <p className="text-[11px] text-emerald-300">
+                                {pb.type} &bull; PKR {Number(pb.amount || 0).toLocaleString()} {pb.officer ? `(${pb.officer})` : ''}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (pb.url) {
+                                window.open(pb.url, '_blank');
+                                return;
+                              }
+                              try {
+                                const bData: LoadingBillData = pb.billData || {
+                                  billNo: pb.billNo || `LB-${Date.now()}`,
+                                  caseNo: selectedCase.caseNo,
+                                  clientName: selectedCase.clientName,
+                                  containerNo: pb.containerNo || selectedCase.containerNumber || 'MSKU-8876541',
+                                  portTerminal: selectedCase.pol || 'Port Terminal',
+                                  date: new Date().toISOString().slice(0, 10),
+                                  items: (selectedCase.charges || []).map((c: any) => ({
+                                    head: c.description || 'Terminal Handling',
+                                    amount: Number(c.amount) || 0,
+                                    receiptUrl: c.receiptUrl
+                                  })),
+                                  totalAmount: pb.amount || (selectedCase.charges || []).reduce((s: number, ch: any) => s + (Number(ch.amount) || 0), 0),
+                                  officerName: pb.officer || 'Port Officer',
+                                  branding: { companyName, customLogo: activeLogo }
+                                };
+                                await downloadLoadingBillPdf(bData);
+                              } catch (err) {
+                                console.error(err);
+                                alert('Could not download Loading Bill PDF.');
+                              }
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
+                          >
+                            <Download size={13} /> Bill (PDF)
+                          </button>
+                        </div>
+                      ));
+                    }
+
+                    // Otherwise offer standard Loading Bill on-demand
+                    return (
+                      <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-9 h-9 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center shrink-0">
+                            <Receipt size={18} />
+                          </div>
+                          <div className="min-w-0">
+                            <h5 className="text-xs font-bold text-white truncate">Port Loading Bill</h5>
+                            <p className="text-[11px] text-gray-400">{selectedCase.pol} Terminal Handling</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const bData: LoadingBillData = {
+                                billNo: `LB-26-${selectedCase.caseNo.split('-').pop() || '001'}`,
+                                caseNo: selectedCase.caseNo,
+                                clientName: selectedCase.clientName,
+                                containerNo: selectedCase.containers?.[0]?.number || selectedCase.containerNumber || 'MSKU-8876541',
+                                portTerminal: selectedCase.pol || 'Port Terminal',
+                                date: new Date().toISOString().slice(0, 10),
+                                items: (selectedCase.charges || []).map((c: any) => ({
+                                  head: c.description || 'Terminal Handling',
+                                  amount: Number(c.amount) || 0,
+                                  receiptUrl: c.receiptUrl
+                                })),
+                                totalAmount: (selectedCase.charges || []).reduce((s: number, ch: any) => s + (Number(ch.amount) || 0), 0) || 25000,
+                                officerName: 'Port Operations Officer',
+                                branding: { companyName, customLogo: activeLogo }
+                              };
+                              await downloadLoadingBillPdf(bData);
+                            } catch (err) {
+                              console.error(err);
+                              alert('Could not generate Loading Bill.');
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
+                        >
+                          <Download size={13} /> Bill (PDF)
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                </div>
+              </div>
+
               {/* Attached Documents */}
               {selectedCase.documents && selectedCase.documents.length > 0 && (
                 <div>
                   <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
-                    Attached Documents (Click to Preview):
+                    Attached Initial Documents & Files:
                   </h4>
                   <div className="grid grid-cols-2 gap-3">
                     {selectedCase.documents.map((doc, idx) => (
@@ -2299,7 +2756,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
               </button>
               <button
                 onClick={() => downloadCasePdf(selectedCase)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-lg text-xs font-medium flex items-center gap-2 shadow-lg shadow-emerald-600/30"
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-lg text-xs font-medium flex items-center gap-2 shadow-lg shadow-emerald-600/30 cursor-pointer active:scale-95"
               >
                 <Download size={15} /> Download Case Summary (PDF)
               </button>
