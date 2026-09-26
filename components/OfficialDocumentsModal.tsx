@@ -352,8 +352,8 @@ export const OfficialDocumentsModal: React.FC<OfficialDocumentsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-6xl max-h-[94vh] flex flex-col shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-5 overflow-y-auto animate-in fade-in duration-200">
+      <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-6xl max-h-[94vh] flex flex-col shadow-2xl overflow-hidden mb-6">
         
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-white/10 flex flex-wrap justify-between items-center bg-white/5 gap-3">

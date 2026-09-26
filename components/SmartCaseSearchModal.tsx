@@ -174,8 +174,8 @@ export const SmartCaseSearchModal: React.FC<SmartCaseSearchModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fade-in">
-      <div className="bg-slate-900 border border-white/15 rounded-2xl w-full max-w-5xl shadow-2xl flex flex-col max-h-[92vh] my-auto">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-5 overflow-y-auto animate-fade-in">
+      <div className="bg-slate-900 border border-white/15 rounded-2xl w-full max-w-5xl shadow-2xl flex flex-col max-h-[92vh] mb-6">
         
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-white/10 flex items-center justify-between bg-slate-950/70 rounded-t-2xl shrink-0">

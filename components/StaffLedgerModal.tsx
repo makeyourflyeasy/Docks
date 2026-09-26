@@ -176,8 +176,8 @@ export const StaffLedgerModal: React.FC<StaffLedgerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
-      <div className="glass-card rounded-2xl w-full max-w-5xl border border-white/15 shadow-2xl bg-slate-900/98 my-auto max-h-[94vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-2 sm:px-4 overflow-y-auto animate-in fade-in duration-150">
+      <div className="glass-card rounded-2xl w-full max-w-5xl border border-white/15 shadow-2xl bg-slate-900/98 mb-6 max-h-[94vh] flex flex-col">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-white/10 flex justify-between items-center bg-slate-950/80 rounded-t-2xl shrink-0">
           <div className="flex items-center gap-3">
@@ -426,8 +426,8 @@ export const StaffLedgerModal: React.FC<StaffLedgerModalProps> = ({
       {/* SECONDARY MODAL: ADD TRANSACTION */}
       {/* ========================================================================= */}
       {showAddEntryModal && (
-        <div className="fixed inset-0 bg-black/90 z-60 flex items-center justify-center p-3 animate-in fade-in duration-150">
-          <div className="glass-card rounded-2xl w-full max-w-lg border border-white/20 p-5 space-y-4 bg-slate-900 shadow-2xl">
+        <div className="fixed inset-0 bg-black/90 z-60 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 overflow-y-auto animate-in fade-in duration-150">
+          <div className="glass-card rounded-2xl w-full max-w-lg border border-white/20 p-5 space-y-4 bg-slate-900 shadow-2xl mb-6">
             <div className="flex justify-between items-center border-b border-white/10 pb-3">
               <h4 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                 <DollarSign size={16} className={ledgerType === 'SALARY' ? 'text-emerald-400' : 'text-amber-400'} />
@@ -590,8 +590,8 @@ export const StaffLedgerModal: React.FC<StaffLedgerModalProps> = ({
 
       {/* Quick Receipt Viewer */}
       {previewReceiptUrl && (
-        <div className="fixed inset-0 bg-black/95 z-70 flex items-center justify-center p-4">
-          <div className="glass-card rounded-2xl w-full max-w-xl border border-white/20 p-4 space-y-3 bg-slate-900 flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-black/95 z-70 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto">
+          <div className="glass-card rounded-2xl w-full max-w-xl border border-white/20 p-4 space-y-3 bg-slate-900 flex flex-col max-h-[90vh] mb-6">
             <div className="flex justify-between items-center border-b border-white/10 pb-2">
               <h4 className="text-sm font-bold text-white">Attached Bill / Receipt</h4>
               <button onClick={() => setPreviewReceiptUrl(null)} className="text-gray-400 hover:text-white">

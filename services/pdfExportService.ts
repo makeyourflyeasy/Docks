@@ -387,26 +387,44 @@ export function drawAccountantStampAndSignature(
   doc: jsPDF,
   currentY: number,
   margin: number,
-  pageWidth: number
+  pageWidth: number,
+  isIncome?: boolean
 ): void {
-  // Left: Official Company Stamp
-  drawOfficialCompanyStampOnly(doc, margin + 4, currentY, 'PAYMENT VERIFIED & RECORDED');
-
-  // Right: Accountant Signature & Stamp Line
-  const sigX = pageWidth - margin - 64;
+  // Left: Signature of Receiver / Payee (or Payer if income)
+  const leftX = margin + 4;
   doc.setDrawColor(15, 23, 42);
   doc.setLineWidth(0.4);
-  doc.line(sigX, currentY + 14, sigX + 60, currentY + 14);
+  doc.line(leftX, currentY + 14, leftX + 54, currentY + 14);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7.2);
   doc.setTextColor(15, 23, 42);
-  doc.text("ACCOUNTANT'S SIGNATURE & STAMP", sigX + 30, currentY + 18, { align: 'center' });
+  doc.text(isIncome ? "PAYER / DEPOSITOR SIGNATURE" : "RECEIVER / PAYEE SIGNATURE", leftX + 27, currentY + 17.5, { align: 'center' });
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.2);
+  doc.setFontSize(5.8);
   doc.setTextColor(100, 116, 139);
-  doc.text('Finance & Terminal Accounts Department', sigX + 30, currentY + 21.5, { align: 'center' });
+  doc.text(isIncome ? "Deposited By / Representative" : "Signature of Receiver / Payee", leftX + 27, currentY + 20.8, { align: 'center' });
+
+  // Center: Official Company Stamp
+  const stampX = (pageWidth / 2) - 18;
+  drawOfficialCompanyStampOnly(doc, stampX, currentY - 2, isIncome ? 'PAYMENT RECEIVED' : 'PAYMENT DISBURSED');
+
+  // Right: Accountant Signature & Stamp Line
+  const sigX = pageWidth - margin - 58;
+  doc.setDrawColor(15, 23, 42);
+  doc.setLineWidth(0.4);
+  doc.line(sigX, currentY + 14, sigX + 54, currentY + 14);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.2);
+  doc.setTextColor(15, 23, 42);
+  doc.text("ACCOUNTANT'S SIGNATURE & STAMP", sigX + 27, currentY + 17.5, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(5.8);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Finance & Accounts Dept', sigX + 27, currentY + 20.8, { align: 'center' });
 }
 
 /**
@@ -1112,8 +1130,8 @@ export async function downloadPaymentReceiptPdf(data: PaymentReceiptData): Promi
 
     currentY += 8;
 
-    // Signatures & Stamp: Strictly Accountant Signature & Stamp for Payment Receipts
-    drawAccountantStampAndSignature(doc, currentY, margin, pageWidth);
+    // Signatures & Stamp: Receiver/Payer signature line & Accountant Signature & Stamp
+    drawAccountantStampAndSignature(doc, currentY, margin, pageWidth, isIncome);
 
     // Corporate footer with company address and contact numbers
     drawPdfCorporateFooter(doc, 'ERP Verified Receipt', data.branding);

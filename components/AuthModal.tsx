@@ -51,9 +51,9 @@ const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+    <div className="fixed inset-0 z-[70] flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto bg-black/75 backdrop-blur-md animate-fade-in">
       <div 
-        className="bg-slate-900 border border-brand-500/30 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all relative"
+        className="bg-slate-900 border border-brand-500/30 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all relative mb-6"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Glow Header */}

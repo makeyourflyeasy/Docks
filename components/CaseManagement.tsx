@@ -6714,8 +6714,8 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
       {/* Global Camera Modal */}
       {showCamera && (
-        <div className="fixed inset-0 bg-black/90 z-[100] flex items-center justify-center p-4 no-print">
-           <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-2xl w-full border border-white/10 shadow-2xl">
+        <div className="fixed inset-0 bg-black/90 z-[100] flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto no-print">
+           <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-2xl w-full border border-white/10 shadow-2xl mb-6">
               <div className="relative">
                  <video ref={videoRef} autoPlay playsInline className="w-full bg-black h-96 object-cover" />
                  <button onClick={stopCamera} className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full hover:bg-red-500 transition-colors">
@@ -6745,7 +6745,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
       {/* Add Custom Charge Modal */}
       {showAddChargeModal && (
         <div 
-          className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm no-print overflow-y-auto"
+          className="fixed inset-0 bg-black/70 z-[100] flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 backdrop-blur-sm no-print overflow-y-auto"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               setShowAddChargeModal(false);
@@ -6753,7 +6753,7 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
             }
           }}
         >
-          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-lg w-full border border-white/15 shadow-2xl animate-fade-in my-8">
+          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-lg w-full border border-white/15 shadow-2xl animate-fade-in mb-6">
             <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-950/50">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-brand-500/10 text-brand-400 flex items-center justify-center border border-brand-500/20">
@@ -7582,10 +7582,10 @@ const CaseManagement: React.FC<CaseManagementProps> = ({
 
       {/* Global Print Options Modal (Universally available in Case Details & Management) */}
       {showPrintModal && (
-        <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm no-print" onClick={(e) => {
+        <div className="fixed inset-0 bg-black/70 z-[100] flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 backdrop-blur-sm no-print overflow-y-auto" onClick={(e) => {
           if (e.target === e.currentTarget) setShowPrintModal(false);
         }}>
-          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-md w-full border border-white/15 shadow-2xl animate-fade-in">
+          <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-md w-full border border-white/15 shadow-2xl animate-fade-in mb-6">
             <div className="p-5 sm:p-6 border-b border-white/10 flex justify-between items-center bg-slate-950/50">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-brand-500/10 text-brand-400 flex items-center justify-center border border-brand-500/20">

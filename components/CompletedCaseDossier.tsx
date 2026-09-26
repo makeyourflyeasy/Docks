@@ -440,8 +440,8 @@ export const CompletedCaseDossier: React.FC<CompletedCaseDossierProps> = ({
 
       {/* Flag Objection / Hold Modal */}
       {showHoldModal && (
-        <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-black/80 z-[120] flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto backdrop-blur-sm">
+          <div className="bg-slate-900 border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 mb-6">
             <div className="flex items-center gap-3 text-rose-400">
               <AlertTriangle size={24} />
               <h3 className="text-lg font-bold text-white">Flag Objection / Hold</h3>

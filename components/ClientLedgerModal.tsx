@@ -166,8 +166,8 @@ export const ClientLedgerModal: React.FC<ClientLedgerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
-      <div className="glass-card rounded-2xl w-full max-w-5xl border border-white/15 shadow-2xl bg-slate-900/98 my-auto max-h-[94vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-2 sm:px-4 overflow-y-auto animate-in fade-in duration-150">
+      <div className="glass-card rounded-2xl w-full max-w-5xl border border-white/15 shadow-2xl bg-slate-900/98 mb-6 max-h-[94vh] flex flex-col">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-white/10 flex justify-between items-center bg-slate-950/80 rounded-t-2xl shrink-0">
           <div className="flex items-center gap-3">

@@ -83,13 +83,13 @@ export const GoldenAmountWidget: React.FC<GoldenAmountWidgetProps> = ({ onOpenFi
   // Modal Portal JSX (Mounted directly to document.body to prevent any backdrop or z-index clipping)
   const modalContent = isOpen && mounted ? createPortal(
     <div 
-      className="fixed inset-0 z-[999999] flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-[999999] flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-6 overflow-y-auto"
       style={{ backgroundColor: 'rgba(0, 0, 0, 0.88)' }}
       onClick={() => setIsOpen(false)}
     >
       {/* 100% Solid Opaque Modal Card */}
       <div 
-        className="w-full max-w-md rounded-2xl border-2 border-amber-400 shadow-2xl shadow-black overflow-hidden relative my-auto animate-scale-up select-none"
+        className="w-full max-w-md rounded-2xl border-2 border-amber-400 shadow-2xl shadow-black overflow-hidden relative mb-6 animate-scale-up select-none"
         style={{ backgroundColor: '#0b1120' }}
         onClick={(e) => e.stopPropagation()}
       >

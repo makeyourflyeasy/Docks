@@ -5,7 +5,7 @@ import {
   Camera, Upload, X, Eye, ChevronRight, ShieldCheck, 
   MapPin, Anchor, Box, ArrowUpRight, ArrowDownLeft, CreditCard,
   Building, RefreshCw, FileCheck, Layers, ExternalLink, User, Download, Loader2, LogOut, UserPlus,
-  Receipt, Printer
+  Receipt, Printer, Check, Phone, Info, Bell
 } from 'lucide-react';
 import Logo from './Logo';
 import { useBranding } from '../services/brandingService';
@@ -15,10 +15,9 @@ import {
   downloadClientLedgerPdf,
   downloadLoadingBillPdf,
   downloadCustomsDeliveryOrderPdf,
-  downloadReceivableInvoicePdf,
   LoadingBillData
 } from '../services/pdfExportService';
-import { Case, CaseStatus, Container, FinanceEntry, ExtractedData, MockDocument, UserRole, Client, CaseCharge } from '../types';
+import { Case, CaseStatus, Container, FinanceEntry, ExtractedData, MockDocument, UserRole, Client, CaseCharge, AvailableVehicle } from '../types';
 import { compressAndPrepareFile, convertImageToPdf } from '../services/fileUtils';
 import TopModeSwitcher, { ModeOption } from './TopModeSwitcher';
 import GoldenAmountWidget from './GoldenAmountWidget';
@@ -29,8 +28,10 @@ import {
   subscribeToCases, 
   saveCaseToFirestore, 
   subscribeToFinances, 
-  saveFinanceToFirestore 
+  saveFinanceToFirestore,
+  subscribeToAvailableVehicles 
 } from '../services/dbService';
+import { AvailableVehiclesView } from './AvailableVehiclesView';
 
 // Standard Route Pricing Matrix
 export const DEFAULT_ROUTE_RATES: Record<string, number> = {
@@ -52,9 +53,6 @@ export const getRouteRate = (pol: string, pod: string): number => {
   return DEFAULT_ROUTE_RATES[key] || DEFAULT_ROUTE_RATES["Default Rate"];
 };
 
-// Initial Clean Cases for Client Portal
-const INITIAL_CLIENT_CASES: Case[] = [];
-
 export interface ClientPaymentEntry {
   id: number;
   date: string;
@@ -67,9 +65,20 @@ export interface ClientPaymentEntry {
   remarks?: string;
   party?: string;
   caseNo?: string;
+  category?: 'DPL Company Payment' | 'Loading Payment' | 'Vehicle Rent' | string;
+  targetRecipient?: string;
+  vehicleNo?: string;
 }
 
-const INITIAL_CLIENT_PAYMENTS: ClientPaymentEntry[] = [];
+const DEFAULT_COMPANY_BANKS = [
+  'Meezan Bank Ltd (Corporate)',
+  'Habib Bank Limited (HBL Corporate)',
+  'Bank Al Habib Limited',
+  'MCB Islamic Bank',
+  'Standard Chartered Bank (Pakistan)',
+  'Allied Bank Limited',
+  'Faysal Bank Islamic'
+];
 
 interface ClientPortalProps {
   customLogo?: string | null;
@@ -80,7 +89,7 @@ interface ClientPortalProps {
   onSignOut?: () => void;
 }
 
-const ClientPortal: React.FC<ClientPortalProps> = ({ 
+export const ClientPortal: React.FC<ClientPortalProps> = ({ 
   customLogo, 
   currentClientName,
   onSwitchToAdmin,
@@ -89,16 +98,17 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
   onSignOut
 }) => {
   const { companyName, subtitle, activeLogo, branding } = useBranding();
-  // Navigation: 'cases' or 'finance'
-  const [activeTab, setActiveTab] = useState<'cases' | 'finance'>('cases');
-  const [casesSubView, setCasesSubView] = useState<'overview' | 'all_cases' | 'register'>('overview');
+
+  // Navigation: 'cases' | 'case_status' | 'finance' | 'available_vehicles'
+  const [activeTab, setActiveTab] = useState<'cases' | 'case_status' | 'finance' | 'available_vehicles'>('cases');
   const [isClientRegModalOpen, setIsClientRegModalOpen] = useState(false);
   
   // Data States
-  const [casesList, setCasesList] = useState<Case[]>(INITIAL_CLIENT_CASES);
-  const [paymentsList, setPaymentsList] = useState<ClientPaymentEntry[]>(INITIAL_CLIENT_PAYMENTS);
+  const [casesList, setCasesList] = useState<Case[]>([]);
+  const [financesList, setFinancesList] = useState<FinanceEntry[]>([]);
+  const [availableVehiclesList, setAvailableVehiclesList] = useState<AvailableVehicle[]>([]);
 
-  // Active Client Identity State (synced with storage and prop)
+  // Active Client Identity State
   const [selectedClientName, setSelectedClientName] = useState<string>(() => {
     return currentClientName || safeAppStorage.getItem('dpl_client_name') || 'Al-Khaleej Importers & Shipping Lines';
   });
@@ -115,58 +125,23 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
     }
   }, [selectedClientName]);
 
-  const handleClientSaved = (savedClient: Client, appliedCharges: CaseCharge[]) => {
-    setIsClientRegModalOpen(false);
-    setSelectedClientName(savedClient.name);
-    safeAppStorage.setItem('dpl_client_name', savedClient.name);
-    logActivity(`Client registered: ${savedClient.name} (${savedClient.defaultCaseCategory})`, 'CLIENT');
-    alert(`Client profile for "${savedClient.name}" has been registered successfully! Default case category set to "${savedClient.defaultCaseCategory}".`);
-  };
-
-  // Synchronize Client Portal with live Firestore data
+  // Synchronize with live Firestore data
   useEffect(() => {
     const unsubCases = subscribeToCases((cases) => {
-      if (cases) {
-        setCasesList(cases);
-      }
+      if (cases) setCasesList(cases);
     });
     const unsubFinances = subscribeToFinances((finances) => {
-      if (finances) {
-        const clientPayments: ClientPaymentEntry[] = finances
-          .filter(f => f.type === 'INCOME')
-          .map((f, idx) => ({
-            id: Number(f.id) || idx + 1,
-            date: f.date,
-            amount: Number(f.amount) || 0,
-            paymentMethod: f.paymentMethod === 'CASH' ? 'CASH' : 'ONLINE_TRANSFER',
-            bankName: f.bankName || (typeof f.bankId === 'string' ? f.bankId : 'HBL Corporate'),
-            referenceNo: f.reference || f.transactionId || '',
-            slipUrl: f.slipUrl,
-            status: f.status === 'PAID' ? 'CONFIRMED' : 'PENDING',
-            remarks: f.description,
-            party: f.party,
-            caseNo: f.caseNo
-          }));
-        setPaymentsList(clientPayments);
-      }
+      if (finances) setFinancesList(finances);
+    });
+    const unsubVehicles = subscribeToAvailableVehicles((items) => {
+      if (items) setAvailableVehiclesList(items);
     });
     return () => {
       unsubCases();
       unsubFinances();
+      unsubVehicles();
     };
   }, []);
-  
-  // Available registered client names for switcher
-  const registeredClientOptions = useMemo(() => {
-    const fromCases = casesList.map(c => (c.clientName || c.client || (c.extractedData as any)?.cargoOwner || (c.extractedData as any)?.consigneeName || '').trim()).filter(Boolean);
-    const defaults = [
-      'Al-Khaleej Importers & Shipping Lines',
-      'Pak Afghan Transit Co',
-      'Khyber Logistics & Cargo',
-      'Global Traders Ltd'
-    ];
-    return Array.from(new Set([...defaults, ...fromCases]));
-  }, [casesList]);
 
   // Client matcher helper
   const isMatchClient = (name?: string) => {
@@ -176,275 +151,278 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
     return a === b || a.includes(b) || b.includes(a);
   };
 
-  // Active Cases scoped to client
-  const activeCasesList = useMemo(() => {
+  // Filtered Client Cases
+  const clientCases = useMemo(() => {
     const list = casesList.filter(c => {
       const cClient = c.clientName || c.client || (c.extractedData as any)?.cargoOwner || (c.extractedData as any)?.consigneeName || '';
       return isMatchClient(cClient);
     });
-    // Fallback to all cases if none match exact filter so the view is never empty
     return list.length > 0 ? list : casesList;
   }, [casesList, selectedClientName]);
 
-  // Active Payments scoped to client
-  const activePaymentsList = useMemo(() => {
-    const list = paymentsList.filter(p => isMatchClient(p.party));
-    return list.length > 0 ? list : paymentsList;
-  }, [paymentsList, selectedClientName]);
+  // Partition cases into Pending and Complete
+  const pendingCases = useMemo(() => {
+    return clientCases.filter(c => c.status !== CaseStatus.COMPLETED && (c.status as any) !== 'Cancelled');
+  }, [clientCases]);
 
-  // Selected Case for Modal / Details
+  const completeCases = useMemo(() => {
+    return clientCases.filter(c => c.status === CaseStatus.COMPLETED || (c.status as any) === 'Cancelled');
+  }, [clientCases]);
+
+  // Client Payments List derived from finances collection
+  const paymentsList = useMemo(() => {
+    return financesList
+      .filter(f => f.type === 'INCOME' && isMatchClient(f.party))
+      .map((f, idx) => ({
+        id: Number(f.id) || idx + 1,
+        date: f.date,
+        amount: Number(f.amount) || 0,
+        paymentMethod: f.paymentMethod === 'CASH' ? 'CASH' : 'ONLINE_TRANSFER',
+        bankName: f.bankName || (typeof f.bankId === 'string' ? f.bankId : 'Meezan Bank Ltd'),
+        referenceNo: f.reference || f.transactionId || '',
+        slipUrl: f.slipUrl,
+        status: f.status === 'PAID' ? 'CONFIRMED' : 'PENDING',
+        remarks: f.description,
+        party: f.party,
+        caseNo: f.caseNo,
+        category: f.category,
+        targetRecipient: (f as any).targetRecipient || (f as any).targetStaff || (f as any).targetTransporter,
+        vehicleNo: (f as any).vehicleNo
+      })) as ClientPaymentEntry[];
+  }, [financesList, selectedClientName]);
+
+  // Search filter for Cases & Case Status Views
+  const [caseSearchQuery, setCaseSearchQuery] = useState('');
+  const [statusSearchQuery, setStatusSearchQuery] = useState('');
+
+  const filteredPendingCases = useMemo(() => {
+    if (!caseSearchQuery.trim()) return pendingCases;
+    const q = caseSearchQuery.toLowerCase();
+    return pendingCases.filter(c => 
+      c.caseNo.toLowerCase().includes(q) ||
+      (c.extractedData?.blNumber || '').toLowerCase().includes(q) ||
+      (c.containers || []).some(cntr => cntr.number.toLowerCase().includes(q)) ||
+      c.pol.toLowerCase().includes(q) ||
+      c.pod.toLowerCase().includes(q) ||
+      (c.extractedData?.itemName || '').toLowerCase().includes(q)
+    );
+  }, [pendingCases, caseSearchQuery]);
+
+  const filteredCompleteCases = useMemo(() => {
+    if (!caseSearchQuery.trim()) return completeCases;
+    const q = caseSearchQuery.toLowerCase();
+    return completeCases.filter(c => 
+      c.caseNo.toLowerCase().includes(q) ||
+      (c.extractedData?.blNumber || '').toLowerCase().includes(q) ||
+      (c.containers || []).some(cntr => cntr.number.toLowerCase().includes(q)) ||
+      c.pol.toLowerCase().includes(q) ||
+      c.pod.toLowerCase().includes(q) ||
+      (c.extractedData?.itemName || '').toLowerCase().includes(q)
+    );
+  }, [completeCases, caseSearchQuery]);
+
+  const filteredStatusPendingCases = useMemo(() => {
+    if (!statusSearchQuery.trim()) return pendingCases;
+    const q = statusSearchQuery.toLowerCase();
+    return pendingCases.filter(c => 
+      c.caseNo.toLowerCase().includes(q) ||
+      (c.extractedData?.blNumber || '').toLowerCase().includes(q) ||
+      (c.containers || []).some(cntr => cntr.number.toLowerCase().includes(q)) ||
+      c.pol.toLowerCase().includes(q) ||
+      c.pod.toLowerCase().includes(q)
+    );
+  }, [pendingCases, statusSearchQuery]);
+
+  // Selected Case for Full Detail Modal (Opens exactly like in Case Manager)
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
+  const [showCaseManagerViewModal, setShowCaseManagerViewModal] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
-  // Search & Filter for All Cases View
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchContainerNo, setSearchContainerNo] = useState('');
-  const [searchBlNo, setSearchBlNo] = useState('');
-  const [searchCaseNo, setSearchCaseNo] = useState('');
-  const [filterStartDate, setFilterStartDate] = useState('');
-  const [filterEndDate, setFilterEndDate] = useState('');
-  const [filterStatus, setFilterStatus] = useState('ALL');
-  const [filterStation, setFilterStation] = useState('ALL');
+  // Selected Case for Workflow Only Short Modal
+  const [selectedWorkflowCase, setSelectedWorkflowCase] = useState<Case | null>(null);
 
-  // Finance Modals
-  const [showLedgerModal, setShowLedgerModal] = useState(false);
-  const [showAddPaymentModal, setShowAddPaymentModal] = useState(false);
-  const [showInvoicesModal, setShowInvoicesModal] = useState(false);
-  const [selectedInvoiceContainer, setSelectedInvoiceContainer] = useState<{
-    caseNo: string;
-    container: Container;
-    pol: string;
-    pod: string;
-    date: string;
-    clientName: string;
-    rate: number;
-    blNo?: string;
-  } | null>(null);
-
-  // Ledger Filter States
-  const [ledgerRangeType, setLedgerRangeType] = useState<'CURRENT_MONTH' | 'CUSTOM'>('CURRENT_MONTH');
-  const [ledgerStartDate, setLedgerStartDate] = useState('2026-04-01');
-  const [ledgerEndDate, setLedgerEndDate] = useState('2026-04-30');
-  const [ledgerStationFilter, setLedgerStationFilter] = useState('ALL');
-
-  // Add Payment Form States
-  const [paymentForm, setPaymentForm] = useState({
-    amount: '',
-    paymentMethod: 'ONLINE_TRANSFER' as ClientPaymentEntry['paymentMethod'],
-    bankName: 'Meezan Bank Ltd',
-    referenceNo: '',
-    remarks: '',
-    slipUrl: ''
-  });
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Case Registration Wizard States
-  const [newCaseCategory, setNewCaseCategory] = useState('Afghan Transit');
-  const [newCasePol, setNewCasePol] = useState('Karachi Port Trust');
-  const [newCasePod, setNewCasePod] = useState('Chaman Border Terminal');
-  const [newCaseBl, setNewCaseBl] = useState('');
-  const [newCaseVessel, setNewCaseVessel] = useState('');
-  const [newCaseWeight, setNewCaseWeight] = useState('');
-  const [newCaseItem, setNewCaseItem] = useState('');
-  const [newCaseContainers, setNewCaseContainers] = useState<{ number: string; size: '20ft' | '40ft'; weight: number }[]>([
-    { number: '', size: '40ft', weight: 28000 }
-  ]);
-  const [newCaseDocs, setNewCaseDocs] = useState<{ name: string; url: string; type: string }[]>([]);
-
-  // Calculate Real Financial Metrics
-  const totalBilled = useMemo(() => {
-    return activeCasesList.reduce((acc, c) => {
+  // =========================================================================
+  // FINANCIAL CALCULATIONS: 3 COUNTERS (PAYABLE TO DPL, LOADING, VEHICLE RENT)
+  // =========================================================================
+  // 1. Payable to DPL: Commercial freight & documentation charges billed minus paid
+  const billedToDpl = useMemo(() => {
+    return clientCases.reduce((acc, c) => {
       const cTotal = (c.charges || []).reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0);
       if (cTotal > 0) return acc + cTotal;
       const rate = getRouteRate(c.pol, c.pod);
-      const containerCount = c.containers?.length || 1;
-      return acc + (rate * containerCount);
+      return acc + (rate * (c.containers?.length || 1));
     }, 0);
-  }, [activeCasesList]);
+  }, [clientCases]);
 
-  const totalPaid = useMemo(() => {
-    return activePaymentsList
-      .filter(p => p.status === 'CONFIRMED')
-      .reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-  }, [activePaymentsList]);
+  const paidToDpl = useMemo(() => {
+    return paymentsList
+      .filter(p => p.status === 'CONFIRMED' && (p.category === 'DPL Company Payment' || !p.category || p.category === 'Client Payment'))
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  }, [paymentsList]);
 
-  const pendingPaymentsTotal = useMemo(() => {
-    return activePaymentsList
-      .filter(p => p.status === 'PENDING')
-      .reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-  }, [activePaymentsList]);
+  const payableToDpl = Math.max(0, billedToDpl - paidToDpl);
 
-  const remainingBalance = totalBilled - totalPaid;
-
-  // Containers count dynamically calculated
-  const allContainers = useMemo(() => {
-    return activeCasesList.flatMap(c => (c.containers || []).map(cntr => ({ ...cntr, caseData: c })));
-  }, [activeCasesList]);
-
-  const now = new Date();
-  const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevMonthPrefix = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
-
-  const thisMonthContainers = allContainers.filter(cntr => (cntr.caseData.createdAt || '').startsWith(currentMonthPrefix)).length;
-  const previousMonthContainers = allContainers.filter(cntr => (cntr.caseData.createdAt || '').startsWith(prevMonthPrefix)).length;
-
-  // In-Transit / Active Cases
-  const inTransitCases = useMemo(() => {
-    return activeCasesList.filter(c => 
-      c.status === CaseStatus.IN_TRANSIT || 
-      c.status === CaseStatus.LOADING_PORT_PROCESSING ||
-      c.status === CaseStatus.SHIPPING_LINE_DO
-    );
-  }, [activeCasesList]);
-
-  // Available Stations / Routes
-  const availableRoutes = useMemo(() => {
-    return Array.from(new Set(activeCasesList.map(c => `${c.pol} -> ${c.pod}`)));
-  }, [activeCasesList]);
-
-  // Dynamic Real-time Ledger Rows Calculation
-  const computedLedgerRows = useMemo(() => {
-    interface LedgerRowItem {
-      id: string;
-      date: string;
-      type: 'INVOICE' | 'PAYMENT' | 'OPENING';
-      description: string;
-      containerNo: string;
-      refNumber: string;
-      debit: number;
-      credit: number;
-      balance: number;
-    }
-
-    const items: Omit<LedgerRowItem, 'balance'>[] = [];
-
-    // 1. Add Debits from Case Invoices
-    activeCasesList.forEach(c => {
-      const route = `${c.pol} -> ${c.pod}`;
-      if (ledgerStationFilter !== 'ALL' && route !== ledgerStationFilter && c.pod !== ledgerStationFilter) {
-        return;
+  // 2. Payable to Loading (Port loading bills)
+  const billedToLoading = useMemo(() => {
+    return clientCases.reduce((acc, c) => {
+      let lbSum = 0;
+      if (Array.isArray(c.loadingBills)) {
+        lbSum += c.loadingBills.reduce((s, b) => s + (Number(b.totalAmount) || 0), 0);
       }
-
-      const caseDate = c.createdAt ? new Date(c.createdAt).toISOString().split('T')[0] : '2026-04-01';
-      const ref = c.invoiceNo || c.caseNo || `INV-${c.id}`;
-      const cntrList = (c.containers || []).map(cnt => cnt.number).filter(Boolean);
-      const cntrStr = cntrList.join(', ') || 'N/A';
-
-      const validCharges = (c.charges || []).filter(ch => (Number(ch.amount) || 0) > 0);
-      if (validCharges.length > 0) {
-        validCharges.forEach((ch, chIdx) => {
-          items.push({
-            id: `case_${c.id}_ch_${chIdx}`,
-            date: caseDate,
-            type: 'INVOICE',
-            description: `${ch.description || 'Freight Charges'} (${c.pol} to ${c.pod})`,
-            containerNo: cntrStr,
-            refNumber: ref,
-            debit: Number(ch.amount) || 0,
-            credit: 0
-          });
-        });
-      } else {
-        const rate = getRouteRate(c.pol, c.pod);
-        const count = c.containers?.length || 1;
-        const total = rate * count;
-        items.push({
-          id: `case_${c.id}_rate`,
-          date: caseDate,
-          type: 'INVOICE',
-          description: `Freight & Clearance: ${c.pol} to ${c.pod}`,
-          containerNo: cntrStr,
-          refNumber: ref,
-          debit: total,
-          credit: 0
-        });
-      }
-    });
-
-    // 2. Add Credits from Payments Received
-    activePaymentsList.forEach(p => {
-      if (p.status !== 'CONFIRMED') return;
-      items.push({
-        id: `pay_${p.id}`,
-        date: p.date,
-        type: 'PAYMENT',
-        description: `Bank Deposit / Transfer (${p.bankName} - ${p.paymentMethod.replace('_', ' ')})`,
-        containerNo: '-',
-        refNumber: p.referenceNo || `REC-${p.id}`,
-        debit: 0,
-        credit: Number(p.amount) || 0
+      // Also check charges for port loading fees
+      (c.charges || []).forEach(ch => {
+        const d = (ch.description || '').toLowerCase();
+        if (d.includes('loading') || d.includes('port handling')) {
+          lbSum += Number(ch.amount || 0);
+        }
       });
-    });
+      return acc + lbSum;
+    }, 0);
+  }, [clientCases]);
 
-    // Sort chronologically
-    items.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const paidToLoading = useMemo(() => {
+    return paymentsList
+      .filter(p => p.status === 'CONFIRMED' && (p.category === 'Loading Payment' || (p.remarks || '').toLowerCase().includes('loading')))
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  }, [paymentsList]);
 
-    let running = 0;
-    const finalRows: LedgerRowItem[] = [];
+  const payableToLoading = Math.max(0, billedToLoading - paidToLoading);
 
-    // Opening Balance Row
-    const startOfPeriod = ledgerRangeType === 'CUSTOM' ? ledgerStartDate : `${currentMonthPrefix}-01`;
-    finalRows.push({
-      id: 'opn_bal',
-      date: startOfPeriod || '2026-04-01',
-      type: 'OPENING',
-      description: 'Opening Balance Brought Forward',
-      containerNo: '-',
-      refNumber: 'OPN-BAL',
-      debit: 0,
-      credit: 0,
-      balance: 0
-    });
+  // 3. Payable to Vehicle Rent (Transporters)
+  const billedToVehicleRent = useMemo(() => {
+    return clientCases.reduce((acc, c) => {
+      return acc + (c.containers || []).reduce((cSum, cntr) => {
+        // Default rent per container if not specified
+        return cSum + (cntr.rentAmount || 120000);
+      }, 0);
+    }, 0);
+  }, [clientCases]);
 
-    items.forEach(row => {
-      if (ledgerRangeType === 'CUSTOM') {
-        if (ledgerStartDate && row.date < ledgerStartDate) return;
-        if (ledgerEndDate && row.date > ledgerEndDate) return;
-      } else if (ledgerRangeType === 'CURRENT_MONTH') {
-        if (!row.date.startsWith(currentMonthPrefix)) return;
-      }
-      running = running + row.debit - row.credit;
-      finalRows.push({
-        ...row,
-        balance: running
-      });
-    });
+  const paidToVehicleRent = useMemo(() => {
+    return paymentsList
+      .filter(p => p.status === 'CONFIRMED' && (p.category === 'Vehicle Rent' || (p.remarks || '').toLowerCase().includes('vehicle rent') || (p.remarks || '').toLowerCase().includes('transporter')))
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  }, [paymentsList]);
 
-    return finalRows;
-  }, [activeCasesList, activePaymentsList, ledgerRangeType, ledgerStartDate, ledgerEndDate, ledgerStationFilter, currentMonthPrefix]);
+  const payableToVehicleRent = Math.max(0, billedToVehicleRent - paidToVehicleRent);
 
-  // Filtered Cases for All Cases List
-  const filteredCases = activeCasesList.filter(c => {
-    // General Search
-    const matchesSearch = !searchQuery || 
-      c.caseNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.extractedData?.blNumber?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.containers.some(cnt => cnt.number.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      c.pod.toLowerCase().includes(searchQuery.toLowerCase());
+  // =========================================================================
+  // FINANCE MODALS & FORMS
+  // =========================================================================
+  const [showLedgerModal, setShowLedgerModal] = useState(false);
+  const [showInvoicesModal, setShowInvoicesModal] = useState(false);
+  const [showLoadingBillsModal, setShowLoadingBillsModal] = useState(false);
+  const [showPaidPaymentModal, setShowPaidPaymentModal] = useState(false);
 
-    // Specific Multi-Parameter Search
-    const matchesContainer = !searchContainerNo || 
-      c.containers.some(cnt => cnt.number.toLowerCase().includes(searchContainerNo.toLowerCase()));
-    
-    const matchesBl = !searchBlNo || 
-      (c.extractedData?.blNumber && c.extractedData.blNumber.toLowerCase().includes(searchBlNo.toLowerCase()));
-
-    const matchesCaseNo = !searchCaseNo || 
-      c.caseNo.toLowerCase().includes(searchCaseNo.toLowerCase());
-
-    const matchesStatus = filterStatus === 'ALL' || c.status === filterStatus;
-    const matchesStation = filterStation === 'ALL' || `${c.pol} -> ${c.pod}` === filterStation || c.pod === filterStation;
-
-    const matchesDate = (!filterStartDate || c.createdAt >= filterStartDate) && 
-      (!filterEndDate || c.createdAt <= filterEndDate);
-
-    return matchesSearch && matchesContainer && matchesBl && matchesCaseNo && matchesStatus && matchesStation && matchesDate;
+  // Paid Payment Form State
+  const [paymentForm, setPaymentForm] = useState({
+    mode: 'BANK' as 'CASH' | 'BANK',
+    amount: '',
+    date: new Date().toISOString().split('T')[0],
+    category: 'Company Payment (DPL)' as 'Company Payment (DPL)' | 'Loading Payment' | 'Vehicle Rent',
+    bankName: 'Meezan Bank Ltd (Corporate)',
+    customBankName: '',
+    slipUrl: '',
+    caseNo: '',
+    remarks: '',
+    selectedContainerIndex: 0
   });
 
-  // Handle Camera
+  const [paymentCaseSearch, setPaymentCaseSearch] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+
+  // Eligible cases for payment selection (pending + recent completed)
+  const paymentEligibleCases = useMemo(() => {
+    const list = [...pendingCases, ...completeCases.slice(0, 5)];
+    if (!paymentCaseSearch.trim()) return list;
+    const q = paymentCaseSearch.toLowerCase();
+    return list.filter(c => c.caseNo.toLowerCase().includes(q) || (c.extractedData?.blNumber || '').toLowerCase().includes(q));
+  }, [pendingCases, completeCases, paymentCaseSearch]);
+
+  const selectedCaseForPayment = useMemo(() => {
+    return paymentEligibleCases.find(c => c.caseNo === paymentForm.caseNo) || paymentEligibleCases[0];
+  }, [paymentEligibleCases, paymentForm.caseNo]);
+
+  // Submit Payment Handler
+  const handleConfirmPaidPayment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+
+    const activeClient = selectedClientName;
+    const caseItem = selectedCaseForPayment;
+    const assignedContainer = caseItem?.containers?.[paymentForm.selectedContainerIndex] || caseItem?.containers?.[0];
+
+    // Determine target recipient based on category
+    let targetRecipient = 'DPL Billing Department';
+    let targetRole = 'ADMIN';
+    if (paymentForm.category === 'Loading Payment') {
+      targetRecipient = (caseItem as any)?.loadingStaffName || (caseItem?.loadingBills?.[0]?.staffName) || 'Mohsin Khan';
+      targetRole = 'LOADING_PORT_STAFF';
+    } else if (paymentForm.category === 'Vehicle Rent') {
+      targetRecipient = assignedContainer?.transporterName || (caseItem as any)?.transporterName || 'Bilal Goods Transport Co.';
+      targetRole = 'TRANSPORTER';
+    }
+
+    const finalBank = paymentForm.bankName === 'Other Bank' ? (paymentForm.customBankName || 'Direct Bank Deposit') : paymentForm.bankName;
+
+    const newPaymentEntry: Partial<FinanceEntry> = {
+      id: Date.now(),
+      date: paymentForm.date,
+      type: 'INCOME',
+      category: paymentForm.category,
+      description: `${paymentForm.category} payment from ${activeClient} (${caseItem ? `Case ${caseItem.caseNo}` : 'Account'})`,
+      amount: parseFloat(paymentForm.amount),
+      party: activeClient,
+      paymentMethod: paymentForm.mode === 'CASH' ? 'CASH' : 'BANK',
+      bankName: paymentForm.mode === 'CASH' ? 'Drawer Cash' : finalBank,
+      reference: paymentForm.mode === 'CASH' ? 'Cash Voucher' : `SLIP-${Date.now().toString().slice(-6)}`,
+      status: 'PENDING',
+      slipUrl: paymentForm.slipUrl || 'https://placehold.co/600x800/png?text=Payment+Receipt+Proof',
+      caseNo: caseItem?.caseNo || '',
+      vehicleNo: assignedContainer?.vehicleNo || '',
+      targetRecipient: targetRecipient,
+      targetRole: targetRole,
+      remarks: paymentForm.remarks
+    } as any;
+
+    saveFinanceToFirestore(newPaymentEntry as FinanceEntry);
+
+    logActivity(
+      `Payment Submitted: PKR ${parseFloat(paymentForm.amount).toLocaleString()} for ${paymentForm.category}`,
+      `Client "${activeClient}" submitted payment request. Routed to ${targetRecipient} for approval.`,
+      'CLIENT',
+      activeClient,
+      { caseNo: caseItem?.caseNo, amount: paymentForm.amount }
+    );
+
+    setShowPaidPaymentModal(false);
+    setPaymentForm({
+      mode: 'BANK',
+      amount: '',
+      date: new Date().toISOString().split('T')[0],
+      category: 'Company Payment (DPL)',
+      bankName: 'Meezan Bank Ltd (Corporate)',
+      customBankName: '',
+      slipUrl: '',
+      caseNo: '',
+      remarks: '',
+      selectedContainerIndex: 0
+    });
+
+    alert(
+      `Payment Request of PKR ${parseFloat(paymentForm.amount).toLocaleString()} submitted successfully!\n` +
+      `Category: ${paymentForm.category}\n` +
+      `Recipient: ${targetRecipient}\n` +
+      `Status: Awaiting approval. Once approved by ${targetRecipient}, it will be credited to their ledger.`
+    );
+  };
+
+  // Camera slip capture
   const startCamera = async () => {
     setIsCameraActive(true);
     try {
@@ -453,7 +431,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
         videoRef.current.srcObject = stream;
       }
     } catch (err) {
-      alert("Unable to access camera. Please check permissions or upload file directly.");
+      alert("Unable to access camera. Please upload slip file directly.");
       setIsCameraActive(false);
     }
   };
@@ -462,30 +440,16 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
     if (videoRef.current) {
       try {
         const canvas = document.createElement('canvas');
-        const maxDim = 1920;
-        let w = videoRef.current.videoWidth || 1280;
-        let h = videoRef.current.videoHeight || 720;
-        if (w > maxDim || h > maxDim) {
-          if (w > h) {
-            h = Math.round((h * maxDim) / w);
-            w = maxDim;
-          } else {
-            w = Math.round((w * maxDim) / h);
-            h = maxDim;
-          }
-        }
-        canvas.width = w;
-        canvas.height = h;
+        canvas.width = videoRef.current.videoWidth || 1280;
+        canvas.height = videoRef.current.videoHeight || 720;
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          ctx.drawImage(videoRef.current, 0, 0, w, h);
-          const rawDataUrl = canvas.toDataURL('image/jpeg', 0.92);
-          const converted = await convertImageToPdf(rawDataUrl, `Payment_Slip_Scan_${Date.now()}.pdf`, true);
-          setPaymentForm(prev => ({ ...prev, slipUrl: converted.pdfDataUrl }));
+          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+          const rawDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+          setPaymentForm(prev => ({ ...prev, slipUrl: rawDataUrl }));
           stopCamera();
         }
       } catch (err) {
-        console.warn("Camera photo capture warning:", err);
         stopCamera();
       }
     }
@@ -494,1396 +458,944 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
   const stopCamera = () => {
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach(t => t.stop());
       videoRef.current.srcObject = null;
     }
     setIsCameraActive(false);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      try {
-        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-        if (!isPdf) {
-          const converted = await convertImageToPdf(file, file.name, true);
-          setPaymentForm(prev => ({ ...prev, slipUrl: converted.pdfDataUrl }));
-        } else {
-          const processed = await compressAndPrepareFile(file);
-          setPaymentForm(prev => ({ ...prev, slipUrl: processed.dataUrl || (processed.base64 ? `data:application/pdf;base64,${processed.base64}` : '') }));
-        }
-      } catch (err) {
-        console.warn("Slip upload warning:", err);
-      } finally {
-        try {
-          e.target.value = '';
-        } catch (_) {}
-      }
-    }
-  };
+  // Passbook Filter State
+  const [passbookFilter, setPassbookFilter] = useState<'ALL' | 'PAYMENTS' | 'INVOICES' | 'LOADING_BILLS' | 'VEHICLE_RENT'>('ALL');
 
-  // Submit Payment
-  const handleSubmitPayment = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
-      alert("Please enter a valid amount.");
-      return;
-    }
-    if (!paymentForm.referenceNo) {
-      alert("Please enter transaction ID or deposit slip number.");
-      return;
-    }
+  // Unified Passbook Entries
+  const passbookEntries = useMemo(() => {
+    const list: Array<{
+      id: string;
+      date: string;
+      type: 'PAYMENT' | 'INVOICE' | 'LOADING_BILL' | 'VEHICLE_RENT';
+      typeName: string;
+      recipient: string;
+      caseNo?: string;
+      containerNo?: string;
+      amount: number;
+      status: 'CONFIRMED' | 'PENDING' | 'GENERATED';
+      slipUrl?: string;
+      pdfAction?: () => void;
+    }> = [];
 
-    const activeClient = selectedClientName || safeAppStorage.getItem('dpl_client_name') || 'Client Account';
-    const newPayment: ClientPaymentEntry = {
-      id: Date.now(),
-      date: new Date().toISOString().split('T')[0],
-      amount: parseFloat(paymentForm.amount),
-      paymentMethod: paymentForm.paymentMethod,
-      bankName: paymentForm.bankName,
-      referenceNo: paymentForm.referenceNo,
-      slipUrl: paymentForm.slipUrl || 'https://placehold.co/600x800/png?text=Deposit+Slip+Proof',
-      status: 'PENDING',
-      remarks: paymentForm.remarks || 'Client online portal deposit',
-      party: activeClient
-    };
+    // 1. Add Payments Made
+    paymentsList.forEach(p => {
+      let tName = 'Payment Paid (DPL)';
+      if (p.category === 'Loading Payment') tName = 'Loading Payment Paid';
+      if (p.category === 'Vehicle Rent') tName = 'Vehicle Rent Paid';
 
-    setPaymentsList([newPayment, ...paymentsList]);
-    
-    // Save to Firestore finances collection
-    const financeEntry: Partial<FinanceEntry> = {
-      id: newPayment.id,
-      date: newPayment.date,
-      type: 'INCOME',
-      category: 'Client Payment',
-      description: `Client Deposit - ${newPayment.referenceNo || 'Direct Deposit'}`,
-      amount: newPayment.amount,
-      party: activeClient,
-      paymentMethod: newPayment.paymentMethod === 'CASH' ? 'CASH' : 'BANK',
-      bankId: newPayment.bankName,
-      bankName: newPayment.bankName,
-      reference: newPayment.referenceNo,
-      status: 'PENDING',
-      slipUrl: newPayment.slipUrl
-    };
-    saveFinanceToFirestore(financeEntry as FinanceEntry);
-
-    setShowAddPaymentModal(false);
-    setPaymentForm({
-      amount: '',
-      paymentMethod: 'ONLINE_TRANSFER',
-      bankName: 'Meezan Bank Ltd',
-      referenceNo: '',
-      remarks: '',
-      slipUrl: ''
+      list.push({
+        id: `pay_${p.id}`,
+        date: p.date,
+        type: 'PAYMENT',
+        typeName: tName,
+        recipient: p.targetRecipient || (p.category === 'Loading Payment' ? 'Port Loading Staff' : p.category === 'Vehicle Rent' ? 'Transporter' : 'DPL Company'),
+        caseNo: p.caseNo,
+        amount: p.amount,
+        status: p.status,
+        slipUrl: p.slipUrl
+      });
     });
 
-    alert("Payment request submitted successfully!\nStatus: Confirmation Pending\nThe finance manager will verify and credit your account ledger.");
-  };
+    // 2. Add Generated Invoices from Cases
+    clientCases.forEach(c => {
+      const rate = getRouteRate(c.pol, c.pod);
+      (c.containers || [{ number: 'MSKU-DEFAULT' } as any]).forEach((cntr, idx) => {
+        list.push({
+          id: `inv_${c.id}_${idx}`,
+          date: c.createdAt || new Date().toISOString().split('T')[0],
+          type: 'INVOICE',
+          typeName: 'Freight Commercial Invoice',
+          recipient: 'DPL Company Billing',
+          caseNo: c.caseNo,
+          containerNo: cntr.number,
+          amount: rate + 15000,
+          status: 'GENERATED',
+          pdfAction: () => downloadContainerInvoicePdf({
+            invoiceNo: `INV-26-${(cntr.number || '0000').slice(-4)}`,
+            clientName: selectedClientName,
+            containerNo: cntr.number,
+            size: (cntr as any).size || '40ft',
+            route: `${c.pol} -> ${c.pod}`,
+            rate: rate,
+            date: c.createdAt,
+            companyName: companyName
+          })
+        });
+      });
+    });
 
-  // Submit New Case Registration from Client
-  const handleRegisterCaseSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const activeClient = safeAppStorage.getItem('dpl_client_name') || 'Client Account';
-    const caseYear = '26';
-    const serialStr = String(casesList.length + 1).padStart(6, '0');
-    const autoCaseNo = `DPL-${caseYear}-${serialStr}`;
+    // 3. Add Generated Loading Bills from Cases
+    clientCases.forEach(c => {
+      if (Array.isArray(c.loadingBills) && c.loadingBills.length > 0) {
+        c.loadingBills.forEach((b, bIdx) => {
+          list.push({
+            id: `lb_${b.id || bIdx}`,
+            date: b.date || c.createdAt,
+            type: 'LOADING_BILL',
+            typeName: 'Port Loading Bill',
+            recipient: b.staffName || 'Port Loading Officer',
+            caseNo: c.caseNo,
+            containerNo: b.containerNo,
+            amount: b.totalAmount || 25000,
+            status: 'GENERATED',
+            pdfAction: () => downloadLoadingBillPdf({
+              billNo: b.billNo || `LB-${bIdx + 1}`,
+              caseNo: c.caseNo,
+              clientName: c.clientName,
+              containerNo: b.containerNo || 'MSKU-DEFAULT',
+              portTerminal: c.pol || 'Port Terminal',
+              date: b.date || c.createdAt,
+              items: [{ head: 'Terminal Handling & Loading', amount: b.totalAmount || 25000 }],
+              totalAmount: b.totalAmount || 25000,
+              officerName: b.staffName || 'Port Officer'
+            })
+          });
+        });
+      }
+    });
 
-    const newRate = getRouteRate(newCasePol, newCasePod);
-    const newCase: Case = {
-      id: `case-${Date.now()}`,
-      caseNo: autoCaseNo,
-      clientName: activeClient,
-      category: newCaseCategory,
-      pol: newCasePol,
-      pod: newCasePod,
-      status: CaseStatus.SHIPPING_LINE_DO,
-      createdAt: new Date().toISOString().split('T')[0],
-      charges: [
-        { description: `Freight & Logistics (${newCasePol} to ${newCasePod})`, amount: newRate },
-        { description: 'Customs Clearance & Documentation', amount: 30000 }
-      ],
-      documents: newCaseDocs.length > 0 ? newCaseDocs : [
-        { name: `BL-${newCaseBl || 'Pending'}.pdf`, type: 'application/pdf', url: 'https://placehold.co/600x800/png?text=Client+Uploaded+BL' }
-      ],
-      containers: newCaseContainers.filter(c => c.number.trim()).map((cnt, idx) => ({
-        id: Date.now() + idx,
-        number: cnt.number.toUpperCase(),
-        size: cnt.size,
-        weight: cnt.weight,
-        status: 'Pending'
-      })),
-      extractedData: {
-        blNumber: newCaseBl,
-        vesselName: newCaseVessel,
-        totalWeight: parseFloat(newCaseWeight) || 28000,
-        itemName: newCaseItem || 'General Cargo',
-        consigneeName: activeClient
-      },
-      approvalStatus: 'PENDING',
-      registeredByRole: 'CLIENT'
-    };
+    // Sort by date descending
+    list.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-    setCasesList([newCase, ...casesList]);
-    saveCaseToFirestore(newCase);
-    logActivity(
-      `New Case Registration Submitted: ${autoCaseNo}`,
-      `Client "${activeClient}" submitted case ${autoCaseNo} for approval (Category: ${newCaseCategory}, Route: ${newCasePol} -> ${newCasePod})`,
-      'CLIENT',
-      activeClient,
-      { caseNo: autoCaseNo, client: activeClient }
-    );
-    setCasesSubView('overview');
-    alert(`Case registration submitted successfully!\nCase No: ${autoCaseNo}\nStatus: Submitted for admin approval.`);
-  };
+    // Apply Filter Tab
+    if (passbookFilter === 'PAYMENTS') return list.filter(i => i.type === 'PAYMENT');
+    if (passbookFilter === 'INVOICES') return list.filter(i => i.type === 'INVOICE');
+    if (passbookFilter === 'LOADING_BILLS') return list.filter(i => i.type === 'LOADING_BILL');
+    if (passbookFilter === 'VEHICLE_RENT') return list.filter(i => i.typeName.includes('Vehicle Rent'));
 
-  const isPrintModalOpen = showLedgerModal || (showInvoicesModal && Boolean(selectedInvoiceContainer)) || Boolean(selectedCase);
+    return list;
+  }, [paymentsList, clientCases, passbookFilter, selectedClientName, companyName]);
+
+  // Client Action Needed in Workflow Detection
+  const clientActionNeededCount = useMemo(() => {
+    return pendingCases.filter(c => {
+      return (
+        c.status === CaseStatus.SHIPPING_LINE_DO || 
+        c.status === CaseStatus.TP_FILING ||
+        Boolean(c.charges?.some(ch => !ch.receiptUrl))
+      );
+    }).length;
+  }, [pendingCases]);
 
   return (
-    <div className="space-y-6 animate-fade-in text-gray-100 font-sans pb-12">
-      
-      {/* Top Banner / Client Identity Header */}
-      <div className="glass-card p-4 sm:p-6 rounded-2xl border border-brand-500/20 bg-gradient-to-r from-brand-950/60 via-slate-900/80 to-slate-950/80 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="bg-slate-950/60 p-2 rounded-xl border border-white/10 flex items-center">
-            <Logo className="h-10 w-auto" />
+    <div className="flex flex-col lg:flex-row min-h-screen bg-slate-950 text-gray-100 font-sans">
+
+      {/* ========================================================================= */}
+      {/* 1. LEFT SIDEBAR NAVIGATION (REQUESTED BY USER) */}
+      {/* ========================================================================= */}
+      <aside className="w-full lg:w-64 bg-slate-900/95 border-b lg:border-b-0 lg:border-r border-white/10 flex flex-col shrink-0 no-print">
+        
+        {/* Brand Header */}
+        <div className="p-4 sm:p-5 border-b border-white/10 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-slate-950 p-1.5 rounded-xl border border-white/10">
+              <Logo className="h-7 w-auto" />
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-white tracking-wide">Client Portal</h1>
+              <p className="text-[10px] text-amber-400 font-medium">Importer & Logistics Desk</p>
+            </div>
           </div>
-          <div className="h-8 w-px bg-white/10 hidden sm:block"></div>
-          <div className="w-12 h-12 rounded-xl bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold text-lg shadow-lg shadow-brand-600/20 uppercase">
-            {selectedClientName ? selectedClientName.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('') : 'CL'}
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              {registeredClientOptions.length > 1 ? (
-                <div className="flex items-center gap-1.5">
-                  <select
-                    value={selectedClientName}
-                    onChange={(e) => setSelectedClientName(e.target.value)}
-                    className="bg-slate-900 border border-brand-500/40 text-white font-bold text-base sm:text-lg rounded-xl px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer shadow-inner"
-                    title="Switch Client Account"
-                  >
-                    {registeredClientOptions.map((name) => (
-                      <option key={name} value={name} className="bg-slate-900 text-white font-normal py-1">
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <h1 className="text-xl sm:text-2xl font-bold text-white">{selectedClientName}</h1>
-              )}
-              <span className="bg-emerald-500/20 text-emerald-300 text-xs px-2.5 py-0.5 rounded-full border border-emerald-500/30 font-medium flex items-center gap-1">
-                <ShieldCheck size={14} /> Verified Corporate Client
+        </div>
+
+        {/* Client Identity Display */}
+        <div className="p-3.5 mx-3 my-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1.5">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-amber-600/20 text-amber-300 font-bold text-xs flex items-center justify-center border border-amber-500/30 uppercase">
+              {selectedClientName.slice(0, 2)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h4 className="text-xs font-bold text-white truncate" title={selectedClientName}>
+                {selectedClientName}
+              </h4>
+              <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
+                <ShieldCheck size={11} /> Verified Corporate Client
               </span>
             </div>
-            <p className="text-gray-400 text-xs sm:text-sm mt-0.5">
-              Dedicated Logistics, Afghan Transit, Customs Clearance & Finance Management
-            </p>
+          </div>
+
+          <div className="pt-1 flex items-center justify-between text-[11px] border-t border-white/10">
+            <button
+              onClick={() => setIsClientRegModalOpen(true)}
+              className="text-purple-300 hover:text-white flex items-center gap-1 text-[10px] font-semibold"
+            >
+              <UserPlus size={11} /> Profile & Universal Rates
+            </button>
           </div>
         </div>
 
-        {/* Tab Navigation & Role Switcher */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto">
-          <div className="flex bg-slate-950/80 p-1 rounded-xl border border-white/10">
-            <button
-              onClick={() => { setActiveTab('cases'); setCasesSubView('overview'); }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-                activeTab === 'cases' 
-                  ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/30' 
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <FolderKanban size={17} />
-              <span>Cases</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('finance')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-                activeTab === 'finance' 
-                  ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/30' 
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <DollarSign size={17} />
-              <span>Finance</span>
-            </button>
-          </div>
-
-          {/* Sone se Amount Option (Golden Amount Display & Quick Ledger) */}
-          <GoldenAmountWidget 
-            onOpenFinance={() => setActiveTab('finance')}
-          />
-
-          {/* Client Profile & Registration Button */}
+        {/* 3 Main Sidebar Options Requested by User */}
+        <nav className="flex-1 p-3 space-y-1.5">
+          
+          {/* Option 1: Cases */}
           <button
-            type="button"
-            onClick={() => setIsClientRegModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600 border border-purple-500/30 hover:border-purple-500 text-purple-300 hover:text-white text-xs font-semibold transition-all shadow-md active:scale-95"
-            title="Register / Update Client Profile & Universal Rate Matrix"
+            onClick={() => setActiveTab('cases')}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+              activeTab === 'cases'
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }`}
           >
-            <UserPlus size={15} />
-            <span className="hidden sm:inline">Client Profile</span>
+            <FolderKanban size={17} />
+            <span>Cases</span>
+            <span className="ml-auto text-[11px] font-mono font-bold bg-black/30 px-2 py-0.5 rounded-full">
+              {clientCases.length}
+            </span>
           </button>
 
-          {/* Small Squircle (rounded-square) Sign Out Button with LogOut Logo */}
+          {/* Option 2: Check Case Status */}
           <button
-            type="button"
-            id="client-portal-signout-btn"
-            onClick={() => {
-              if (onSignOut) {
-                onSignOut();
-              } else if (onSwitchToAdmin) {
-                onSwitchToAdmin();
-              }
-            }}
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-red-500/10 hover:bg-red-500/20 active:bg-red-500/30 text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/50 flex items-center justify-center transition-all duration-200 shadow-md hover:shadow-red-500/20 active:scale-95 cursor-pointer flex-shrink-0"
-            title="Sign Out"
+            onClick={() => setActiveTab('case_status')}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all relative ${
+              activeTab === 'case_status'
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }`}
           >
-            <LogOut size={17} className="text-red-400" />
+            <Clock size={17} />
+            <span>Check Case Status</span>
+            {clientActionNeededCount > 0 && (
+              <span className="ml-auto bg-amber-500 text-black text-[10px] font-bold px-1.5 py-0.5 rounded-full animate-pulse">
+                Action Req
+              </span>
+            )}
+          </button>
+
+          {/* Option 3: Finance */}
+          <button
+            onClick={() => setActiveTab('finance')}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+              activeTab === 'finance'
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <DollarSign size={17} />
+            <span>Finance</span>
+            {payableToDpl + payableToLoading + payableToVehicleRent > 0 && (
+              <span className="ml-auto text-[10px] font-mono font-bold text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded">
+                Due
+              </span>
+            )}
+          </button>
+
+          {/* Option 4: Available & Ready Vehicles (Transporters) */}
+          <button
+            onClick={() => setActiveTab('available_vehicles')}
+            className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+              activeTab === 'available_vehicles'
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Truck size={17} />
+            <span>Available / Ready Fleet</span>
+            <span className="ml-auto text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full">
+              {availableVehiclesList.length}
+            </span>
+          </button>
+
+        </nav>
+
+        {/* Quick Amount Widget */}
+        <div className="p-3 border-t border-white/10">
+          <GoldenAmountWidget onOpenFinance={() => setActiveTab('finance')} />
+        </div>
+
+        {/* Sign Out Button */}
+        <div className="p-3 border-t border-white/10 flex items-center justify-between">
+          <button
+            onClick={onSignOut}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold transition"
+          >
+            <LogOut size={15} />
+            <span>Sign Out</span>
           </button>
         </div>
-      </div>
 
-      {/* Main Portal Content Views - Hidden during modal printing */}
-      <div className={`space-y-6 ${isPrintModalOpen ? 'print:hidden' : ''}`}>
-        {/* ========================================================================= */}
-        {/* 1. CASES VIEW */}
-        {/* ========================================================================= */}
+      </aside>
+
+      {/* ========================================================================= */}
+      {/* 2. MAIN CLIENT CONTENT AREA */}
+      {/* ========================================================================= */}
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto space-y-6">
+
+        {/* ======================================================================= */}
+        {/* PAGE 1: CASES VIEW (SEARCH + PENDING SECTION + COMPLETE SECTION) */}
+        {/* ======================================================================= */}
         {activeTab === 'cases' && (
-        <div className="space-y-6">
-
-          {/* Sub-Header / Quick Action Buttons */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900/60 p-4 rounded-xl border border-white/5">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-300">Quick Navigation:</span>
-              <button
-                onClick={() => setCasesSubView('overview')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  casesSubView === 'overview' ? 'bg-brand-600 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                }`}
-              >
-                In-Transit Live
-              </button>
-              <button
-                onClick={() => setCasesSubView('all_cases')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                  casesSubView === 'all_cases' ? 'bg-brand-600 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'
-                }`}
-              >
-                View All Cases
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              <button
-                onClick={() => setIsClientRegModalOpen(true)}
-                className="w-full sm:w-auto bg-purple-600/20 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 px-4 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-2 shadow-sm transition-all"
-              >
-                <Building size={16} />
-                <span>+ Register Client Profile</span>
-              </button>
-              <button
-                onClick={() => setCasesSubView('register')}
-                className="w-full sm:w-auto bg-brand-600 hover:bg-brand-500 text-white px-5 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-2 shadow-lg shadow-brand-600/30 transition-all hover:scale-105"
-              >
-                <Plus size={18} />
-                <span>Register New Case</span>
-              </button>
-            </div>
-          </div>
-
-          {/* View 1: Overview & In-Transit Live Shipments */}
-          {casesSubView === 'overview' && (
-            <div className="space-y-6">
-              
-              {/* In-Transit Cases Section */}
-              <div>
-                <div className="flex justify-between items-center mb-4">
-                  <div>
-                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                      <Truck className="text-brand-400" size={20} />
-                      Current Shipments (In-Transit Live)
-                    </h2>
-                    <p className="text-gray-400 text-xs mt-0.5">
-                      Live status of all active containers en route to destination
-                    </p>
-                  </div>
-                  <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-1 rounded-full text-xs font-medium animate-pulse">
-                    {inTransitCases.length} Active Shipments On Route
-                  </span>
-                </div>
-
-                {inTransitCases.length === 0 ? (
-                  <div className="glass-card p-8 rounded-2xl text-center text-gray-400">
-                    <CheckCircle2 size={48} className="mx-auto text-green-500 mb-2 opacity-80" />
-                    <p className="text-base font-semibold text-white">No shipments currently in transit</p>
-                    <p className="text-xs text-gray-500 mt-1">All registered shipments have reached their destination.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                    {inTransitCases.map((c) => (
-                      <div 
-                        key={c.id} 
-                        className="glass-card rounded-2xl p-5 border border-white/10 hover:border-brand-500/40 transition-all hover:shadow-xl hover:shadow-brand-500/5 group cursor-pointer"
-                        onClick={() => setSelectedCase(c)}
-                      >
-                        <div className="flex justify-between items-start border-b border-white/10 pb-3 mb-4">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-bold text-lg text-white group-hover:text-brand-300 transition-colors">
-                                {c.caseNo}
-                              </span>
-                              <span className="bg-brand-500/20 text-brand-300 text-xs px-2 py-0.5 rounded border border-brand-500/30 font-medium">
-                                {c.category}
-                              </span>
-                            </div>
-                            <p className="text-xs text-gray-400 mt-0.5">
-                              BL No: <span className="font-mono text-gray-200">{c.extractedData?.blNumber || 'N/A'}</span> • Vessel: {c.extractedData?.vesselName || 'Cosco Line'}
-                            </p>
-                          </div>
-                          <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs px-3 py-1 rounded-full font-medium">
-                            {c.status}
-                          </span>
-                        </div>
-
-                        {/* Route POL -> POD */}
-                        <div className="bg-white/5 rounded-xl p-3 mb-4 border border-white/5">
-                          <div className="flex items-center justify-between text-xs">
-                            <div className="flex items-center gap-1.5 text-gray-300">
-                              <Anchor size={14} className="text-brand-400" />
-                              <span className="font-medium">{c.pol}</span>
-                            </div>
-                            <div className="flex items-center gap-1 text-brand-400 font-mono">
-                              <span className="text-[10px] uppercase">En Route</span>
-                              <ArrowRight size={14} />
-                            </div>
-                            <div className="flex items-center gap-1.5 text-gray-300">
-                              <MapPin size={14} className="text-emerald-400" />
-                              <span className="font-medium">{c.pod}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Live Containers inside this shipment */}
-                        <div className="space-y-2 mb-4">
-                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                            Assigned Containers & Vehicles ({c.containers.length}):
-                          </p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {c.containers.map((cntr) => (
-                              <div key={cntr.id} className="bg-slate-950/70 p-2.5 rounded-lg border border-white/5 text-xs">
-                                <div className="flex justify-between items-center mb-1">
-                                  <span className="font-mono font-bold text-white">{cntr.number}</span>
-                                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30">
-                                    {cntr.status}
-                                  </span>
-                                </div>
-                                <div className="text-gray-400 text-[11px] space-y-0.5">
-                                  <p>🚗 Vehicle: <span className="text-gray-200">{cntr.vehicleNo || 'TL-8842'}</span></p>
-                                  <p>👨‍✈️ Driver: <span className="text-gray-200">{cntr.driverName || 'Muhammad Ismail'}</span> ({cntr.driverContact || '0300-8877665'})</p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Card Footer */}
-                        <div className="flex justify-between items-center pt-3 border-t border-white/10 text-xs">
-                          <span className="text-gray-400">Date: {c.createdAt}</span>
-                          <span className="text-brand-400 group-hover:translate-x-1 transition-transform flex items-center gap-1 font-medium">
-                            View Details & Tracking <ChevronRight size={14} />
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Bottom Quick Jump Bar */}
-              <div className="glass-card p-5 rounded-2xl border border-white/10 flex flex-col sm:flex-row justify-between items-center gap-4 bg-gradient-to-r from-slate-900 to-brand-950/40">
+          <div className="space-y-6 animate-fade-in">
+            
+            {/* Header & Case Search Field as Requested */}
+            <div className="bg-slate-900 p-5 rounded-2xl border border-white/10 space-y-3">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 <div>
-                  <h3 className="font-bold text-white text-base">Looking for completed or archived cases?</h3>
-                  <p className="text-gray-400 text-xs mt-0.5">Search by Case No, Container No, B/L No, or Date Range</p>
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <FolderKanban className="text-amber-400" size={22} />
+                    <span>Client Shipment Cases</span>
+                  </h2>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Search and track all active, in-transit, and completed consignments
+                  </p>
                 </div>
+
                 <button
-                  onClick={() => setCasesSubView('all_cases')}
-                  className="bg-white/10 hover:bg-white/20 text-white border border-white/15 px-5 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 transition"
+                  onClick={() => setIsClientRegModalOpen(true)}
+                  className="bg-purple-600/20 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
                 >
-                  <Search size={16} className="text-brand-400" />
-                  <span>View All Cases Table</span>
+                  <UserPlus size={14} />
+                  <span>Client Profile</span>
                 </button>
               </div>
 
+              {/* Case Search Input Field */}
+              <div className="relative">
+                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by Case No (e.g. DPL-26-0001), B/L No, Container No, Port, Goods..."
+                  value={caseSearchQuery}
+                  onChange={(e) => setCaseSearchQuery(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-white placeholder-gray-500 focus:outline-none focus:border-amber-500 shadow-inner"
+                />
+              </div>
             </div>
-          )}
 
-          {/* View 2: All Cases Table View with Multi-Search */}
-          {casesSubView === 'all_cases' && (
-            <div className="glass-card rounded-2xl p-5 sm:p-6 border border-white/10 space-y-6">
-              
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-white/10 pb-4">
-                <div>
-                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                    <FolderKanban className="text-brand-400" size={22} />
-                    All Registered Cases
-                  </h2>
-                  <p className="text-gray-400 text-xs mt-0.5">
-                    Complete historical record of client shipments and clearances
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs bg-brand-500/20 text-brand-300 px-3 py-1 rounded-full border border-brand-500/30">
-                    Total: {filteredCases.length} Cases Found
+            {/* SECTION 1: PENDING CASES (IN-PROGRESS) */}
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Clock className="text-amber-400" size={18} />
+                  <span>Pending / In-Progress Cases</span>
+                  <span className="bg-amber-500/20 text-amber-300 text-xs px-2 py-0.5 rounded-full border border-amber-500/30 font-semibold font-mono">
+                    {filteredPendingCases.length}
                   </span>
-                </div>
+                </h3>
               </div>
 
-              {/* Multi-Search & Filter Panel */}
-              <div className="bg-slate-950/80 p-4 rounded-xl border border-white/10 space-y-3">
-                <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-1.5">
-                  <Filter size={14} className="text-brand-400" />
-                  Search & Filters:
-                </p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {/* Container No */}
-                  <div>
-                    <label className="text-[11px] text-gray-400 mb-1 block">Container No:</label>
-                    <div className="relative">
-                      <Search size={14} className="absolute left-3 top-2.5 text-gray-500" />
-                      <input
-                        type="text"
-                        placeholder="e.g. MSKU-8876541"
-                        value={searchContainerNo}
-                        onChange={(e) => setSearchContainerNo(e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  {/* BL Number */}
-                  <div>
-                    <label className="text-[11px] text-gray-400 mb-1 block">B/L No:</label>
-                    <div className="relative">
-                      <Search size={14} className="absolute left-3 top-2.5 text-gray-500" />
-                      <input
-                        type="text"
-                        placeholder="e.g. MSK-998877"
-                        value={searchBlNo}
-                        onChange={(e) => setSearchBlNo(e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  {/* DPL Case No */}
-                  <div>
-                    <label className="text-[11px] text-gray-400 mb-1 block">DPL Case No:</label>
-                    <div className="relative">
-                      <Search size={14} className="absolute left-3 top-2.5 text-gray-500" />
-                      <input
-                        type="text"
-                        placeholder="e.g. DPL-26-000004"
-                        value={searchCaseNo}
-                        onChange={(e) => setSearchCaseNo(e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Status Filter */}
-                  <div>
-                    <label className="text-[11px] text-gray-400 mb-1 block">Status Filter:</label>
-                    <select
-                      value={filterStatus}
-                      onChange={(e) => setFilterStatus(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
-                    >
-                      <option value="ALL">All Statuses</option>
-                      {Object.values(CaseStatus).map((st) => (
-                        <option key={st} value={st}>{st}</option>
-                      ))}
-                    </select>
-                  </div>
+              {filteredPendingCases.length === 0 ? (
+                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-6 text-center text-gray-400">
+                  <CheckCircle2 size={36} className="mx-auto text-emerald-500 mb-2 opacity-80" />
+                  <p className="text-sm font-semibold text-white">No Pending Cases</p>
+                  <p className="text-xs text-gray-500">All your active consignments have completed their journey.</p>
                 </div>
-
-                {/* Second Filter Row: Dates & Stations */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-white/5">
-                  <div>
-                    <label className="text-[11px] text-gray-400 mb-1 block">Date From:</label>
-                    <input
-                      type="date"
-                      value={filterStartDate}
-                      onChange={(e) => setFilterStartDate(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-gray-400 mb-1 block">Date To:</label>
-                    <input
-                      type="date"
-                      value={filterEndDate}
-                      onChange={(e) => setFilterEndDate(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-gray-400 mb-1 block">Route / Station:</label>
-                    <select
-                      value={filterStation}
-                      onChange={(e) => setFilterStation(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-500"
-                    >
-                      <option value="ALL">All Routes</option>
-                      {availableRoutes.map((r) => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {(searchContainerNo || searchBlNo || searchCaseNo || filterStartDate || filterEndDate || filterStatus !== 'ALL' || filterStation !== 'ALL') && (
-                  <div className="flex justify-end pt-1">
-                    <button
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredPendingCases.map((c) => (
+                    <div 
+                      key={c.id}
                       onClick={() => {
-                        setSearchContainerNo('');
-                        setSearchBlNo('');
-                        setSearchCaseNo('');
-                        setFilterStartDate('');
-                        setFilterEndDate('');
-                        setFilterStatus('ALL');
-                        setFilterStation('ALL');
+                        setSelectedCase(c);
+                        setShowCaseManagerViewModal(true);
                       }}
-                      className="text-xs text-brand-400 hover:text-brand-300 underline"
+                      className="bg-slate-900 border border-white/10 hover:border-amber-500/50 rounded-2xl p-5 space-y-3.5 cursor-pointer transition-all hover:shadow-xl group"
                     >
-                      Clear All Filters
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Cases Records - Mobile Compact & Desktop Table */}
-              <div className="rounded-xl border border-white/10 overflow-hidden">
-                {/* Mobile View: High Density, Compact, Zero Horizontal Scroll */}
-                <div className="block sm:hidden divide-y divide-white/10 touch-pan-y bg-slate-900/40">
-                  {filteredCases.map((c) => (
-                    <div key={c.id} className="p-3 hover:bg-white/5 space-y-1.5" onClick={() => setSelectedCase(c)}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono font-bold text-xs text-white">{c.caseNo}</span>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${
-                          c.status === CaseStatus.COMPLETED ? 'bg-green-500/20 text-green-300 border-green-500/30' :
-                          c.status === CaseStatus.IN_TRANSIT ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' :
-                          'bg-blue-500/20 text-blue-300 border-blue-500/30'
-                        }`}>
+                      <div className="flex justify-between items-start border-b border-white/10 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-base text-white group-hover:text-amber-300 transition-colors">
+                              {c.caseNo}
+                            </span>
+                            <span className="bg-brand-500/20 text-brand-300 text-[10px] px-2 py-0.5 rounded font-semibold">
+                              {c.category}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            B/L: <span className="font-mono text-gray-200">{c.extractedData?.blNumber || 'N/A'}</span> &bull; {c.extractedData?.itemName || 'General Cargo'}
+                          </p>
+                        </div>
+                        <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[11px] px-2.5 py-0.5 rounded-full font-medium">
                           {c.status}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between text-[11px] text-gray-300">
-                        <span className="bg-brand-500/15 text-brand-300 px-1.5 py-0.5 rounded border border-brand-500/20 text-[10px]">
-                          {c.category}
-                        </span>
-                        <span className="text-gray-400 text-[10px]">{c.createdAt}</span>
+
+                      {/* Route */}
+                      <div className="bg-white/5 rounded-xl p-2.5 flex items-center justify-between text-xs text-gray-300">
+                        <div className="flex items-center gap-1.5">
+                          <Anchor size={13} className="text-amber-400" />
+                          <span>{c.pol}</span>
+                        </div>
+                        <ArrowRight size={13} className="text-gray-500" />
+                        <div className="flex items-center gap-1.5">
+                          <MapPin size={13} className="text-emerald-400" />
+                          <span>{c.pod}</span>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-gray-300 font-mono">
-                        {c.pol} → <span className="text-brand-300">{c.pod}</span>
-                      </div>
-                      <div className="flex items-center justify-between pt-1 border-t border-white/5">
-                        <span className="text-[10px] text-gray-400">
-                          {c.containers.length} container(s)
+
+                      {/* Containers Preview */}
+                      <div className="text-xs text-gray-400 flex justify-between items-center pt-1">
+                        <span>Containers: <strong className="text-white font-mono">{c.containers?.length || 1}</strong></span>
+                        <span className="text-amber-400 font-semibold flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                          Open Full Details <ChevronRight size={14} />
                         </span>
-                        <button
-                          onClick={() => setSelectedCase(c)}
-                          className="bg-brand-600/20 hover:bg-brand-600/40 text-brand-300 border border-brand-500/30 px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1"
-                        >
-                          <Eye size={11} /> View
-                        </button>
                       </div>
                     </div>
                   ))}
-                  {filteredCases.length === 0 && (
-                    <div className="p-6 text-center text-gray-400 text-xs italic">
-                      No cases found matching your search filter criteria.
-                    </div>
-                  )}
                 </div>
-
-                {/* Desktop View */}
-                <div className="hidden sm:block overflow-x-auto touch-pan-y">
-                  <table className="w-full text-left text-xs text-gray-200">
-                    <thead className="bg-slate-950 uppercase font-semibold text-gray-400 border-b border-white/10">
-                      <tr>
-                        <th className="p-3.5">Case No</th>
-                        <th className="p-3.5">Category</th>
-                        <th className="p-3.5">B/L No</th>
-                        <th className="p-3.5">Containers</th>
-                        <th className="p-3.5">Route (POL &rarr; POD)</th>
-                        <th className="p-3.5">Date</th>
-                        <th className="p-3.5">Status</th>
-                        <th className="p-3.5 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5 bg-slate-900/40">
-                      {filteredCases.map((c) => (
-                        <tr key={c.id} className="hover:bg-white/5 transition-colors">
-                          <td className="p-3.5 font-mono font-bold text-white">{c.caseNo}</td>
-                          <td className="p-3.5">
-                            <span className="bg-brand-500/15 text-brand-300 px-2 py-0.5 rounded border border-brand-500/20">
-                              {c.category}
-                            </span>
-                          </td>
-                          <td className="p-3.5 font-mono text-gray-300">{c.extractedData?.blNumber || 'N/A'}</td>
-                          <td className="p-3.5">
-                            <div className="space-y-1">
-                              {c.containers.map(cnt => (
-                                <div key={cnt.id} className="font-mono text-[11px] text-gray-300">
-                                  {cnt.number} ({cnt.size})
-                                </div>
-                              ))}
-                              {c.containers.length === 0 && <span className="text-gray-500 italic">No container</span>}
-                            </div>
-                          </td>
-                          <td className="p-3.5">
-                            <div className="text-[11px] text-gray-300">
-                              <span>{c.pol}</span>
-                              <span className="text-gray-500 mx-1">→</span>
-                              <span className="text-brand-300 font-medium">{c.pod}</span>
-                            </div>
-                          </td>
-                          <td className="p-3.5 text-gray-400">{c.createdAt}</td>
-                          <td className="p-3.5">
-                            <span className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${
-                              c.status === CaseStatus.COMPLETED ? 'bg-green-500/20 text-green-300 border-green-500/30' :
-                              c.status === CaseStatus.IN_TRANSIT ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' :
-                              'bg-blue-500/20 text-blue-300 border-blue-500/30'
-                            }`}>
-                              {c.status}
-                            </span>
-                          </td>
-                          <td className="p-3.5 text-right">
-                            <button
-                              onClick={() => setSelectedCase(c)}
-                              className="bg-brand-600/20 hover:bg-brand-600/40 text-brand-300 border border-brand-500/30 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 ml-auto transition"
-                            >
-                              <Eye size={14} /> View
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {filteredCases.length === 0 && (
-                        <tr>
-                          <td colSpan={8} className="p-8 text-center text-gray-400 italic">
-                            No cases found matching your search filter criteria.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
+              )}
             </div>
-          )}
 
-          {/* View 3: Client New Case Registration Form */}
-          {casesSubView === 'register' && (
-            <div className="glass-card rounded-2xl p-6 border border-white/10 max-w-4xl mx-auto space-y-6">
-              <div className="flex justify-between items-center border-b border-white/10 pb-4">
-                <div>
-                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Plus className="text-brand-400" size={22} />
-                    Register New Case
-                  </h2>
-                  <p className="text-gray-400 text-xs mt-0.5">
-                    Enter your container and cargo details for customs clearance and transit approval
-                  </p>
-                </div>
-                <button
-                  onClick={() => setCasesSubView('overview')}
-                  className="text-gray-400 hover:text-white text-xs px-3 py-1.5 rounded bg-white/5 border border-white/10"
-                >
-                  Cancel
-                </button>
+            {/* SECTION 2: COMPLETE CASES */}
+            <div className="space-y-3 pt-4 border-t border-white/10">
+              <div className="flex justify-between items-center">
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <CheckCircle2 className="text-emerald-400" size={18} />
+                  <span>Complete / Delivered Cases</span>
+                  <span className="bg-emerald-500/20 text-emerald-300 text-xs px-2 py-0.5 rounded-full border border-emerald-500/30 font-semibold font-mono">
+                    {filteredCompleteCases.length}
+                  </span>
+                </h3>
               </div>
 
-              <form onSubmit={handleRegisterCaseSubmit} className="space-y-6">
-                
-                {/* 1. Category & Ports */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="text-xs text-gray-300 mb-1 block font-medium">Category:</label>
-                    <select
-                      value={newCaseCategory}
-                      onChange={(e) => setNewCaseCategory(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    >
-                      <option value="Import & Export Services">Import & Export Services</option>
-                      <option value="Afghan Transit">Afghan Transit</option>
-                      <option value="Bonded Carrier">Bonded Carrier</option>
-                      <option value="Customs Clearance">Customs Clearance</option>
-                      <option value="TIR">TIR</option>
-                      <option value="Transportation of Private Cargo">Transportation of Private Cargo</option>
-                      <option value="Warehousing & Distribution">Warehousing & Distribution</option>
-                      <option value="Car Carrier">Car Carrier</option>
-                      <option value="ISO Tank Service">ISO Tank Service</option>
-                      <option value="Liner & NVOCC">Liner & NVOCC</option>
-                      <option value="Breakbulk / Chartering Services">Breakbulk / Chartering Services</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-gray-300 mb-1 block font-medium">Port of Loading (POL):</label>
-                    <select
-                      value={newCasePol}
-                      onChange={(e) => setNewCasePol(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    >
-                      <option value="Karachi Port Trust">Karachi Port Trust (KPT)</option>
-                      <option value="Port Qasim">Port Qasim (QICT)</option>
-                      <option value="South Asia Pakistan Terminals">SAPT</option>
-                      <option value="Gwadar Port">Gwadar Port</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-gray-300 mb-1 block font-medium">Port of Discharge (POD):</label>
-                    <select
-                      value={newCasePod}
-                      onChange={(e) => setNewCasePod(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:border-brand-500 outline-none"
-                    >
-                      <option value="Chaman Border Terminal">Chaman Border Terminal</option>
-                      <option value="Taftan Border Terminal">Taftan Border Terminal</option>
-                      <option value="Torkham Border Terminal">Torkham Border Terminal</option>
-                      <option value="Lahore Dry Port">Lahore Dry Port</option>
-                      <option value="Lahore NLC Dry Port">Lahore NLC Dry Port</option>
-                      <option value="Quetta Railway Dry Port">Quetta Railway Dry Port</option>
-                      <option value="Peshawar Dry Port">Peshawar Dry Port</option>
-                      <option value="Islamabad Dry Port">Islamabad Dry Port</option>
-                    </select>
-                  </div>
+              {filteredCompleteCases.length === 0 ? (
+                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-6 text-center text-gray-400">
+                  <p className="text-xs text-gray-500">No completed cases in archive yet.</p>
                 </div>
-
-                {/* 2. Shipping Details */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white/5 p-4 rounded-xl border border-white/5">
-                  <div>
-                    <label className="text-xs text-gray-400 mb-1 block">B/L No:</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. MSK-112233"
-                      value={newCaseBl}
-                      onChange={(e) => setNewCaseBl(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-sm text-white font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 mb-1 block">Vessel Name:</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Maersk Sealand"
-                      value={newCaseVessel}
-                      onChange={(e) => setNewCaseVessel(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-sm text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 mb-1 block">Item Description:</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Solar Equipment"
-                      value={newCaseItem}
-                      onChange={(e) => setNewCaseItem(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-sm text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-400 mb-1 block">Total Weight (Kg):</label>
-                    <input
-                      type="number"
-                      placeholder="e.g. 28000"
-                      value={newCaseWeight}
-                      onChange={(e) => setNewCaseWeight(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-sm text-white font-mono"
-                    />
-                  </div>
-                </div>
-
-                {/* 3. Containers List */}
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <label className="text-sm font-semibold text-white">Containers Information:</label>
-                    <button
-                      type="button"
-                      onClick={() => setNewCaseContainers([...newCaseContainers, { number: '', size: '40ft', weight: 28000 }])}
-                      className="text-xs bg-brand-600/30 hover:bg-brand-600/50 text-brand-300 border border-brand-500/30 px-3 py-1 rounded-lg"
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredCompleteCases.map((c) => (
+                    <div 
+                      key={c.id}
+                      onClick={() => {
+                        setSelectedCase(c);
+                        setShowCaseManagerViewModal(true);
+                      }}
+                      className="bg-slate-900/80 border border-white/10 hover:border-emerald-500/50 rounded-2xl p-5 space-y-3.5 cursor-pointer transition-all hover:shadow-xl group"
                     >
-                      + Add Another Container
-                    </button>
-                  </div>
+                      <div className="flex justify-between items-start border-b border-white/10 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-base text-white group-hover:text-emerald-300 transition-colors">
+                              {c.caseNo}
+                            </span>
+                            <span className="bg-emerald-500/20 text-emerald-300 text-[10px] px-2 py-0.5 rounded font-semibold">
+                              Delivered
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            B/L: <span className="font-mono text-gray-200">{c.extractedData?.blNumber || 'N/A'}</span> &bull; {c.extractedData?.itemName || 'Delivered Cargo'}
+                          </p>
+                        </div>
+                        <span className="text-xs text-gray-400 font-mono">
+                          {c.createdAt}
+                        </span>
+                      </div>
 
-                  {newCaseContainers.map((cnt, idx) => (
-                    <div key={idx} className="flex flex-wrap sm:flex-nowrap gap-3 items-center bg-slate-950 p-3 rounded-lg border border-white/10">
-                      <div className="flex-1 min-w-[140px]">
-                        <input
-                          type="text"
-                          required
-                          placeholder="Container No (e.g. MSKU-998811)"
-                          value={cnt.number}
-                          onChange={(e) => {
-                            const updated = [...newCaseContainers];
-                            updated[idx].number = e.target.value;
-                            setNewCaseContainers(updated);
-                          }}
-                          className="w-full bg-slate-900 border border-white/10 rounded p-2 text-xs font-mono text-white"
-                        />
+                      <div className="bg-white/5 rounded-xl p-2.5 flex items-center justify-between text-xs text-gray-300">
+                        <span>{c.pol} &rarr; {c.pod}</span>
+                        <span className="font-mono text-emerald-400">{c.containers?.length || 1} Containers</span>
                       </div>
-                      <div className="w-28">
-                        <select
-                          value={cnt.size}
-                          onChange={(e) => {
-                            const updated = [...newCaseContainers];
-                            updated[idx].size = e.target.value as any;
-                            setNewCaseContainers(updated);
-                          }}
-                          className="w-full bg-slate-900 border border-white/10 rounded p-2 text-xs text-white"
-                        >
-                          <option value="20ft">20ft</option>
-                          <option value="40ft">40ft</option>
-                          <option value="45ft">45ft</option>
-                        </select>
+
+                      <div className="text-xs text-emerald-400 font-semibold flex justify-end items-center gap-1 group-hover:translate-x-1 transition-transform">
+                        <span>View Archive & Documents</span>
+                        <ChevronRight size={14} />
                       </div>
-                      <div className="w-32">
-                        <input
-                          type="number"
-                          placeholder="Weight (Kg)"
-                          value={cnt.weight}
-                          onChange={(e) => {
-                            const updated = [...newCaseContainers];
-                            updated[idx].weight = parseFloat(e.target.value) || 0;
-                            setNewCaseContainers(updated);
-                          }}
-                          className="w-full bg-slate-900 border border-white/10 rounded p-2 text-xs font-mono text-white"
-                        />
-                      </div>
-                      {newCaseContainers.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => setNewCaseContainers(newCaseContainers.filter((_, i) => i !== idx))}
-                          className="text-red-400 p-2 hover:bg-red-500/20 rounded"
-                        >
-                          <X size={16} />
-                        </button>
-                      )}
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
 
-                {/* 4. Estimated Default Rate Note */}
-                <div className="p-3 bg-brand-500/10 border border-brand-500/20 rounded-xl text-xs flex items-center justify-between">
-                  <div className="text-gray-300">
-                    <span>Default Route Charges ({newCasePol} → {newCasePod}):</span>
-                    <span className="font-bold text-brand-300 ml-2 font-mono">
-                      PKR {getRouteRate(newCasePol, newCasePod).toLocaleString()} / Container
+          </div>
+        )}
+
+        {/* ======================================================================= */}
+        {/* PAGE 2: CHECK CASE STATUS (WORKFLOW ONLY POPUP) */}
+        {/* ======================================================================= */}
+        {activeTab === 'case_status' && (
+          <div className="space-y-6 animate-fade-in">
+            
+            {/* Top Search Bar */}
+            <div className="bg-slate-900 p-5 rounded-2xl border border-white/10 space-y-3">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Clock className="text-amber-400" size={22} />
+                  <span>Live Case Workflow & Stage Progress</span>
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Click on any pending case below to view its visual 8-step workflow pipeline with completion ticks and client required actions
+                </p>
+              </div>
+
+              {/* Client Action Alert Banner */}
+              {clientActionNeededCount > 0 && (
+                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between text-xs text-amber-300">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="text-amber-400 shrink-0" />
+                    <span>
+                      <strong>Action Required:</strong> You have {clientActionNeededCount} case(s) with pending actions managed by client. Please check and complete.
                     </span>
                   </div>
-                  <span className="text-[11px] text-gray-400">Invoice generated automatically on arrival</span>
-                </div>
-
-                {/* Submit Action */}
-                <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
-                  <button
-                    type="button"
-                    onClick={() => setCasesSubView('overview')}
-                    className="px-5 py-2.5 text-gray-400 hover:text-white text-sm"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="bg-brand-600 hover:bg-brand-500 text-white px-8 py-2.5 rounded-lg font-medium text-sm shadow-lg shadow-brand-600/30 transition-all hover:scale-105"
-                  >
-                    Submit Case for Admin Approval
-                  </button>
-                </div>
-
-              </form>
-            </div>
-          )}
-
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* 2. FINANCE VIEW */}
-      {/* ========================================================================= */}
-      {activeTab === 'finance' && (
-        <div className="space-y-6">
-
-          {/* Top 3 Action Buttons requested by user */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            
-            {/* 1. View Ledger Button */}
-            <button
-              onClick={() => setShowLedgerModal(true)}
-              className="glass-card p-5 rounded-2xl border border-brand-500/30 hover:border-brand-400 bg-gradient-to-br from-slate-900 to-brand-950/40 text-left transition-all hover:scale-[1.02] shadow-lg group"
-            >
-              <div className="w-12 h-12 rounded-xl bg-brand-600/20 text-brand-400 flex items-center justify-center mb-3 group-hover:bg-brand-600 group-hover:text-white transition-colors">
-                <FileText size={24} />
-              </div>
-              <h3 className="text-lg font-bold text-white flex items-center justify-between">
-                <span>View Ledger</span>
-                <ChevronRight size={18} className="text-brand-400 group-hover:translate-x-1 transition-transform" />
-              </h3>
-              <p className="text-gray-400 text-xs mt-1">
-                Check station-wise and date-wise complete account statement
-              </p>
-            </button>
-
-            {/* 2. Add Payment Button */}
-            <button
-              onClick={() => setShowAddPaymentModal(true)}
-              className="glass-card p-5 rounded-2xl border border-emerald-500/30 hover:border-emerald-400 bg-gradient-to-br from-slate-900 to-emerald-950/40 text-left transition-all hover:scale-[1.02] shadow-lg group"
-            >
-              <div className="w-12 h-12 rounded-xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center mb-3 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                <CreditCard size={24} />
-              </div>
-              <h3 className="text-lg font-bold text-white flex items-center justify-between">
-                <span>Add Payment</span>
-                <ChevronRight size={18} className="text-emerald-400 group-hover:translate-x-1 transition-transform" />
-              </h3>
-              <p className="text-gray-400 text-xs mt-1">
-                Upload bank transfer screenshot or bank deposit slip
-              </p>
-            </button>
-
-            {/* 3. View Invoices Button */}
-            <button
-              onClick={() => setShowInvoicesModal(true)}
-              className="glass-card p-5 rounded-2xl border border-blue-500/30 hover:border-blue-400 bg-gradient-to-br from-slate-900 to-blue-950/40 text-left transition-all hover:scale-[1.02] shadow-lg group"
-            >
-              <div className="w-12 h-12 rounded-xl bg-blue-600/20 text-blue-400 flex items-center justify-center mb-3 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                <FileCheck size={24} />
-              </div>
-              <h3 className="text-lg font-bold text-white flex items-center justify-between">
-                <span>View Invoices</span>
-                <ChevronRight size={18} className="text-blue-400 group-hover:translate-x-1 transition-transform" />
-              </h3>
-              <p className="text-gray-400 text-xs mt-1">
-                View and print container-wise auto-generated bills and invoices
-              </p>
-            </button>
-
-          </div>
-
-          {/* Financial Summary & Overview Analytics Section */}
-          <div className="glass-card p-6 rounded-2xl border border-white/10 space-y-4">
-            <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <DollarSign className="text-emerald-400" size={20} />
-                Current Account Overview
-              </h2>
-              <p className="text-gray-400 text-xs mt-0.5">
-                Real-time financial summary of billed charges, payments, outstanding balance, and monthly container volumes
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-              
-              {/* Card 1: Total Billed */}
-              <div className="bg-slate-950/70 p-4 rounded-xl border border-white/5 space-y-1">
-                <p className="text-xs text-gray-400">Total Billed Amount:</p>
-                <p className="text-xl font-mono font-bold text-white">
-                  PKR {totalBilled.toLocaleString()}
-                </p>
-                <span className="text-[10px] text-gray-500">Based on all active and completed cases</span>
-              </div>
-
-              {/* Card 2: Total Paid */}
-              <div className="bg-slate-950/70 p-4 rounded-xl border border-emerald-500/20 space-y-1">
-                <p className="text-xs text-emerald-400 font-medium">Total Paid:</p>
-                <p className="text-xl font-mono font-bold text-emerald-400">
-                  PKR {totalPaid.toLocaleString()}
-                </p>
-                <span className="text-[10px] text-emerald-500/80">Bank verified payments</span>
-              </div>
-
-              {/* Card 3: Remaining Balance */}
-              <div className="bg-slate-950/70 p-4 rounded-xl border border-amber-500/30 space-y-1">
-                <p className="text-xs text-amber-400 font-medium">Outstanding Balance:</p>
-                <p className="text-xl font-mono font-bold text-amber-400">
-                  PKR {remainingBalance.toLocaleString()}
-                </p>
-                <span className="text-[10px] text-amber-500/80">Payable amount</span>
-              </div>
-
-              {/* Card 4: This Month Containers */}
-              <div className="bg-slate-950/70 p-4 rounded-xl border border-blue-500/20 space-y-1">
-                <p className="text-xs text-blue-400 font-medium">Containers This Month:</p>
-                <p className="text-xl font-mono font-bold text-white">
-                  {thisMonthContainers} <span className="text-xs font-normal text-gray-400">Containers</span>
-                </p>
-                <span className="text-[10px] text-blue-400">Dispatched in current month</span>
-              </div>
-
-              {/* Card 5: Previous Month Containers */}
-              <div className="bg-slate-950/70 p-4 rounded-xl border border-white/5 space-y-1">
-                <p className="text-xs text-gray-400">Containers Last Month:</p>
-                <p className="text-xl font-mono font-bold text-gray-300">
-                  {previousMonthContainers} <span className="text-xs font-normal text-gray-400">Containers</span>
-                </p>
-                <span className="text-[10px] text-gray-500">Previous month volume</span>
-              </div>
-
-            </div>
-
-            {/* Pending Payments Alert */}
-            {pendingPaymentsTotal > 0 && (
-              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2 text-amber-300">
-                  <Clock size={16} className="animate-spin" />
-                  <span>
-                    Your payment of <strong>PKR {pendingPaymentsTotal.toLocaleString()}</strong> is currently pending verification by the finance team.
+                  <span className="text-[10px] uppercase font-bold bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30">
+                    Client Action Pending
                   </span>
                 </div>
-                <span className="text-[11px] text-amber-400/80">Verification in Progress</span>
+              )}
+
+              {/* Status Search Input */}
+              <div className="relative">
+                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search case status by Case No, B/L No, Route..."
+                  value={statusSearchQuery}
+                  onChange={(e) => setStatusSearchQuery(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-amber-500"
+                />
               </div>
-            )}
+            </div>
 
-          </div>
-
-          {/* Recent Payments Stream */}
-          <div className="glass-card p-6 rounded-2xl border border-white/10 space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="font-bold text-white text-base flex items-center gap-2">
-                <CreditCard size={18} className="text-brand-400" />
-                Recent Payments & Deposit Proofs
+            {/* Pending Cases Status List */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+                Pending Shipments ({filteredStatusPendingCases.length}):
               </h3>
-              <button
-                onClick={() => setShowAddPaymentModal(true)}
-                className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-1 font-medium transition"
-              >
-                <Plus size={14} /> + New Payment
-              </button>
-            </div>
 
-            <div className="overflow-x-auto rounded-xl border border-white/10">
-              <table className="w-full text-left text-xs text-gray-200">
-                <thead className="bg-slate-950 uppercase font-semibold text-gray-400 border-b border-white/10">
-                  <tr>
-                    <th className="p-3.5">Date</th>
-                    <th className="p-3.5">Method</th>
-                    <th className="p-3.5">Bank</th>
-                    <th className="p-3.5">TxID / Slip Reference</th>
-                    <th className="p-3.5">Amount (PKR)</th>
-                    <th className="p-3.5">Status</th>
-                    <th className="p-3.5 text-right">Proof Slip</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5 bg-slate-900/40">
-                  {paymentsList.map((p) => (
-                    <tr key={p.id} className="hover:bg-white/5 transition-colors">
-                      <td className="p-3.5 text-gray-300 font-mono">{p.date}</td>
-                      <td className="p-3.5">
-                        <span className="bg-white/5 px-2 py-0.5 rounded text-gray-300">
-                          {p.paymentMethod.replace('_', ' ')}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredStatusPendingCases.map((c) => {
+                  const isClientAction = c.status === CaseStatus.SHIPPING_LINE_DO || c.status === CaseStatus.TP_FILING;
+                  return (
+                    <div
+                      key={c.id}
+                      onClick={() => setSelectedWorkflowCase(c)}
+                      className="bg-slate-900 border border-white/10 hover:border-amber-500/50 rounded-2xl p-5 space-y-3 cursor-pointer transition-all hover:shadow-xl group"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-base text-white group-hover:text-amber-300 transition-colors">
+                              {c.caseNo}
+                            </span>
+                            <span className="bg-brand-500/20 text-brand-300 text-[10px] px-2 py-0.5 rounded font-semibold">
+                              {c.category}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            Route: {c.pol} &rarr; {c.pod} &bull; B/L: {c.extractedData?.blNumber || 'N/A'}
+                          </p>
+                        </div>
+                        <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs px-2.5 py-0.5 rounded-full font-medium">
+                          {c.status}
                         </span>
-                      </td>
-                      <td className="p-3.5 text-white font-medium">{p.bankName}</td>
-                      <td className="p-3.5 font-mono text-brand-300">{p.referenceNo}</td>
-                      <td className="p-3.5 font-mono font-bold text-emerald-400 text-sm">
-                        PKR {p.amount.toLocaleString()}
-                      </td>
-                      <td className="p-3.5">
-                        <span className={`px-2.5 py-1 rounded-full text-[11px] font-medium border ${
-                          p.status === 'CONFIRMED' 
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
-                            : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                        }`}>
-                          {p.status === 'CONFIRMED' ? 'Confirmed' : 'Pending Verification'}
+                      </div>
+
+                      {/* Managed by Client Badge */}
+                      {isClientAction && (
+                        <div className="bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-xl flex items-center gap-2 text-xs text-amber-300">
+                          <AlertCircle size={14} className="text-amber-400 shrink-0" />
+                          <span className="font-medium">
+                            ⚠️ MANAGED BY CLIENT: Document / Clearance action required by client
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="pt-2 border-t border-white/10 flex justify-between items-center text-xs">
+                        <span className="text-gray-400">Containers: {c.containers?.length || 1}</span>
+                        <span className="text-amber-400 font-semibold flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                          <span>View Workflow Pipeline</span>
+                          <ChevronRight size={14} />
                         </span>
-                      </td>
-                      <td className="p-3.5 text-right">
-                        {p.slipUrl ? (
-                          <button
-                            onClick={() => setLightboxImage(p.slipUrl!)}
-                            className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 ml-auto underline"
-                          >
-                            <Eye size={14} /> View Slip
-                          </button>
-                        ) : (
-                          <span className="text-gray-500 italic">No slip</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
           </div>
+        )}
 
-        </div>
-      )}
-      </div>
-
-      {/* ========================================================================= */}
-      {/* MODAL 1: VIEW LEDGER MODAL WITH STATION & DATE FILTERS */}
-      {/* ========================================================================= */}
-      {showLedgerModal && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm overflow-y-auto" data-printable-modal="true">
-          <div className="bg-slate-900 rounded-2xl max-w-4xl w-full border border-white/10 shadow-2xl overflow-hidden my-8 print-sheet">
+        {/* ======================================================================= */}
+        {/* PAGE 3: FINANCE VIEW (DOWNLOAD BUTTONS + PAID MODAL + 3 COUNTERS + PASSBOOK) */}
+        {/* ======================================================================= */}
+        {activeTab === 'finance' && (
+          <div className="space-y-6 animate-fade-in">
             
-            {/* Modal Header */}
-            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-950">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-brand-600/20 text-brand-400 no-print">
-                  <FileText size={22} />
+            {/* Top Download Buttons & Paid Button (Requested by User) */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-900 p-5 rounded-2xl border border-white/10">
+              
+              {/* 1. Download Ledger */}
+              <button
+                type="button"
+                onClick={() => setShowLedgerModal(true)}
+                className="bg-brand-600/20 hover:bg-brand-600/30 text-brand-300 border border-brand-500/30 p-3.5 rounded-xl flex items-center gap-3 transition shadow-sm"
+              >
+                <div className="w-9 h-9 rounded-lg bg-brand-600/20 text-brand-400 flex items-center justify-center shrink-0">
+                  <FileText size={18} />
                 </div>
+                <div className="text-left min-w-0">
+                  <h4 className="text-xs font-bold text-white truncate">Download Ledger</h4>
+                  <p className="text-[10px] text-gray-400 truncate">Account Statement PDF</p>
+                </div>
+              </button>
+
+              {/* 2. Download Invoice */}
+              <button
+                type="button"
+                onClick={() => setShowInvoicesModal(true)}
+                className="bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 p-3.5 rounded-xl flex items-center gap-3 transition shadow-sm"
+              >
+                <div className="w-9 h-9 rounded-lg bg-amber-600/20 text-amber-400 flex items-center justify-center shrink-0">
+                  <Receipt size={18} />
+                </div>
+                <div className="text-left min-w-0">
+                  <h4 className="text-xs font-bold text-white truncate">Download Invoice</h4>
+                  <p className="text-[10px] text-gray-400 truncate">Case & Container Bills</p>
+                </div>
+              </button>
+
+              {/* 3. Download Loading Bill */}
+              <button
+                type="button"
+                onClick={() => setShowLoadingBillsModal(true)}
+                className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 p-3.5 rounded-xl flex items-center gap-3 transition shadow-sm"
+              >
+                <div className="w-9 h-9 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center shrink-0">
+                  <FileCheck size={18} />
+                </div>
+                <div className="text-left min-w-0">
+                  <h4 className="text-xs font-bold text-white truncate">Download Loading Bill</h4>
+                  <p className="text-[10px] text-gray-400 truncate">Port Staff Terminal Bills</p>
+                </div>
+              </button>
+
+              {/* 4. Prominent Paid Button */}
+              <button
+                type="button"
+                onClick={() => setShowPaidPaymentModal(true)}
+                className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white p-3.5 rounded-xl flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-600/30 font-bold text-xs transition active:scale-95"
+              >
+                <CreditCard size={18} />
+                <span>+ Make Payment (Paid)</span>
+              </button>
+
+            </div>
+
+            {/* =================================================================== */}
+            {/* TOP 3 COUNTERS REQUESTED BY USER */}
+            {/* 1. Payable to DPL | 2. Payable to Loading | 3. Payable to Vehicle Rent */}
+            {/* =================================================================== */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              
+              {/* Counter 1: Payable to DPL */}
+              <div className="bg-slate-900 border border-amber-500/30 p-5 rounded-2xl space-y-1 shadow-lg">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-semibold text-amber-400">Payable to DPL</span>
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/30 font-medium">
+                    Company Balance
+                  </span>
+                </div>
+                <p className="text-2xl font-mono font-bold text-white">
+                  PKR {payableToDpl.toLocaleString()}
+                </p>
+                <span className="text-[11px] text-gray-400 block">
+                  Remaining balance due to DPL company (0 if nil)
+                </span>
+              </div>
+
+              {/* Counter 2: Payable to Loading */}
+              <div className="bg-slate-900 border border-blue-500/30 p-5 rounded-2xl space-y-1 shadow-lg">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-semibold text-blue-400">Payable to Loading</span>
+                  <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30 font-medium">
+                    Port Handling
+                  </span>
+                </div>
+                <p className="text-2xl font-mono font-bold text-white">
+                  PKR {payableToLoading.toLocaleString()}
+                </p>
+                <span className="text-[11px] text-gray-400 block">
+                  Port loading fees pending to loading staff (0 if nil)
+                </span>
+              </div>
+
+              {/* Counter 3: Payable to Vehicle Rent */}
+              <div className="bg-slate-900 border border-emerald-500/30 p-5 rounded-2xl space-y-1 shadow-lg">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-semibold text-emerald-400">Payable to Vehicle Rent</span>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30 font-medium">
+                    Transporter Freight
+                  </span>
+                </div>
+                <p className="text-2xl font-mono font-bold text-white">
+                  PKR {payableToVehicleRent.toLocaleString()}
+                </p>
+                <span className="text-[11px] text-gray-400 block">
+                  Vehicle rent pending to transporters (0 if nil)
+                </span>
+              </div>
+
+            </div>
+
+            {/* Passbook / Recent Transactions Stream Requested by User */}
+            <div className="bg-slate-900 border border-white/10 rounded-2xl p-5 sm:p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-white/10 pb-4">
                 <div>
-                  <h3 className="text-lg font-bold text-white print:text-black">Client Account Ledger</h3>
-                  <p className="text-gray-400 print:text-gray-600 text-xs">{selectedClientName} • {companyName} Financial Statement</p>
+                  <h3 className="font-bold text-white text-base flex items-center gap-2">
+                    <Receipt size={18} className="text-amber-400" />
+                    <span>Recent Transactions & Financial Passbook</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    History of payments made, generated invoices, loading bills, and vehicle rent
+                  </p>
                 </div>
+
+                {/* Passbook Sub-Filter Tabs */}
+                <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-white/10 text-xs">
+                  <button
+                    onClick={() => setPassbookFilter('ALL')}
+                    className={`px-3 py-1 rounded-lg transition ${passbookFilter === 'ALL' ? 'bg-amber-600 text-white font-bold' : 'text-gray-400 hover:text-white'}`}
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => setPassbookFilter('PAYMENTS')}
+                    className={`px-3 py-1 rounded-lg transition ${passbookFilter === 'PAYMENTS' ? 'bg-amber-600 text-white font-bold' : 'text-gray-400 hover:text-white'}`}
+                  >
+                    Payments
+                  </button>
+                  <button
+                    onClick={() => setPassbookFilter('INVOICES')}
+                    className={`px-3 py-1 rounded-lg transition ${passbookFilter === 'INVOICES' ? 'bg-amber-600 text-white font-bold' : 'text-gray-400 hover:text-white'}`}
+                  >
+                    Invoices
+                  </button>
+                  <button
+                    onClick={() => setPassbookFilter('LOADING_BILLS')}
+                    className={`px-3 py-1 rounded-lg transition ${passbookFilter === 'LOADING_BILLS' ? 'bg-amber-600 text-white font-bold' : 'text-gray-400 hover:text-white'}`}
+                  >
+                    Loading Bills
+                  </button>
+                  <button
+                    onClick={() => setPassbookFilter('VEHICLE_RENT')}
+                    className={`px-3 py-1 rounded-lg transition ${passbookFilter === 'VEHICLE_RENT' ? 'bg-amber-600 text-white font-bold' : 'text-gray-400 hover:text-white'}`}
+                  >
+                    Vehicle Rent
+                  </button>
+                </div>
+              </div>
+
+              {/* Transactions Table */}
+              <div className="overflow-x-auto rounded-xl border border-white/10">
+                <table className="w-full text-left text-xs text-gray-200">
+                  <thead className="bg-slate-950 uppercase font-semibold text-gray-400 border-b border-white/10">
+                    <tr>
+                      <th className="p-3">Date</th>
+                      <th className="p-3">Type</th>
+                      <th className="p-3">Recipient / Party</th>
+                      <th className="p-3">Case / Container</th>
+                      <th className="p-3">Amount (PKR)</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 bg-slate-900/40">
+                    {passbookEntries.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-6 text-center text-gray-500">
+                          No transactions found for this filter.
+                        </td>
+                      </tr>
+                    ) : (
+                      passbookEntries.map((row) => (
+                        <tr key={row.id} className="hover:bg-white/5 transition">
+                          <td className="p-3 font-mono text-gray-300">{row.date}</td>
+                          <td className="p-3">
+                            <span className="font-semibold text-white">{row.typeName}</span>
+                          </td>
+                          <td className="p-3 text-amber-300">{row.recipient}</td>
+                          <td className="p-3 font-mono text-gray-300">
+                            {row.caseNo || '-'} {row.containerNo ? `(${row.containerNo})` : ''}
+                          </td>
+                          <td className="p-3 font-mono font-bold text-white text-sm">
+                            PKR {row.amount.toLocaleString()}
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                              row.status === 'CONFIRMED' || row.status === 'GENERATED'
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            }`}>
+                              {row.status === 'CONFIRMED' ? 'Confirmed / Settled' : row.status === 'PENDING' ? 'Pending Approval' : 'Generated'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            {row.slipUrl && (
+                              <button
+                                onClick={() => setLightboxImage(row.slipUrl!)}
+                                className="text-amber-400 hover:text-amber-300 underline inline-flex items-center gap-1 mr-2"
+                              >
+                                <Eye size={12} /> View Slip
+                              </button>
+                            )}
+                            {row.pdfAction && (
+                              <button
+                                onClick={row.pdfAction}
+                                className="bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 px-2 py-1 rounded text-[11px] inline-flex items-center gap-1"
+                              >
+                                <Download size={11} /> PDF
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* ======================================================================= */}
+        {/* PAGE 4: AVAILABLE & READY FLEET (TRANSPORTERS) */}
+        {/* ======================================================================= */}
+        {activeTab === 'available_vehicles' && (
+          <div className="animate-fade-in">
+            <AvailableVehiclesView userRole="CLIENT" />
+          </div>
+        )}
+
+      </main>
+
+      {/* ========================================================================= */}
+      {/* MODAL: SHORT WORKFLOW PIPELINE POPUP (FOR CHECK CASE STATUS) */}
+      {/* ========================================================================= */}
+      {selectedWorkflowCase && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-slate-900 rounded-3xl max-w-xl w-full border border-white/10 shadow-2xl p-6 mb-8 space-y-5 animate-fade-in">
+            
+            {/* Header */}
+            <div className="flex justify-between items-start border-b border-white/10 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xl font-bold text-white">{selectedWorkflowCase.caseNo}</span>
+                  <span className="bg-brand-500/20 text-brand-300 text-xs px-2.5 py-0.5 rounded font-semibold">
+                    {selectedWorkflowCase.category}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  Route: {selectedWorkflowCase.pol} &rarr; {selectedWorkflowCase.pod} &bull; B/L: {selectedWorkflowCase.extractedData?.blNumber || 'N/A'}
+                </p>
               </div>
               <button 
-                onClick={() => setShowLedgerModal(false)}
-                className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-white/10 no-print"
+                onClick={() => setSelectedWorkflowCase(null)}
+                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/10"
               >
                 <X size={20} />
               </button>
             </div>
 
-            {/* Official Print Header for Ledger (Only visible on paper) */}
-            <div className="hidden print:block p-4 border-b-2 border-black">
-              <div className="flex justify-between items-start">
-                <div>
-                  <Logo className="h-12 w-auto max-w-[200px] mb-2" />
-                  <h2 className="text-xl font-bold text-black uppercase">{companyName}</h2>
-                  <p className="text-xs text-gray-700">{subtitle || "Customs Clearance, Bonded Carrier & Freight Terminal Services"}</p>
-                  <p className="text-[11px] text-gray-600 mt-1">Client: {selectedClientName}</p>
-                </div>
-                <div className="text-right text-xs text-gray-700">
-                  <p className="font-semibold text-black">OFFICIAL CLIENT LEDGER</p>
-                  <p>Station: {ledgerStationFilter === 'ALL' ? 'All Stations' : ledgerStationFilter}</p>
-                  <p>Period: {ledgerRangeType === 'CUSTOM' ? `${ledgerStartDate || 'Start'} to ${ledgerEndDate || 'End'}` : ledgerRangeType.replace('_', ' ')}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Ledger Filters as Requested */}
-            <div className="p-5 bg-slate-950/60 border-b border-white/10 space-y-4 no-print">
-              <p className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
-                Select Date Range & Station:
+            {/* 8-Step Streamlined Workflow Pipeline */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                Consignment Workflow Stages:
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
-                {/* 1. Date Range Selector */}
-                <div>
-                  <label className="text-xs text-gray-400 mb-1.5 block">Timeframe:</label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setLedgerRangeType('CURRENT_MONTH')}
-                      className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-medium border transition ${
-                        ledgerRangeType === 'CURRENT_MONTH'
-                          ? 'bg-brand-600 text-white border-brand-500'
-                          : 'bg-slate-900 text-gray-300 border-white/10 hover:bg-white/5'
-                      }`}
-                    >
-                      Current Month
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setLedgerRangeType('CUSTOM')}
-                      className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-medium border transition ${
-                        ledgerRangeType === 'CUSTOM'
-                          ? 'bg-brand-600 text-white border-brand-500'
-                          : 'bg-slate-900 text-gray-300 border-white/10 hover:bg-white/5'
-                      }`}
-                    >
-                      Custom Date Range
-                    </button>
+              {(() => {
+                const stages = [
+                  { id: '1', title: 'Case Registration & B/L Upload', isClientAction: false },
+                  { id: '2', title: 'Shipping Line Delivery Order (DO) & Terminal Fee Settlement', isClientAction: true, clientInstruction: 'Please complete this action: Ensure shipping line clearance & settlement.' },
+                  { id: '3', title: 'Goods Declaration (GD) Filing & Customs Clearance', isClientAction: false },
+                  { id: '4', title: 'Port Terminal Handling & Container Loading', isClientAction: false },
+                  { id: '5', title: 'Transporter Allocation & Gate-Out Clearance', isClientAction: false },
+                  { id: '6', title: 'In-Transit Transport & Route Dispatch', isClientAction: false },
+                  { id: '7', title: 'Destination Dry Port Arrival & Offloading', isClientAction: false },
+                  { id: '8', title: 'Final Customs Release & Consignment Delivery', isClientAction: false }
+                ];
+
+                // Determine active step index based on case status
+                let activeIdx = 2;
+                if (selectedWorkflowCase.status === CaseStatus.COMPLETED) activeIdx = 8;
+                else if (selectedWorkflowCase.status === CaseStatus.IN_TRANSIT) activeIdx = 6;
+                else if (selectedWorkflowCase.status === CaseStatus.LOADING_PORT_PROCESSING) activeIdx = 4;
+                else if (selectedWorkflowCase.status === CaseStatus.SHIPPING_LINE_DO) activeIdx = 2;
+
+                return (
+                  <div className="space-y-2.5">
+                    {stages.map((st, sIdx) => {
+                      const isComplete = sIdx < activeIdx;
+                      const isCurrent = sIdx === activeIdx - 1;
+                      const isPending = sIdx >= activeIdx;
+
+                      return (
+                        <div 
+                          key={st.id} 
+                          className={`p-3 rounded-xl border transition-all ${
+                            isComplete 
+                              ? 'bg-emerald-500/10 border-emerald-500/30' 
+                              : isCurrent 
+                                ? 'bg-amber-500/15 border-amber-500/50 shadow-md' 
+                                : 'bg-slate-950 border-white/5 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                              {isComplete ? (
+                                <div className="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center font-bold">
+                                  <Check size={14} />
+                                </div>
+                              ) : isCurrent ? (
+                                <div className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center font-bold text-xs animate-pulse">
+                                  {sIdx + 1}
+                                </div>
+                              ) : (
+                                <div className="w-6 h-6 rounded-full bg-white/10 text-gray-400 flex items-center justify-center text-xs">
+                                  {sIdx + 1}
+                                </div>
+                              )}
+                              <span className={`text-xs font-semibold ${isComplete ? 'text-emerald-300' : isCurrent ? 'text-white' : 'text-gray-400'}`}>
+                                {st.title}
+                              </span>
+                            </div>
+
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                              isComplete 
+                                ? 'bg-emerald-500/20 text-emerald-300' 
+                                : isCurrent 
+                                  ? 'bg-amber-500/20 text-amber-300 animate-pulse' 
+                                  : 'text-gray-500'
+                            }`}>
+                              {isComplete ? 'Complete' : isCurrent ? 'Active' : 'Pending'}
+                            </span>
+                          </div>
+
+                          {/* Managed by Client Prompt in English */}
+                          {st.isClientAction && isCurrent && (
+                            <div className="mt-2.5 p-2.5 bg-amber-500/20 border border-amber-500/40 rounded-lg text-xs text-amber-200 space-y-1">
+                              <p className="font-bold flex items-center gap-1.5">
+                                <AlertCircle size={13} className="text-amber-400" />
+                                <span>⚠️ MANAGED BY CLIENT: Action Required by Client</span>
+                              </p>
+                              <p className="text-[11px] text-gray-200">
+                                {st.clientInstruction}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-
-                  {ledgerRangeType === 'CUSTOM' && (
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <input
-                        type="date"
-                        value={ledgerStartDate}
-                        onChange={(e) => setLedgerStartDate(e.target.value)}
-                        className="bg-slate-900 border border-white/10 rounded p-1.5 text-xs text-white"
-                      />
-                      <input
-                        type="date"
-                        value={ledgerEndDate}
-                        onChange={(e) => setLedgerEndDate(e.target.value)}
-                        className="bg-slate-900 border border-white/10 rounded p-1.5 text-xs text-white"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* 2. Station / Route Filter */}
-                <div>
-                  <label className="text-xs text-gray-400 mb-1.5 block">Station / Route Filter:</label>
-                  {availableRoutes.length <= 1 ? (
-                    <div className="bg-slate-900 border border-white/10 rounded-lg p-2 text-xs text-gray-300">
-                      Route: <span className="font-semibold text-white">{availableRoutes[0] || 'All Active Routes'}</span>
-                    </div>
-                  ) : (
-                    <select
-                      value={ledgerStationFilter}
-                      onChange={(e) => setLedgerStationFilter(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-lg p-2 text-xs text-white focus:border-brand-500 outline-none"
-                    >
-                      <option value="ALL">All Stations Combined</option>
-                      {availableRoutes.map((route) => (
-                        <option key={route} value={route}>{route}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-              </div>
+                );
+              })()}
             </div>
 
-            {/* Printable Ledger Sheet */}
-            <div className="p-6 space-y-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
-              
-              {/* Header Letterhead for Print */}
-              <div className="flex justify-between items-start border-b-2 border-brand-500 pb-4">
-                <div>
-                  <h2 className="text-xl font-bold text-white uppercase">{companyName}</h2>
-                  <p className="text-xs text-gray-400">{subtitle || 'Customs Clearance, Bonded Carrier & Freight Management'}</p>
-                  <p className="text-xs text-brand-300 font-medium mt-1">Client Statement: {selectedClientName}</p>
-                </div>
-                <div className="text-right text-xs text-gray-400 space-y-0.5">
-                  <p>Statement Date: {new Date().toLocaleDateString()}</p>
-                  <p>Route Filter: {ledgerStationFilter === 'ALL' ? 'All Stations' : ledgerStationFilter}</p>
-                  <p>Period: {ledgerRangeType === 'CURRENT_MONTH' ? 'Current Month' : `${ledgerStartDate} to ${ledgerEndDate}`}</p>
-                </div>
-              </div>
-
-              {/* Ledger Entries Table */}
-              <table className="w-full text-left text-xs text-gray-200 border border-white/10">
-                <thead className="bg-slate-950 uppercase font-semibold text-gray-400 border-b border-white/10">
-                  <tr>
-                    <th className="p-3">Date</th>
-                    <th className="p-3">Description / Route</th>
-                    <th className="p-3">Container No</th>
-                    <th className="p-3">Reference / Inv</th>
-                    <th className="p-3 text-right">Debit (PKR)</th>
-                    <th className="p-3 text-right">Credit (PKR)</th>
-                    <th className="p-3 text-right">Balance (PKR)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {computedLedgerRows.map((row) => (
-                    <tr 
-                      key={row.id} 
-                      className={`hover:bg-white/5 transition-colors ${
-                        row.type === 'OPENING' ? 'bg-white/5 font-semibold text-gray-300' :
-                        row.type === 'PAYMENT' ? 'bg-emerald-500/5' : ''
-                      }`}
-                    >
-                      <td className="p-3 font-mono text-gray-300">{row.date}</td>
-                      <td className="p-3">
-                        <span className={row.type === 'PAYMENT' ? 'text-emerald-300 font-medium' : 'text-gray-200'}>
-                          {row.description}
-                        </span>
-                      </td>
-                      <td className="p-3 font-mono text-brand-300">{row.containerNo}</td>
-                      <td className="p-3 font-mono text-blue-400">{row.refNumber}</td>
-                      <td className="p-3 text-right font-mono text-amber-300">
-                        {row.debit > 0 ? row.debit.toLocaleString() : '-'}
-                      </td>
-                      <td className="p-3 text-right font-mono text-emerald-400 font-bold">
-                        {row.credit > 0 ? row.credit.toLocaleString() : '-'}
-                      </td>
-                      <td className="p-3 text-right font-mono font-bold text-white">
-                        PKR {row.balance.toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-
-                  {/* Summary Totals */}
-                  {(() => {
-                    const totalDebits = computedLedgerRows.reduce((sum, r) => sum + r.debit, 0);
-                    const totalCredits = computedLedgerRows.reduce((sum, r) => sum + r.credit, 0);
-                    const netBalance = computedLedgerRows.length > 0 ? computedLedgerRows[computedLedgerRows.length - 1].balance : 0;
-                    return (
-                      <tr className="bg-slate-950 font-bold border-t-2 border-brand-500 text-sm">
-                        <td colSpan={4} className="p-3 text-right text-white uppercase">Net Summary:</td>
-                        <td className="p-3 text-right text-amber-400 font-mono">PKR {totalDebits.toLocaleString()}</td>
-                        <td className="p-3 text-right text-emerald-400 font-mono">PKR {totalCredits.toLocaleString()}</td>
-                        <td className="p-3 text-right text-brand-400 font-mono text-base">PKR {netBalance.toLocaleString()}</td>
-                      </tr>
-                    );
-                  })()}
-                </tbody>
-              </table>
-
-              {/* Official Ledger Signatures for Print */}
-              <div className="hidden print:flex justify-between items-end pt-8 pb-4 print-avoid-break">
-                <div className="text-xs text-gray-600">
-                  <p className="font-semibold text-black">{companyName} — Client Accounts</p>
-                  <p className="text-[10px]">Computer generated ledger statement • Valid without physical signature</p>
-                  <p className="text-[9px] text-gray-500 mt-0.5">Printed on: {new Date().toLocaleString()}</p>
-                </div>
-                <div className="text-right">
-                  <div className="border-t border-dashed border-gray-600 pt-1 w-44 text-center">
-                    <p className="text-[11px] font-semibold text-black">Accounts Officer</p>
-                    <p className="text-[10px] text-gray-600">Finance & Terminal Billing</p>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 bg-slate-950 border-t border-white/10 flex justify-between items-center no-print">
-              <span className="text-xs text-gray-500">Live Computed Client Ledger Sheet ({computedLedgerRows.length} Records)</span>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowLedgerModal(false)}
-                  className="px-4 py-2 text-xs text-gray-400 hover:text-white"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={async () => {
-                    const totalDebits = computedLedgerRows.reduce((sum, r) => sum + r.debit, 0);
-                    const totalCredits = computedLedgerRows.reduce((sum, r) => sum + r.credit, 0);
-                    const netBalance = computedLedgerRows.length > 0 ? computedLedgerRows[computedLedgerRows.length - 1].balance : 0;
-                    await downloadClientLedgerPdf({
-                      clientName: selectedClientName,
-                      statementDate: new Date().toLocaleDateString(),
-                      summary: {
-                        totalDebits,
-                        totalCredits,
-                        netBalance,
-                        totalContainers: allContainers.length
-                      },
-                      entries: computedLedgerRows.map(r => ({
-                        date: r.date,
-                        reference: r.refNumber,
-                        description: r.description,
-                        debit: r.debit,
-                        credit: r.credit,
-                        balance: r.balance
-                      })),
-                      companyName,
-                      customLogo: activeLogo,
-                      branding
-                    });
-                  }}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-600/30 cursor-pointer active:scale-95"
-                >
-                  <Download size={15} />
-                  <span>Download Ledger (PDF)</span>
-                </button>
-              </div>
+            <div className="pt-3 border-t border-white/10 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedWorkflowCase(null)}
+                className="bg-amber-600 hover:bg-amber-500 text-white px-5 py-2 rounded-xl text-xs font-semibold"
+              >
+                Close
+              </button>
             </div>
 
           </div>
@@ -1891,882 +1403,745 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 2: ADD PAYMENT MODAL (WITH CAMERA & FILE UPLOAD) */}
+      {/* MODAL: FULL CASE DETAILS MODAL (MATCHING CASE MANAGER VIEW & DOWNLOADS) */}
       {/* ========================================================================= */}
-      {showAddPaymentModal && (
-        <div className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-slate-900 rounded-2xl max-w-lg w-full border border-white/10 shadow-2xl overflow-hidden my-8">
+      {showCaseManagerViewModal && selectedCase && (
+        <div className="fixed inset-0 bg-black/85 z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-slate-900 rounded-3xl max-w-3xl w-full border border-white/10 shadow-2xl overflow-hidden mb-8 p-6 space-y-6 max-h-[90vh] overflow-y-auto custom-scrollbar">
             
-            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-950">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-emerald-600/20 text-emerald-400">
-                  <CreditCard size={22} />
+            {/* Modal Header */}
+            <div className="flex justify-between items-start border-b border-white/10 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-2xl font-bold text-white">{selectedCase.caseNo}</span>
+                  <span className="bg-brand-500/20 text-brand-300 text-xs px-2.5 py-0.5 rounded font-semibold">
+                    {selectedCase.category}
+                  </span>
                 </div>
-                <div>
-                  <h3 className="text-lg font-bold text-white">Add Payment Slip</h3>
-                  <p className="text-gray-400 text-xs">Upload bank transfer screenshot or bank deposit slip</p>
-                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  Route: {selectedCase.pol} &rarr; {selectedCase.pod} &bull; Created: {selectedCase.createdAt}
+                </p>
               </div>
+
               <button 
-                onClick={() => { setShowAddPaymentModal(false); stopCamera(); }}
-                className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-white/10"
+                onClick={() => {
+                  setShowCaseManagerViewModal(false);
+                  setSelectedCase(null);
+                }}
+                className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/10"
               >
                 <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleSubmitPayment} className="p-6 space-y-4">
-              
-              {/* Amount */}
+            {/* Shipping & Goods Specs */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white/5 p-4 rounded-2xl text-xs border border-white/5">
               <div>
-                <label className="text-xs text-gray-300 font-medium mb-1 block">Payment Amount (PKR):</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2.5 text-xs text-gray-400 font-mono">PKR</span>
+                <span className="text-gray-400 block text-[11px]">B/L Number:</span>
+                <span className="font-mono text-white font-bold">{selectedCase.extractedData?.blNumber || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[11px]">Vessel Name:</span>
+                <span className="text-white font-medium">{selectedCase.extractedData?.vesselName || 'Cosco Express'}</span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[11px]">Total Weight:</span>
+                <span className="font-mono text-white font-medium">{selectedCase.extractedData?.totalWeight || 28000} Kg</span>
+              </div>
+              <div>
+                <span className="text-gray-400 block text-[11px]">Item Description:</span>
+                <span className="text-white font-medium">{selectedCase.extractedData?.itemName || 'General Cargo'}</span>
+              </div>
+            </div>
+
+            {/* Containers List with Assigned Vehicles */}
+            <div className="space-y-2.5">
+              <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                Assigned Containers & Fleet Carriers ({selectedCase.containers?.length || 1}):
+              </h4>
+              <div className="space-y-2">
+                {(selectedCase.containers || []).map((cntr, idx) => (
+                  <div key={cntr.id || idx} className="bg-slate-950 p-3.5 rounded-xl border border-white/10 flex flex-col sm:flex-row justify-between sm:items-center gap-2 text-xs">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-white text-sm">{cntr.number}</span>
+                        <span className="bg-brand-500/20 text-brand-300 text-[10px] px-2 py-0.5 rounded">{cntr.size}</span>
+                        <span className="bg-blue-500/20 text-blue-300 text-[10px] px-2 py-0.5 rounded">{cntr.status}</span>
+                      </div>
+                      <p className="text-gray-400 text-[11px] mt-1">
+                        🚗 Vehicle: <strong className="text-white font-mono">{cntr.vehicleNo || 'TL-8842'}</strong> &bull; Driver: {cntr.driverName || 'Muhammad Ismail'} ({cntr.driverContact || '0300-8877665'})
+                      </p>
+                    </div>
+                    <div className="text-right font-mono text-gray-300">
+                      {cntr.weight} Kg
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* =================================================================== */}
+            {/* DOCUMENT DOWNLOAD LIST (ALL DOCUMENTS JUST LIKE CASE MANAGER) */}
+            {/* =================================================================== */}
+            <div className="space-y-3 pt-2">
+              <h4 className="text-xs font-semibold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                <FileCheck size={16} />
+                <span>Complete Case Documents & Downloads:</span>
+              </h4>
+
+              <div className="divide-y divide-white/10 rounded-2xl border border-white/10 bg-slate-950/60 overflow-hidden shadow-sm text-xs">
+                
+                {/* 1. Case Detail PDF */}
+                <div className="p-3.5 flex items-center justify-between gap-3 hover:bg-white/[0.03]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-brand-600/20 text-brand-400 flex items-center justify-center shrink-0">
+                      <FileText size={16} />
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-white">Case Detail Summary</h5>
+                      <p className="text-[11px] text-gray-400">Official case profile, containers, and route specifications</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => downloadCasePdf(selectedCase, { onlyCaseDetails: true })}
+                    className="bg-brand-600 hover:bg-brand-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow"
+                  >
+                    <Download size={13} />
+                    <span>Download</span>
+                  </button>
+                </div>
+
+                {/* 2. Commercial Freight Invoice */}
+                <div className="p-3.5 flex items-center justify-between gap-3 hover:bg-white/[0.03]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-amber-600/20 text-amber-400 flex items-center justify-center shrink-0">
+                      <Receipt size={16} />
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-white">Commercial Freight Invoice</h5>
+                      <p className="text-[11px] text-gray-400">Itemized service charges and terminal delivery billing</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const rate = getRouteRate(selectedCase.pol, selectedCase.pod);
+                      const cntr = selectedCase.containers?.[0] || { number: 'MSKU-DEFAULT', size: '40ft', weight: 28000 };
+                      await downloadContainerInvoicePdf({
+                        invoiceNo: `INV-26-${(cntr.number || '0000').slice(-4)}`,
+                        clientName: selectedClientName,
+                        containerNo: cntr.number,
+                        size: (cntr as any).size || '40ft',
+                        route: `${selectedCase.pol} -> ${selectedCase.pod}`,
+                        rate: rate,
+                        date: selectedCase.createdAt,
+                        companyName: companyName
+                      });
+                    }}
+                    className="bg-amber-600 hover:bg-amber-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow"
+                  >
+                    <Download size={13} />
+                    <span>Download</span>
+                  </button>
+                </div>
+
+                {/* 3. Port Loading / Unloading Bill */}
+                <div className="p-3.5 flex items-center justify-between gap-3 hover:bg-white/[0.03]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center shrink-0">
+                      <FileCheck size={16} />
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-white">Port Loading / Unloading Bill</h5>
+                      <p className="text-[11px] text-gray-400">Terminal handling bill & permanent port record</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const bData: LoadingBillData = {
+                        billNo: `LB-26-${selectedCase.caseNo.split('-').pop() || '001'}`,
+                        caseNo: selectedCase.caseNo,
+                        clientName: selectedCase.clientName,
+                        containerNo: selectedCase.containers?.[0]?.number || 'MSKU-8876541',
+                        portTerminal: selectedCase.pol || 'Port Terminal',
+                        date: new Date().toISOString().slice(0, 10),
+                        items: (selectedCase.charges || []).map((c: any) => ({
+                          head: c.description || 'Terminal Handling',
+                          amount: Number(c.amount) || 0,
+                          receiptUrl: c.receiptUrl
+                        })),
+                        totalAmount: 25000,
+                        officerName: 'Port Operations Officer',
+                        branding: { companyName, customLogo: activeLogo }
+                      };
+                      await downloadLoadingBillPdf(bData);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow"
+                  >
+                    <Download size={13} />
+                    <span>Download</span>
+                  </button>
+                </div>
+
+                {/* 4. Customs Delivery Order (DO / NOC) */}
+                <div className="p-3.5 flex items-center justify-between gap-3 hover:bg-white/[0.03]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-teal-600/20 text-teal-400 flex items-center justify-center shrink-0">
+                      <ShieldCheck size={16} />
+                    </div>
+                    <div>
+                      <h5 className="font-bold text-white">Customs Delivery Order (DO / NOC)</h5>
+                      <p className="text-[11px] text-gray-400">Shipping Line Terminal Release Document</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await downloadCustomsDeliveryOrderPdf({
+                          targetCase: selectedCase,
+                          branding: { companyName, customLogo: activeLogo }
+                        });
+                      } catch (err) {
+                        alert("Could not download Delivery Order.");
+                      }
+                    }}
+                    className="bg-teal-600 hover:bg-teal-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow"
+                  >
+                    <Download size={13} />
+                    <span>Download</span>
+                  </button>
+                </div>
+
+                {/* 5. Uploaded Documents (BL, GD, Packing List) */}
+                {(selectedCase.documents || []).map((doc, dIdx) => (
+                  <div key={dIdx} className="p-3.5 flex items-center justify-between gap-3 hover:bg-white/[0.03]">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-cyan-600/20 text-cyan-400 flex items-center justify-center shrink-0">
+                        <FileText size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <h5 className="font-bold text-white truncate">{doc.name}</h5>
+                        <p className="text-[11px] text-gray-400">Client / Clearing Uploaded Document</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = (doc as any).url || 'https://placehold.co/600x800/png?text=Document+Preview';
+                          setLightboxImage(url);
+                        }}
+                        className="bg-white/10 hover:bg-white/20 text-white px-2.5 py-1 rounded text-xs flex items-center gap-1"
+                      >
+                        <Eye size={12} /> View
+                      </button>
+                      <a
+                        href={(doc as any).url || '#'}
+                        download={doc.name}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-brand-600 hover:bg-brand-500 text-white px-2.5 py-1 rounded text-xs flex items-center gap-1"
+                      >
+                        <Download size={12} /> Download
+                      </a>
+                    </div>
+                  </div>
+                ))}
+
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-white/10 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCaseManagerViewModal(false);
+                  setSelectedCase(null);
+                }}
+                className="bg-slate-800 hover:bg-slate-700 text-white px-5 py-2 rounded-xl text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: PAID / MAKE PAYMENT POPUP WINDOW (REQUESTED BY USER) */}
+      {/* ========================================================================= */}
+      {showPaidPaymentModal && (
+        <div className="fixed inset-0 bg-black/85 z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-slate-900 rounded-3xl max-w-lg w-full border border-white/10 shadow-2xl p-6 mb-8 space-y-5 animate-fade-in max-h-[90vh] overflow-y-auto custom-scrollbar">
+            
+            <div className="flex justify-between items-center border-b border-white/10 pb-4">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <CreditCard className="text-emerald-400" size={20} />
+                  <span>Submit Payment (Paid)</span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Route your deposit to DPL Company, Loading Staff, or Transporter ledger
+                </p>
+              </div>
+              <button onClick={() => setShowPaidPaymentModal(false)} className="text-gray-400 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmPaidPayment} className="space-y-4">
+              
+              {/* Payment Mode Selector: Cash or Bank */}
+              <div>
+                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-1.5 block">
+                  Select Payment Mode:
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentForm(prev => ({ ...prev, mode: 'BANK' }))}
+                    className={`py-2.5 px-4 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2 ${
+                      paymentForm.mode === 'BANK'
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
+                        : 'bg-slate-950 text-gray-400 border-white/10 hover:bg-white/5'
+                    }`}
+                  >
+                    <Building size={15} />
+                    <span>Bank Transfer / Deposit</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentForm(prev => ({ ...prev, mode: 'CASH' }))}
+                    className={`py-2.5 px-4 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2 ${
+                      paymentForm.mode === 'CASH'
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
+                        : 'bg-slate-950 text-gray-400 border-white/10 hover:bg-white/5'
+                    }`}
+                  >
+                    <DollarSign size={15} />
+                    <span>Cash Payment</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* If Bank Selected: Bank Dropdown & Slip Upload */}
+              {paymentForm.mode === 'BANK' && (
+                <div className="space-y-3 bg-white/5 p-3.5 rounded-2xl border border-white/5">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-300 mb-1 block">
+                      Select Company Bank Account:
+                    </label>
+                    <select
+                      value={paymentForm.bankName}
+                      onChange={(e) => setPaymentForm(prev => ({ ...prev, bankName: e.target.value }))}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:border-emerald-500 outline-none"
+                    >
+                      {DEFAULT_COMPANY_BANKS.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                      <option value="Other Bank">Other Bank (Type Bank Name)</option>
+                    </select>
+
+                    {paymentForm.bankName === 'Other Bank' && (
+                      <input
+                        type="text"
+                        placeholder="Enter Bank Name & Branch..."
+                        value={paymentForm.customBankName}
+                        onChange={(e) => setPaymentForm(prev => ({ ...prev, customBankName: e.target.value }))}
+                        className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs text-white mt-2"
+                      />
+                    )}
+                  </div>
+
+                  {/* Bank Slip Upload */}
+                  <div>
+                    <label className="text-xs font-semibold text-gray-300 mb-1 block flex items-center justify-between">
+                      <span>Upload Bank Slip / Screenshot *:</span>
+                      <span className="text-[10px] text-amber-400">Mandatory for verification</span>
+                    </label>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        ref={fileInputRef}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            const proc = await compressAndPrepareFile(f);
+                            setPaymentForm(prev => ({ ...prev, slipUrl: proc.dataUrl || '' }));
+                          }
+                        }}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex-1 bg-white/10 hover:bg-white/20 text-white p-2.5 rounded-xl text-xs font-medium flex items-center justify-center gap-2 border border-white/10"
+                      >
+                        <Upload size={14} />
+                        <span>Choose File</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={startCamera}
+                        className="bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 p-2.5 rounded-xl text-xs font-medium flex items-center gap-1.5 border border-amber-500/30"
+                      >
+                        <Camera size={14} />
+                        <span>Scan</span>
+                      </button>
+                    </div>
+
+                    {/* Camera View */}
+                    {isCameraActive && (
+                      <div className="mt-2 space-y-2">
+                        <video ref={videoRef} autoPlay playsInline className="w-full rounded-xl border border-white/20 max-h-48 object-cover" />
+                        <div className="flex justify-end gap-2">
+                          <button type="button" onClick={stopCamera} className="px-3 py-1 text-xs text-gray-400">Cancel</button>
+                          <button type="button" onClick={capturePhoto} className="bg-emerald-600 text-white px-4 py-1 rounded text-xs">Capture</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {paymentForm.slipUrl && (
+                      <div className="mt-2 flex items-center gap-2 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-300">
+                        <CheckCircle2 size={15} />
+                        <span className="truncate">Slip attached successfully</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Amount & Date Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-300 mb-1 block">Amount (PKR) *:</label>
                   <input
                     type="number"
                     required
                     placeholder="e.g. 150000"
                     value={paymentForm.amount}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-lg pl-12 pr-4 py-2.5 text-sm text-white font-mono font-bold focus:border-emerald-500 outline-none"
+                    onChange={(e) => setPaymentForm(prev => ({ ...prev, amount: e.target.value }))}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white font-mono focus:border-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-300 mb-1 block">Payment Date (Editable):</label>
+                  <input
+                    type="date"
+                    required
+                    value={paymentForm.date}
+                    onChange={(e) => setPaymentForm(prev => ({ ...prev, date: e.target.value }))}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white font-mono focus:border-emerald-500 outline-none"
                   />
                 </div>
               </div>
 
-              {/* Payment Method */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-gray-400 mb-1 block">Payment Method:</label>
-                  <select
-                    value={paymentForm.paymentMethod}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, paymentMethod: e.target.value as any })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs text-white focus:border-emerald-500 outline-none"
-                  >
-                    <option value="ONLINE_TRANSFER">Online Bank Transfer</option>
-                    <option value="BANK_DEPOSIT">Bank Deposit Slip</option>
-                    <option value="CHEQUE">Bank Cheque</option>
-                    <option value="CASH">Cash Payment</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-400 mb-1 block">Bank Name:</label>
-                  <select
-                    value={paymentForm.bankName}
-                    onChange={(e) => setPaymentForm({ ...paymentForm, bankName: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs text-white focus:border-emerald-500 outline-none"
-                  >
-                    <option value="Meezan Bank Ltd">Meezan Bank Ltd</option>
-                    <option value="Habib Bank Limited (HBL)">Habib Bank Limited (HBL)</option>
-                    <option value="Bank Al Habib Ltd">Bank Al Habib Ltd</option>
-                    <option value="Bank Alfalah">Bank Alfalah</option>
-                    <option value="Faysal Bank">Faysal Bank</option>
-                  </select>
+              {/* Payment Category Selection (CRITICAL AS REQUESTED BY USER) */}
+              <div>
+                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider mb-1.5 block">
+                  Select Payment Category:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  {[
+                    { id: 'Company Payment (DPL)', label: 'Company (DPL)', desc: 'DPL Invoice Settlement' },
+                    { id: 'Loading Payment', label: 'Loading Staff', desc: 'Port Loading Desk' },
+                    { id: 'Vehicle Rent', label: 'Vehicle Rent', desc: 'Transporter Freight' }
+                  ].map(cat => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setPaymentForm(prev => ({ ...prev, category: cat.id as any }))}
+                      className={`p-2.5 rounded-xl border text-left transition ${
+                        paymentForm.category === cat.id
+                          ? 'bg-amber-600 text-white border-amber-500 shadow-md font-bold'
+                          : 'bg-slate-950 text-gray-400 border-white/10 hover:bg-white/5'
+                      }`}
+                    >
+                      <p className="text-xs">{cat.label}</p>
+                      <p className="text-[10px] text-gray-300 opacity-80">{cat.desc}</p>
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Reference / TxID */}
+              {/* Case Selection Dropdown & Search (FOR VEHICLE RENT & LOADING ROUTING) */}
               <div>
-                <label className="text-xs text-gray-400 mb-1 block">Transaction ID / Deposit Slip No:</label>
+                <label className="text-xs font-semibold text-gray-300 mb-1 block">
+                  Select Associated Case (For Routing to Transporter or Loading Staff):
+                </label>
                 <input
                   type="text"
-                  required
-                  placeholder="e.g. FT-20260413-8899 or Slip #44210"
-                  value={paymentForm.referenceNo}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, referenceNo: e.target.value })}
-                  className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs text-white font-mono"
+                  placeholder="Filter case list by typing case no..."
+                  value={paymentCaseSearch}
+                  onChange={(e) => setPaymentCaseSearch(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs text-white mb-2"
                 />
-              </div>
+                <select
+                  value={paymentForm.caseNo}
+                  onChange={(e) => setPaymentForm(prev => ({ ...prev, caseNo: e.target.value }))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:border-emerald-500 outline-none"
+                >
+                  <option value="">-- Select Case --</option>
+                  {paymentEligibleCases.map(c => (
+                    <option key={c.id} value={c.caseNo}>
+                      {c.caseNo} ({c.pol} &rarr; {c.pod}) - B/L: {c.extractedData?.blNumber || 'N/A'}
+                    </option>
+                  ))}
+                </select>
 
-              {/* Upload Proof Slip (File or Camera) */}
-              <div>
-                <label className="text-xs text-gray-300 font-medium mb-1.5 block">
-                  Deposit Proof Slip (Photo or PDF):
-                </label>
-                
-                <div className="grid grid-cols-2 gap-3 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="bg-white/5 hover:bg-white/10 border border-white/10 p-3 rounded-xl flex items-center justify-center gap-2 text-xs text-gray-300 transition"
-                  >
-                    <Upload size={16} className="text-brand-400" />
-                    <span>Upload File (PDF / Image)</span>
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*,.pdf"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={startCamera}
-                    className="bg-white/5 hover:bg-white/10 border border-white/10 p-3 rounded-xl flex items-center justify-center gap-2 text-xs text-gray-300 transition"
-                  >
-                    <Camera size={16} className="text-emerald-400" />
-                    <span>Take Photo with Camera</span>
-                  </button>
-                </div>
-
-                {/* Camera View */}
-                {isCameraActive && (
-                  <div className="bg-black rounded-xl p-3 border border-white/20 space-y-2">
-                    <video ref={videoRef} autoPlay playsInline className="w-full h-48 object-cover rounded-lg bg-black" />
-                    <div className="flex justify-between items-center">
-                      <button
-                        type="button"
-                        onClick={stopCamera}
-                        className="text-xs text-gray-400 hover:text-white px-3 py-1"
-                      >
-                        Cancel Camera
-                      </button>
-                      <button
-                        type="button"
-                        onClick={capturePhoto}
-                        className="bg-emerald-600 text-white text-xs px-4 py-1.5 rounded-lg font-medium"
-                      >
-                        Capture Slip Photo
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Preview Uploaded Slip */}
-                {paymentForm.slipUrl && !isCameraActive && (
-                  <div className="bg-slate-950 p-2.5 rounded-xl border border-white/10 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <img src={paymentForm.slipUrl} alt="Slip Preview" className="w-12 h-12 object-cover rounded border border-white/10" />
-                      <span className="text-xs text-gray-300 font-medium">Proof Slip Attached</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentForm({ ...paymentForm, slipUrl: '' })}
-                      className="text-red-400 text-xs hover:underline"
-                    >
-                      Remove
-                    </button>
+                {selectedCaseForPayment && (
+                  <div className="mt-2 p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-[11px] text-gray-300 space-y-1">
+                    <p>
+                      🏢 Recipient Routing: <strong className="text-white">
+                        {paymentForm.category === 'Loading Payment' 
+                          ? (selectedCaseForPayment.loadingBills?.[0]?.staffName || 'Mohsin Khan (Port Officer)') 
+                          : paymentForm.category === 'Vehicle Rent' 
+                            ? (selectedCaseForPayment.containers?.[0]?.transporterName || 'Bilal Goods Transport Co.') 
+                            : 'DPL Company Accounts'}
+                      </strong>
+                    </p>
+                    <p>
+                      🚗 Vehicle Assigned: <span className="font-mono text-amber-300">
+                        {selectedCaseForPayment.containers?.[0]?.vehicleNo || 'TL-8842'}
+                      </span>
+                    </p>
                   </div>
                 )}
               </div>
 
               {/* Remarks */}
               <div>
-                <label className="text-xs text-gray-400 mb-1 block">Additional Remarks (Optional):</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Clearance charges for Case DPL-26-000004"
+                <label className="text-xs font-semibold text-gray-300 mb-1 block">Remarks / Notes:</label>
+                <textarea
+                  rows={2}
+                  placeholder="Enter any notes or slip transfer remarks..."
                   value={paymentForm.remarks}
-                  onChange={(e) => setPaymentForm({ ...paymentForm, remarks: e.target.value })}
-                  className="w-full bg-slate-950 border border-white/10 rounded-lg p-2 text-xs text-white"
+                  onChange={(e) => setPaymentForm(prev => ({ ...prev, remarks: e.target.value }))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:border-emerald-500 outline-none"
                 />
               </div>
 
-              {/* Info Notification */}
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-[11px] text-emerald-300 flex items-start gap-2">
-                <CheckCircle2 size={15} className="mt-0.5 shrink-0" />
-                <span>
-                  Once submitted, this payment will be marked as "Pending Verification". After finance team confirmation, it will be credited immediately to your account ledger.
-                </span>
-              </div>
-
-              {/* Modal Actions */}
-              <div className="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-white/10">
                 <button
                   type="button"
-                  onClick={() => setShowAddPaymentModal(false)}
+                  onClick={() => setShowPaidPaymentModal(false)}
                   className="px-4 py-2 text-xs text-gray-400 hover:text-white"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-lg text-xs font-medium shadow-lg shadow-emerald-600/30"
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg shadow-emerald-600/30 transition active:scale-95"
                 >
                   Submit Payment
                 </button>
               </div>
 
             </form>
-
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 3: VIEW CONTAINER-WISE INVOICES MODAL */}
+      {/* MODAL: DOWNLOAD LEDGER MODAL WITH STATION & DATE FILTERS */}
       {/* ========================================================================= */}
-      {showInvoicesModal && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm overflow-y-auto" data-printable-modal="true">
-          <div className="bg-slate-900 rounded-2xl max-w-4xl w-full border border-white/10 shadow-2xl overflow-hidden my-8 print-sheet">
-            
-            <div className={`p-5 border-b border-white/10 flex justify-between items-center bg-slate-950 ${selectedInvoiceContainer ? 'no-print' : ''}`}>
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-blue-600/20 text-blue-400">
-                  <FileCheck size={22} />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-white">Container-Wise Invoices</h3>
-                  <p className="text-gray-400 text-xs">Container-wise auto-generated bills and shipment invoices</p>
-                </div>
+      {showLedgerModal && (
+        <div className="fixed inset-0 bg-black/85 z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-slate-900 rounded-3xl max-w-2xl w-full border border-white/10 shadow-2xl p-6 mb-8 space-y-5">
+            <div className="flex justify-between items-center border-b border-white/10 pb-4">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <FileText className="text-brand-400" size={20} />
+                  <span>Download Client Ledger Statement</span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-0.5">{selectedClientName} &bull; Official Account Passbook</p>
               </div>
-              <button 
-                onClick={() => { setShowInvoicesModal(false); setSelectedInvoiceContainer(null); }}
-                className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-white/10 no-print"
-              >
+              <button onClick={() => setShowLedgerModal(false)} className="text-gray-400 hover:text-white">
                 <X size={20} />
               </button>
             </div>
 
-            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
-              
-              {!selectedInvoiceContainer ? (
-                <div className="space-y-4">
-                  <p className="text-xs text-gray-400">
-                    Click "View Invoice" on any container below to view or print its detailed invoice:
-                  </p>
-
-                  <div className="overflow-x-auto rounded-xl border border-white/10">
-                    <table className="w-full text-left text-xs text-gray-200">
-                      <thead className="bg-slate-950 uppercase font-semibold text-gray-400 border-b border-white/10">
-                        <tr>
-                          <th className="p-3">Invoice No</th>
-                          <th className="p-3">Case No</th>
-                          <th className="p-3">Container No</th>
-                          <th className="p-3">Route</th>
-                          <th className="p-3">Invoice Amount</th>
-                          <th className="p-3 text-right">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5 bg-slate-900/40">
-                        {activeCasesList.flatMap(c => (c.containers || []).map((cntr, idx) => {
-                          const rate = getRouteRate(c.pol, c.pod);
-                          const invNum = `INV-26-${c.caseNo.split('-').pop()}${String.fromCharCode(65 + idx)}`;
-                          return (
-                            <tr key={`${c.id}-${cntr.id}`} className="hover:bg-white/5 transition">
-                              <td className="p-3 font-mono font-bold text-blue-400">{invNum}</td>
-                              <td className="p-3 font-mono text-gray-300">{c.caseNo}</td>
-                              <td className="p-3 font-mono font-bold text-white">{cntr.number} ({cntr.size})</td>
-                              <td className="p-3 text-gray-300">{c.pol} → {c.pod}</td>
-                              <td className="p-3 font-mono font-bold text-amber-400">PKR {rate.toLocaleString()}</td>
-                              <td className="p-3 text-right">
-                                <button
-                                  onClick={() => setSelectedInvoiceContainer({
-                                    caseNo: c.caseNo,
-                                    container: cntr,
-                                    pol: c.pol,
-                                    pod: c.pod,
-                                    date: c.createdAt,
-                                    clientName: c.clientName,
-                                    rate: rate,
-                                    blNo: c.extractedData?.blNumber
-                                  })}
-                                  className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-lg text-xs font-medium ml-auto flex items-center gap-1 transition cursor-pointer"
-                                >
-                                  <Eye size={13} /> View Invoice
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        }))}
-                      </tbody>
-                    </table>
-                  </div>
+            <div className="space-y-4 text-xs">
+              <div className="bg-white/5 p-4 rounded-2xl space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Total Billed:</span>
+                  <span className="font-mono font-bold text-white">PKR {billedToDpl.toLocaleString()}</span>
                 </div>
-              ) : (
-                /* Detailed Single Container Invoice Sheet */
-                <div className="bg-slate-950 p-6 rounded-2xl border border-white/10 space-y-6" id="container-invoice-sheet">
-                  <div className="flex justify-between items-start border-b-2 border-brand-500 pb-4">
-                    <div>
-                      <h2 className="text-2xl font-bold text-white uppercase">{companyName}</h2>
-                      <p className="text-xs text-gray-400">{subtitle || 'Freight Forwarding, Logistics & Customs Terminal Operator'}</p>
-                      <p className="text-xs text-brand-300 font-semibold mt-1">CONTAINER FREIGHT INVOICE</p>
-                    </div>
-                    <div className="text-right text-xs text-gray-300 space-y-1">
-                      <p className="font-mono text-sm font-bold text-white">INV-26-{selectedInvoiceContainer.container.number.slice(-4)}</p>
-                      <p>Date: {selectedInvoiceContainer.date}</p>
-                      <p>Due Date: Immediate / On Delivery</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 text-xs bg-white/5 p-4 rounded-xl">
-                    <div>
-                      <p className="text-gray-400 font-semibold uppercase text-[10px]">Billed To (Client):</p>
-                      <p className="font-bold text-white text-sm">{selectedInvoiceContainer.clientName}</p>
-                      <p className="text-gray-300">Account: Verified Corporate Client</p>
-                      <p className="text-gray-300">B/L No: {selectedInvoiceContainer.blNo || 'N/A'}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-gray-400 font-semibold uppercase text-[10px]">Shipment & Route:</p>
-                      <p className="font-bold text-brand-300">{selectedInvoiceContainer.pol} → {selectedInvoiceContainer.pod}</p>
-                      <p className="font-mono text-white">Container: {selectedInvoiceContainer.container.number}</p>
-                      <p className="text-gray-300">Size: {selectedInvoiceContainer.container.size} | Wt: {selectedInvoiceContainer.container.weight} Kg</p>
-                    </div>
-                  </div>
-
-                  <table className="w-full text-left text-xs border border-white/10">
-                    <thead className="bg-slate-900 uppercase font-semibold text-gray-300 border-b border-white/10">
-                      <tr>
-                        <th className="p-3">Description</th>
-                        <th className="p-3 text-right">Amount (PKR)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      <tr>
-                        <td className="p-3">Freight & Destination Delivery Charges ({selectedInvoiceContainer.container.number})</td>
-                        <td className="p-3 text-right font-mono font-medium">PKR {selectedInvoiceContainer.rate.toLocaleString()}</td>
-                      </tr>
-                      <tr>
-                        <td className="p-3">Terminal Wharfage & Port Documentation Fee</td>
-                        <td className="p-3 text-right font-mono font-medium">PKR 15,000</td>
-                      </tr>
-                      <tr className="bg-white/5 font-bold border-t-2 border-brand-500 text-sm">
-                        <td className="p-3 text-white">TOTAL PAYABLE AMOUNT:</td>
-                        <td className="p-3 text-right font-mono text-brand-400 text-base">
-                          PKR {(selectedInvoiceContainer.rate + 15000).toLocaleString()}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  {/* Payment Instructions & Official Signatures - Formatted for Print */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-4 border-t border-white/10 print:border-gray-300 print-avoid-break">
-                    <div className="space-y-1">
-                      <p className="font-semibold text-gray-300 print:text-black">Payment Terms & Bank Details:</p>
-                      <p className="text-gray-400 print:text-gray-700">Bank: Meezan Bank Ltd (Corporate Branch)</p>
-                      <p className="text-gray-400 print:text-gray-700">Account Title: {companyName}</p>
-                      <p className="font-mono text-gray-400 print:text-gray-700">IBAN: PK65MEZN0000001234567801</p>
-                      <p className="text-[10px] text-gray-500 mt-1">Please reference Container & Invoice No. when depositing.</p>
-                    </div>
-                    <div className="flex flex-col justify-end items-start sm:items-end">
-                      <div className="border-t border-dashed border-gray-400 print:border-black pt-1 w-48 text-center mt-6">
-                        <p className="font-semibold text-gray-300 print:text-black text-[11px]">Authorized Signatory</p>
-                        <p className="text-[10px] text-gray-400 print:text-gray-600">DPL Billing & Terminal Accounts</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-between items-center pt-4 border-t border-white/10 no-print flex-wrap gap-2">
-                    <button
-                      onClick={() => setSelectedInvoiceContainer(null)}
-                      className="text-xs text-gray-400 hover:text-white"
-                    >
-                      ← Back to All Invoices
-                    </button>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={async () => {
-                          if (!selectedInvoiceContainer) return;
-                          try {
-                            await downloadContainerInvoicePdf({
-                              invoiceNo: `INV-26-${selectedInvoiceContainer.container.number.slice(-4)}`,
-                              clientName: selectedInvoiceContainer.clientName,
-                              containerNo: selectedInvoiceContainer.container.number,
-                              size: selectedInvoiceContainer.container.size || '40ft',
-                              weight: selectedInvoiceContainer.container.weight,
-                              sealNo: selectedInvoiceContainer.container.sealNo,
-                              route: `${selectedInvoiceContainer.pol} -> ${selectedInvoiceContainer.pod}`,
-                              rate: selectedInvoiceContainer.rate,
-                              date: selectedInvoiceContainer.date,
-                              blNo: selectedInvoiceContainer.blNo,
-                              companyName: companyName
-                            });
-                          } catch (e) {
-                            console.error("PDF download failed:", e);
-                          }
-                        }}
-                        className="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
-                      >
-                        <Download size={14} /> Download PDF
-                      </button>
-                    </div>
-                  </div>
+                <div className="flex justify-between">
+                  <span className="text-emerald-400">Total Paid (Approved):</span>
+                  <span className="font-mono font-bold text-emerald-400">PKR {paidToDpl.toLocaleString()}</span>
                 </div>
-              )}
-
-            </div>
-
-            <div className="p-4 bg-slate-950 border-t border-white/10 flex justify-end no-print">
-              <button
-                onClick={() => { setShowInvoicesModal(false); setSelectedInvoiceContainer(null); }}
-                className="px-4 py-2 text-xs text-gray-400 hover:text-white"
-              >
-                Close
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* CASE DETAILS MODAL (WHEN A CASE IS CLICKED) */}
-      {/* ========================================================================= */}
-      {selectedCase && (
-        <div className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm overflow-y-auto" data-printable-modal="true">
-          <div className="bg-slate-900 rounded-2xl max-w-3xl w-full border border-white/10 shadow-2xl overflow-hidden my-8 print-sheet">
-            
-            <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-950">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xl font-bold text-white print:text-black">{selectedCase.caseNo}</span>
-                  <span className="bg-brand-500/20 text-brand-300 text-xs px-2.5 py-0.5 rounded border border-brand-500/30">
-                    {selectedCase.category}
-                  </span>
+                <div className="flex justify-between border-t border-white/10 pt-2 font-bold">
+                  <span className="text-amber-400">Net Outstanding Balance:</span>
+                  <span className="font-mono text-amber-400 text-sm">PKR {payableToDpl.toLocaleString()}</span>
                 </div>
-                <p className="text-gray-400 text-xs mt-0.5 print:text-gray-600">Route: {selectedCase.pol} → {selectedCase.pod}</p>
               </div>
-              <div className="flex items-center gap-2 no-print">
+
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-white/10">
                 <button
                   type="button"
-                  onClick={() => downloadCasePdf(selectedCase, { onlyInvoice: true })}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-medium flex items-center gap-1.5 transition-colors"
-                  title="Download Invoice as PDF"
+                  onClick={() => setShowLedgerModal(false)}
+                  className="px-4 py-2 text-xs text-gray-400"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    downloadClientLedgerPdf({
+                      clientName: selectedClientName,
+                      statementDate: new Date().toLocaleDateString(),
+                      dateRange: 'Current Month & Active Consignments',
+                      summary: {
+                        totalDebits: billedToDpl,
+                        totalCredits: paidToDpl,
+                        netBalance: payableToDpl,
+                        totalCases: clientCases.length,
+                        totalContainers: clientCases.reduce((s, c) => s + (c.containers?.length || 1), 0)
+                      },
+                      entries: passbookEntries.map(e => ({
+                        date: e.date,
+                        reference: e.caseNo || e.id,
+                        description: e.typeName,
+                        debit: e.type === 'INVOICE' ? e.amount : 0,
+                        credit: e.type === 'PAYMENT' ? e.amount : 0,
+                        balance: e.amount
+                      })),
+                      companyName: companyName,
+                      customLogo: activeLogo,
+                      branding: branding
+                    });
+                  }}
+                  className="bg-brand-600 hover:bg-brand-500 text-white px-5 py-2 rounded-xl font-bold flex items-center gap-2 shadow"
                 >
                   <Download size={14} />
-                  <span>Download Invoice (PDF)</span>
-                </button>
-                <button 
-                  onClick={() => setSelectedCase(null)}
-                  className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-white/10 no-print"
-                >
-                  <X size={20} />
+                  <span>Download Ledger (PDF)</span>
                 </button>
               </div>
             </div>
-
-            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
-              
-              {/* Status Stepper */}
-              <div className="bg-slate-950 p-4 rounded-xl border border-white/5">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                  Current Shipment Status:
-                </p>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-brand-300 text-sm flex items-center gap-1.5">
-                    <CheckCircle2 size={16} className="text-brand-400" />
-                    {selectedCase.status}
-                  </span>
-                  <span className="text-gray-400">Created: {selectedCase.createdAt}</span>
-                </div>
-              </div>
-
-              {/* Shipping & Goods Specs */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs bg-white/5 p-4 rounded-xl border border-white/5">
-                <div>
-                  <span className="text-gray-400 block">B/L Number:</span>
-                  <span className="font-mono text-white font-bold">{selectedCase.extractedData?.blNumber || 'N/A'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block">Vessel:</span>
-                  <span className="text-white font-medium">{selectedCase.extractedData?.vesselName || 'Cosco Express'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block">Total Weight:</span>
-                  <span className="font-mono text-white font-medium">{selectedCase.extractedData?.totalWeight || 28000} Kg</span>
-                </div>
-                <div>
-                  <span className="text-gray-400 block">Item Description:</span>
-                  <span className="text-white font-medium">{selectedCase.extractedData?.itemName || 'General Cargo'}</span>
-                </div>
-              </div>
-
-              {/* Containers Info */}
-              <div>
-                <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
-                  Containers Details ({selectedCase.containers.length} Containers):
-                </h4>
-                <div className="space-y-2">
-                  {selectedCase.containers.map((cntr) => (
-                    <div key={cntr.id} className="bg-slate-950 p-3 rounded-xl border border-white/10 flex flex-col sm:flex-row justify-between sm:items-center gap-2 text-xs">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-white text-sm">{cntr.number}</span>
-                          <span className="bg-brand-500/20 text-brand-300 px-2 py-0.5 rounded text-[10px]">{cntr.size}</span>
-                          <span className="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded text-[10px]">{cntr.status}</span>
-                        </div>
-                        <p className="text-gray-400 text-[11px] mt-1">
-                          Vehicle: <span className="text-gray-200">{cntr.vehicleNo || 'TL-8842'}</span> • Driver: <span className="text-gray-200">{cntr.driverName || 'Muhammad Ismail'}</span> ({cntr.driverContact || '0300-8877665'})
-                        </p>
-                      </div>
-                      <div className="text-right font-mono text-gray-300">
-                        {cntr.weight} Kg
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Billing Charges & Receipts */}
-              {selectedCase.charges && selectedCase.charges.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2 flex items-center justify-between">
-                    <span>Billing Charges & Receipts:</span>
-                    <span className="text-emerald-400 font-mono font-bold">
-                      Total: PKR {selectedCase.charges.reduce((sum, ch) => sum + (Number(ch.amount) || 0), 0).toLocaleString()}
-                    </span>
-                  </h4>
-                  <div className="overflow-x-auto rounded-xl border border-white/10 bg-slate-900/60">
-                    <table className="w-full text-left text-xs text-gray-200">
-                      <thead className="bg-white/5 uppercase font-semibold text-gray-300 border-b border-white/10">
-                        <tr>
-                          <th className="p-2.5 w-8 text-center">#</th>
-                          <th className="p-2.5">Service Description</th>
-                          <th className="p-2.5 text-right">Amount (PKR)</th>
-                          <th className="p-2.5 text-center">Payment Receipt</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {selectedCase.charges.map((ch, cIdx) => (
-                          <tr key={cIdx} className="hover:bg-white/5 transition-colors">
-                            <td className="p-2.5 text-gray-400 text-center">{cIdx + 1}</td>
-                            <td className="p-2.5 font-medium text-white">{ch.description}</td>
-                            <td className="p-2.5 text-right font-mono font-semibold text-emerald-400">
-                              PKR {Number(ch.amount || 0).toLocaleString()}
-                            </td>
-                            <td className="p-2.5 text-center">
-                              {ch.receiptUrl ? (
-                                <div className="flex items-center justify-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => setLightboxImage(ch.receiptUrl!)}
-                                    className="px-2 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-[11px] font-medium flex items-center gap-1 transition-colors"
-                                    title="View Receipt"
-                                  >
-                                    <Eye size={12} />
-                                    <span>View Receipt</span>
-                                  </button>
-                                  <a
-                                    href={ch.receiptUrl}
-                                    download={ch.receiptName || `Receipt_${ch.description.replace(/\s+/g, '_')}.png`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="p-1 rounded bg-brand-500/15 hover:bg-brand-500/25 text-brand-300 border border-brand-500/30 text-[11px] transition-colors"
-                                    title="Download Receipt"
-                                  >
-                                    <Download size={12} />
-                                  </a>
-                                </div>
-                              ) : (
-                                <span className="text-gray-500 text-[11px] italic">No receipt</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Official Downloadable Documents Section (Bills, Delivery Orders, Invoices, Dossier) */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-brand-300">
-                    <FileCheck size={15} /> Official Case Documents & Downloads:
-                  </span>
-                  <span className="text-[11px] text-gray-400 font-normal">
-                    Permanent Case Archives
-                  </span>
-                </h4>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  
-                  {/* 1. Complete Case Dossier Document */}
-                  <div className="p-3.5 rounded-xl border border-brand-500/30 bg-brand-500/10 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-lg bg-brand-600/20 text-brand-400 flex items-center justify-center shrink-0">
-                        <FileText size={18} />
-                      </div>
-                      <div className="min-w-0">
-                        <h5 className="text-xs font-bold text-white truncate">Complete Case Dossier</h5>
-                        <p className="text-[11px] text-gray-400">Full Case Profile, Route & Containers</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => downloadCasePdf(selectedCase)}
-                      className="px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
-                    >
-                      <Download size={13} /> Dossier
-                    </button>
-                  </div>
-
-                  {/* 2. Commercial Freight Invoice */}
-                  <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-lg bg-amber-600/20 text-amber-400 flex items-center justify-center shrink-0">
-                        <DollarSign size={18} />
-                      </div>
-                      <div className="min-w-0">
-                        <h5 className="text-xs font-bold text-white truncate">Commercial Freight Invoice</h5>
-                        <p className="text-[11px] text-gray-400">Case Billing & Terminal Charges</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const rate = getRouteRate(selectedCase.pol, selectedCase.pod);
-                        const cntr = selectedCase.containers?.[0] || { id: 1, number: selectedCase.containerNumber || 'MSKU-0000000', size: '40ft', weight: 28000, status: 'Completed' };
-                        await downloadContainerInvoicePdf({
-                          invoiceNo: selectedCase.invoiceNo || selectedCase.caseNo || `INV-${selectedCase.id}`,
-                          clientName: selectedCase.clientName,
-                          containerNo: cntr.number || 'MSKU-0000000',
-                          size: (cntr as any).size || '40ft',
-                          weight: (cntr as any).weight || 28000,
-                          sealNo: (cntr as any).sealNo,
-                          route: `${selectedCase.pol} -> ${selectedCase.pod}`,
-                          rate: rate,
-                          date: selectedCase.createdAt || new Date().toISOString().split('T')[0],
-                          blNo: selectedCase.extractedData?.blNumber,
-                          companyName,
-                          customLogo: activeLogo,
-                          branding
-                        });
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
-                    >
-                      <Download size={13} /> Invoice
-                    </button>
-                  </div>
-
-                  {/* 3. Customs Delivery Order (DO / NOC) */}
-                  <div className="p-3.5 rounded-xl border border-blue-500/30 bg-blue-500/10 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0">
-                        <ShieldCheck size={18} />
-                      </div>
-                      <div className="min-w-0">
-                        <h5 className="text-xs font-bold text-white truncate">Customs Delivery Order (DO / NOC)</h5>
-                        <p className="text-[11px] text-gray-400">Shipping Line Terminal Release</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await downloadCustomsDeliveryOrderPdf({
-                            targetCase: selectedCase,
-                            branding: { companyName, customLogo: activeLogo },
-                            officerName: 'Customs Officer'
-                          });
-                        } catch (err) {
-                          console.error(err);
-                          alert('Could not download Customs DO.');
-                        }
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
-                    >
-                      <Download size={13} /> DO / NOC
-                    </button>
-                  </div>
-
-                  {/* 4. Port Loading & Unloading Bills */}
-                  {(() => {
-                    const portBills: Array<{
-                      id: string;
-                      name: string;
-                      type: string;
-                      url?: string;
-                      billNo?: string;
-                      amount?: number;
-                      officer?: string;
-                      containerNo?: string;
-                      billData?: any;
-                    }> = [];
-
-                    if (Array.isArray((selectedCase as any).loadingBills)) {
-                      (selectedCase as any).loadingBills.forEach((b: any, idx: number) => {
-                        portBills.push({
-                          id: b.id || `lb_${idx}`,
-                          name: `Loading Bill - ${b.billNo || b.id}.pdf`,
-                          type: 'Port Loading Bill',
-                          url: b.pdfUrl,
-                          billNo: b.billNo,
-                          amount: b.totalAmount,
-                          officer: b.staffName,
-                          containerNo: b.containerNo,
-                          billData: b
-                        });
-                      });
-                    }
-
-                    if (Array.isArray(selectedCase.documents)) {
-                      selectedCase.documents.forEach((d: any, idx: number) => {
-                        const dType = (d.type || '').toLowerCase();
-                        const dName = (d.name || '').toLowerCase();
-                        if (dType.includes('loading bill') || dType.includes('unloading bill') || dName.includes('loading bill') || dName.includes('unloading bill')) {
-                          const billNo = d.billNo || (d.name ? d.name.replace(/\.pdf$/i, '').replace(/^Loading_Bill_/i, '').replace(/^Loading Bill - /i, '') : `LB-${idx + 1}`);
-                          if (!portBills.some(pb => pb.billNo === billNo || pb.name === d.name)) {
-                            portBills.push({
-                              id: d.id || `doc_lb_${idx}`,
-                              name: d.name || `Loading Bill - ${billNo}.pdf`,
-                              type: dType.includes('unloading') ? 'Port Unloading Bill' : 'Port Loading Bill',
-                              url: d.url,
-                              billNo,
-                              amount: d.totalAmount,
-                              officer: d.officer,
-                              containerNo: d.containerNo || selectedCase.containerNumber,
-                              billData: d.billData
-                            });
-                          }
-                        }
-                      });
-                    }
-
-                    // If explicit bills exist, show them
-                    if (portBills.length > 0) {
-                      return portBills.map((pb, pbIdx) => (
-                        <div key={'pb-' + pbIdx} className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="w-9 h-9 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center shrink-0">
-                              <Receipt size={18} />
-                            </div>
-                            <div className="min-w-0">
-                              <h5 className="text-xs font-bold text-white truncate">{pb.name}</h5>
-                              <p className="text-[11px] text-emerald-300">
-                                {pb.type} &bull; PKR {Number(pb.amount || 0).toLocaleString()} {pb.officer ? `(${pb.officer})` : ''}
-                              </p>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              if (pb.url) {
-                                window.open(pb.url, '_blank');
-                                return;
-                              }
-                              try {
-                                const bData: LoadingBillData = pb.billData || {
-                                  billNo: pb.billNo || `LB-${Date.now()}`,
-                                  caseNo: selectedCase.caseNo,
-                                  clientName: selectedCase.clientName,
-                                  containerNo: pb.containerNo || selectedCase.containerNumber || 'MSKU-8876541',
-                                  portTerminal: selectedCase.pol || 'Port Terminal',
-                                  date: new Date().toISOString().slice(0, 10),
-                                  items: (selectedCase.charges || []).map((c: any) => ({
-                                    head: c.description || 'Terminal Handling',
-                                    amount: Number(c.amount) || 0,
-                                    receiptUrl: c.receiptUrl
-                                  })),
-                                  totalAmount: pb.amount || (selectedCase.charges || []).reduce((s: number, ch: any) => s + (Number(ch.amount) || 0), 0),
-                                  officerName: pb.officer || 'Port Officer',
-                                  branding: { companyName, customLogo: activeLogo }
-                                };
-                                await downloadLoadingBillPdf(bData);
-                              } catch (err) {
-                                console.error(err);
-                                alert('Could not download Loading Bill PDF.');
-                              }
-                            }}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
-                          >
-                            <Download size={13} /> Bill (PDF)
-                          </button>
-                        </div>
-                      ));
-                    }
-
-                    // Otherwise offer standard Loading Bill on-demand
-                    return (
-                      <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-9 h-9 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center shrink-0">
-                            <Receipt size={18} />
-                          </div>
-                          <div className="min-w-0">
-                            <h5 className="text-xs font-bold text-white truncate">Port Loading Bill</h5>
-                            <p className="text-[11px] text-gray-400">{selectedCase.pol} Terminal Handling</p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              const bData: LoadingBillData = {
-                                billNo: `LB-26-${selectedCase.caseNo.split('-').pop() || '001'}`,
-                                caseNo: selectedCase.caseNo,
-                                clientName: selectedCase.clientName,
-                                containerNo: selectedCase.containers?.[0]?.number || selectedCase.containerNumber || 'MSKU-8876541',
-                                portTerminal: selectedCase.pol || 'Port Terminal',
-                                date: new Date().toISOString().slice(0, 10),
-                                items: (selectedCase.charges || []).map((c: any) => ({
-                                  head: c.description || 'Terminal Handling',
-                                  amount: Number(c.amount) || 0,
-                                  receiptUrl: c.receiptUrl
-                                })),
-                                totalAmount: (selectedCase.charges || []).reduce((s: number, ch: any) => s + (Number(ch.amount) || 0), 0) || 25000,
-                                officerName: 'Port Operations Officer',
-                                branding: { companyName, customLogo: activeLogo }
-                              };
-                              await downloadLoadingBillPdf(bData);
-                            } catch (err) {
-                              console.error(err);
-                              alert('Could not generate Loading Bill.');
-                            }
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shadow shrink-0 cursor-pointer active:scale-95 transition"
-                        >
-                          <Download size={13} /> Bill (PDF)
-                        </button>
-                      </div>
-                    );
-                  })()}
-
-                </div>
-              </div>
-
-              {/* Attached Documents */}
-              {selectedCase.documents && selectedCase.documents.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wider mb-2">
-                    Attached Initial Documents & Files:
-                  </h4>
-                  <div className="grid grid-cols-2 gap-3">
-                    {selectedCase.documents.map((doc, idx) => (
-                      <div
-                        key={idx}
-                        onClick={() => {
-                          const url = (doc as any).url || 'https://placehold.co/600x800/png?text=Document+Preview';
-                          setLightboxImage(url);
-                        }}
-                        className="bg-white/5 hover:bg-white/10 p-3 rounded-xl border border-white/10 cursor-pointer flex items-center justify-between transition group"
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <FileText size={16} className="text-brand-400 shrink-0" />
-                          <span className="text-xs text-gray-200 truncate group-hover:text-brand-300">{doc.name}</span>
-                        </div>
-                        <Eye size={14} className="text-gray-400 group-hover:text-white" />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-            </div>
-
-            <div className="p-4 bg-slate-950 border-t border-white/10 flex justify-between items-center no-print">
-              <button
-                onClick={() => setSelectedCase(null)}
-                className="px-4 py-2 text-xs text-gray-400 hover:text-white"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => downloadCasePdf(selectedCase)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-lg text-xs font-medium flex items-center gap-2 shadow-lg shadow-emerald-600/30 cursor-pointer active:scale-95"
-              >
-                <Download size={15} /> Download Case Summary (PDF)
-              </button>
-            </div>
-
           </div>
         </div>
       )}
 
-      {/* Lightbox / Document Zoom Modal */}
+      {/* ========================================================================= */}
+      {/* MODAL: DOWNLOAD INVOICES LIST MODAL */}
+      {/* ========================================================================= */}
+      {showInvoicesModal && (
+        <div className="fixed inset-0 bg-black/85 z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-slate-900 rounded-3xl max-w-2xl w-full border border-white/10 shadow-2xl p-6 mb-8 space-y-4 max-h-[85vh] overflow-y-auto custom-scrollbar">
+            <div className="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <Receipt className="text-amber-400" size={20} />
+                <span>Select Invoice to Download</span>
+              </h3>
+              <button onClick={() => setShowInvoicesModal(false)} className="text-gray-400 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {clientCases.flatMap(c => (c.containers || []).map((cntr, idx) => {
+                const rate = getRouteRate(c.pol, c.pod);
+                const invNum = `INV-26-${(cntr.number || '0000').slice(-4)}`;
+                return (
+                  <div key={`${c.id}-${idx}`} className="bg-slate-950 p-3 rounded-xl border border-white/10 flex justify-between items-center text-xs">
+                    <div>
+                      <span className="font-mono font-bold text-amber-400 text-sm">{invNum}</span>
+                      <p className="text-gray-400 mt-0.5">
+                        Case: {c.caseNo} &bull; Container: {cntr.number} &bull; Route: {c.pol} &rarr; {c.pod}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => downloadContainerInvoicePdf({
+                        invoiceNo: invNum,
+                        clientName: selectedClientName,
+                        containerNo: cntr.number,
+                        size: (cntr as any).size || '40ft',
+                        route: `${c.pol} -> ${c.pod}`,
+                        rate: rate,
+                        date: c.createdAt,
+                        companyName: companyName
+                      })}
+                      className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1 shadow"
+                    >
+                      <Download size={13} /> Download PDF
+                    </button>
+                  </div>
+                );
+              }))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: DOWNLOAD LOADING BILLS LIST MODAL */}
+      {/* ========================================================================= */}
+      {showLoadingBillsModal && (
+        <div className="fixed inset-0 bg-black/85 z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-slate-900 rounded-3xl max-w-2xl w-full border border-white/10 shadow-2xl p-6 mb-8 space-y-4 max-h-[85vh] overflow-y-auto custom-scrollbar">
+            <div className="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <FileCheck className="text-emerald-400" size={20} />
+                <span>Select Port Loading Bill to Download</span>
+              </h3>
+              <button onClick={() => setShowLoadingBillsModal(false)} className="text-gray-400 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {clientCases.map(c => (
+                <div key={c.id} className="bg-slate-950 p-3 rounded-xl border border-white/10 flex justify-between items-center text-xs">
+                  <div>
+                    <span className="font-mono font-bold text-emerald-400 text-sm">
+                      LB-26-{c.caseNo.split('-').pop()}
+                    </span>
+                    <p className="text-gray-400 mt-0.5">
+                      Case: {c.caseNo} &bull; Port: {c.pol} &bull; Staff: {(c as any).loadingStaffName || 'Mohsin Khan'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const bData: LoadingBillData = {
+                        billNo: `LB-26-${c.caseNo.split('-').pop() || '001'}`,
+                        caseNo: c.caseNo,
+                        clientName: c.clientName,
+                        containerNo: c.containers?.[0]?.number || 'MSKU-8876541',
+                        portTerminal: c.pol || 'Port Terminal',
+                        date: new Date().toISOString().slice(0, 10),
+                        items: (c.charges || []).map((ch: any) => ({
+                          head: ch.description || 'Terminal Handling',
+                          amount: Number(ch.amount) || 0
+                        })),
+                        totalAmount: 25000,
+                        officerName: (c as any).loadingStaffName || 'Mohsin Khan (Port Staff)',
+                        branding: { companyName, customLogo: activeLogo }
+                      };
+                      downloadLoadingBillPdf(bData);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1 shadow"
+                  >
+                    <Download size={13} /> Download Bill
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal */}
       {lightboxImage && (
         <div 
           className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4 backdrop-blur-md cursor-zoom-out"
@@ -2777,7 +2152,7 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
           </button>
           <img 
             src={lightboxImage} 
-            alt="Document Preview" 
+            alt="Document Proof Preview" 
             className="max-w-full max-h-[90vh] object-contain rounded-lg border border-white/10 shadow-2xl" 
           />
         </div>
@@ -2787,7 +2162,12 @@ const ClientPortal: React.FC<ClientPortalProps> = ({
       <ClientRegistrationModal
         isOpen={isClientRegModalOpen}
         onClose={() => setIsClientRegModalOpen(false)}
-        onSave={handleClientSaved}
+        onSave={(savedClient) => {
+          setIsClientRegModalOpen(false);
+          setSelectedClientName(savedClient.name);
+          safeAppStorage.setItem('dpl_client_name', savedClient.name);
+          alert(`Client profile for "${savedClient.name}" updated successfully!`);
+        }}
         defaultCategory="Bonded Carrier"
       />
 

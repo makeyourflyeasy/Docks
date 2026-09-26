@@ -55,8 +55,8 @@ const NotificationModal: React.FC<NotificationModalProps> = ({ notification, isO
   const approval = notification.approvalData;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="bg-slate-900 border border-white/15 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100">
+    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto bg-black/70 backdrop-blur-sm animate-fade-in">
+      <div className="bg-slate-900 border border-white/15 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100 mb-6">
         
         {/* Header */}
         <div className={`${getHeaderColor()} p-5 flex justify-between items-start`}>

@@ -572,8 +572,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
 
         {/* Upload Modal */}
         {showUploadModal && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-                <div className="glass-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="fixed inset-0 z-[100] flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto bg-black/80 backdrop-blur-sm">
+                <div className="glass-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 mb-6">
                     <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5">
                         <h3 className="text-lg font-bold text-white font-sans">Upload Company Document</h3>
                         <button onClick={() => { setShowUploadModal(false); resetDocForm(); }} className="text-gray-400 hover:text-white"><X size={20}/></button>
@@ -874,8 +874,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
 
         {/* 1. Dedicated Selective Backup Modal */}
         {showBackupModal && (
-           <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-              <div className="bg-slate-900 border border-white/15 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+           <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto z-50 animate-in fade-in duration-200">
+              <div className="bg-slate-900 border border-white/15 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl mb-6">
                  <div className="p-6 border-b border-white/10 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                        <div className="w-10 h-10 rounded-xl bg-brand-500/20 flex items-center justify-center text-brand-400 border border-brand-500/30">
@@ -1010,8 +1010,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onReplaySplash }) => {
 
         {/* 2. Dedicated Factory Reset Warning Window */}
         {showResetWarningModal && (
-           <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-              <div className="bg-slate-900 border border-red-500/30 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
+           <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto z-50 animate-in fade-in duration-200">
+              <div className="bg-slate-900 border border-red-500/30 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl mb-6">
                  <div className="p-6 bg-red-500/10 border-b border-red-500/20 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                        <div className="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center text-red-400 border border-red-500/40">

@@ -1673,8 +1673,8 @@ const UserManagement: React.FC = () => {
       {/* ONBOARDING ROLE SELECTOR MODAL */}
       {/* ========================================================================= */}
       {showRoleSelectorModal && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
-          <div className="glass-card p-6 sm:p-8 rounded-3xl w-full max-w-xl border border-white/15 shadow-2xl space-y-5 bg-slate-900">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="glass-card p-6 sm:p-8 rounded-3xl w-full max-w-xl border border-white/15 shadow-2xl space-y-5 bg-slate-900 mb-6">
             <div className="flex justify-between items-center border-b border-white/10 pb-3">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-widest text-brand-400 font-bold">Directory Setup</span>
@@ -1734,8 +1734,8 @@ const UserManagement: React.FC = () => {
       {/* STAFF & TRANSPORTER FORM MODAL */}
       {/* ========================================================================= */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
-          <div className="glass-card p-6 rounded-3xl w-full max-w-2xl border border-white/15 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar bg-slate-900">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="glass-card p-6 rounded-3xl w-full max-w-2xl border border-white/15 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar bg-slate-900 mb-6">
             <div className="flex justify-between items-center mb-5 pb-3 border-b border-white/10 sticky top-0 bg-slate-900/90 backdrop-blur-md z-10">
               <div>
                 <span className="text-[10px] font-mono uppercase tracking-widest text-brand-400 font-bold">
@@ -2525,8 +2525,8 @@ const UserManagement: React.FC = () => {
       {/* 9. DELETE CONFIRMATION MODAL */}
       {/* ========================================================================= */}
       {deleteTarget && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center z-60 p-4 animate-in fade-in duration-150">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-sm border border-white/10 text-center space-y-4 bg-slate-900 shadow-2xl">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-start justify-center z-60 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-sm border border-white/10 text-center space-y-4 bg-slate-900 shadow-2xl mb-6">
             <div className="bg-red-500/20 w-12 h-12 rounded-full flex items-center justify-center mx-auto border border-red-500/30">
               <AlertTriangle size={24} className="text-red-500" />
             </div>

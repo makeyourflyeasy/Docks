@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, FolderKanban, Users, Truck, Settings, FileText, Bell, LogOut, Menu,
   X, Check, AlertCircle, AlertTriangle, Info, Trash2, Loader2, Maximize2, Minimize2, Upload,
-  ShieldCheck, UserCircle, RefreshCw, HardDrive
+  ShieldCheck, UserCircle, RefreshCw, HardDrive, MapPin
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import CaseManagement from './components/CaseManagement';
@@ -17,6 +17,8 @@ import LoginModeSelection, { SelectedModePayload } from './components/LoginModeS
 import GoldenAmountWidget from './components/GoldenAmountWidget';
 import ClientPortal from './components/ClientPortal';
 import { LoadingPortStaffPortal } from './components/LoadingPortStaffPortal';
+import TransporterPortal from './components/TransporterPortal';
+import { AvailableVehiclesView } from './components/AvailableVehiclesView';
 import { ModeOption } from './components/TopModeSwitcher';
 import { AppNotification, UserRole } from './types';
 import NotificationModal from './components/NotificationModal';
@@ -131,6 +133,7 @@ const App: React.FC = () => {
     { id: 'drive', label: 'Google Drive', icon: HardDrive },
     { id: 'finance', label: 'Finance', icon: FileText },
     { id: 'vehicles', label: 'Vehicles', icon: Truck },
+    { id: 'available_vehicles', label: 'Available Fleet (Ready)', icon: MapPin },
     { id: 'users', label: 'User Management', icon: Users },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
@@ -139,6 +142,7 @@ const App: React.FC = () => {
   const clientNavItems = [
     { id: 'cases', label: 'Cases & Shipments', icon: FolderKanban },
     { id: 'finance', label: 'Finance & Invoices', icon: FileText },
+    { id: 'available_vehicles', label: 'Available Fleet (Ready)', icon: MapPin },
   ];
 
   // Dynamic navigation items based on active portal mode & multi-roles
@@ -153,6 +157,7 @@ const App: React.FC = () => {
     if (currentRole === UserRole.TRANSPORTER) {
       return [
         { id: 'vehicles', label: 'Fleet & Vehicles', icon: Truck },
+        { id: 'available_vehicles', label: 'Available Fleet (Ready)', icon: MapPin },
         { id: 'cases', label: 'Assigned Shipments', icon: FolderKanban },
       ];
     }
@@ -175,6 +180,7 @@ const App: React.FC = () => {
     }
     if (hasVehiclesAccess) {
       items.push({ id: 'vehicles', label: 'Fleet & Vehicles', icon: Truck });
+      items.push({ id: 'available_vehicles', label: 'Available Fleet (Ready)', icon: MapPin });
     }
 
     if (items.length === 0) {
@@ -305,6 +311,17 @@ const App: React.FC = () => {
       );
     }
 
+    // If in Transporter Role, directly render the Transporter Portal
+    if (currentRole === UserRole.TRANSPORTER) {
+      return (
+        <TransporterPortal
+          onSignOut={handleSignOut}
+          onSwitchMode={handleSwitchMode}
+          transporterName={safeAppStorage.getItem('dpl_current_user_name') || 'Bilal Goods Transport Co.'}
+        />
+      );
+    }
+
     // Route Loading Port Staff and Destination / Unloading Staff directly to their dedicated workspace
     if (
       currentRole === UserRole.LOADING_PORT_STAFF || 
@@ -328,6 +345,7 @@ const App: React.FC = () => {
       case 'drive': return <GoogleDriveManager />;
       case 'finance': return <Finance initialFilter={navigationFilter} onActionComplete={handleActionComplete} customLogo={customLogo} />;
       case 'vehicles': return <VehicleManagement initialFilter={navigationFilter} clearFilter={() => setNavigationFilter(null)} userRole={currentRole} userRoles={currentRoles} />;
+      case 'available_vehicles': return <AvailableVehiclesView userRole={currentRole} />;
       case 'users': return <UserManagement />;
       case 'settings': return <AppSettings onReplaySplash={() => { setIsReplaySplashOnly(true); setShowSplash(true); }} />;
       default: return <Dashboard onNavigate={handleNavigate} />;

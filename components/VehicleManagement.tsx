@@ -17,6 +17,9 @@ import {
   VehicleOnlineModal, 
   VehicleRenewalModal 
 } from './VehicleManagementModals';
+import { AvailableVehiclesView } from './AvailableVehiclesView';
+import { subscribeToTransporterRequests, updateTransporterRequestInFirestore } from '../services/dbService';
+import { TransporterRequest } from '../types';
 import { exportVehiclesToExcel } from '../services/excelExportService';
 import { parseVehicleFile, isCorruptedVehicleRecord } from '../services/documentParserService';
 import { OfficialDocumentsModal, DocumentType } from './OfficialDocumentsModal';
@@ -48,10 +51,85 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
   userRole: propUserRole,
   userRoles: propUserRoles 
 }) => {
-  const [activeTab, setActiveTab] = useState<'transporters' | 'vehicles'>(() => {
+  const [activeTab, setActiveTab] = useState<'transporters' | 'vehicles' | 'ready_vehicles'>(() => {
     const saved = safeAppStorage.getItem('dpl_vehicle_tab');
-    return saved === 'transporters' ? 'transporters' : 'vehicles';
+    return (saved === 'transporters' || saved === 'ready_vehicles') ? saved : 'vehicles';
   });
+
+  const [transporterRequests, setTransporterRequests] = useState<TransporterRequest[]>([]);
+  useEffect(() => {
+    const unsub = subscribeToTransporterRequests((reqs) => setTransporterRequests(reqs || []));
+    return () => unsub();
+  }, []);
+
+  const handleApproveTransporterRequest = async (req: TransporterRequest) => {
+    if (req.type === 'NEW_REGISTRATION' && req.vehicleData) {
+      const newVeh: Vehicle = {
+        id: Date.now(),
+        dplSerial: `DPL-V-${String(vehicles.length + 1).padStart(4, '0')}`,
+        registrationNumber: req.vehicleNo || 'TL-NEW',
+        transporterId: Number(req.transporterId) || 1,
+        transporterName: req.transporterName,
+        driverName: req.vehicleData.driverName || 'Designated Driver',
+        driverContact: req.vehicleData.driverContact || 'N/A',
+        driverCnic: req.vehicleData.driverCnic || '',
+        make: req.vehicleData.make || 'Prime Mover',
+        model: req.vehicleData.model || '2022',
+        type: req.vehicleData.type || 'Flatbed Trailer' as any,
+        size: '40ft',
+        engineNo: (req.vehicleData as any).engineNo || 'ENG-DEFAULT',
+        chassisNo: (req.vehicleData as any).chassisNo || 'CHS-DEFAULT',
+        category: VehicleCategory.BONDED_CARRIER,
+        status: 'AVAILABLE',
+        history: [],
+        createdAt: new Date().toISOString()
+      };
+      await saveVehicleToFirestore(newVeh);
+      setVehicles(prev => [newVeh, ...prev]);
+    } else if (req.type === 'RENEWAL') {
+      const existing = vehicles.find(v => v.registrationNumber?.toLowerCase() === req.vehicleNo?.toLowerCase());
+      if (existing) {
+        const nextYear = new Date();
+        nextYear.setMonth(nextYear.getMonth() + 6);
+        const updated = {
+          ...existing,
+          validationExpiryDate: nextYear.toISOString().slice(0, 10),
+          status: 'AVAILABLE' as const
+        };
+        await updateVehicleInFirestore(updated);
+      }
+    } else if (req.type === 'CANCELLATION') {
+      const existing = vehicles.find(v => v.registrationNumber?.toLowerCase() === req.vehicleNo?.toLowerCase());
+      if (existing) {
+        const updated = {
+          ...existing,
+          status: 'CANCELLED' as const,
+          cancellationApproved: true
+        };
+        await updateVehicleInFirestore(updated);
+      }
+    }
+
+    const updatedReq: TransporterRequest = {
+      ...req,
+      status: 'APPROVED',
+      reviewedBy: 'Vehicle Manager',
+      reviewedAt: new Date().toISOString()
+    };
+    await updateTransporterRequestInFirestore(updatedReq);
+    alert(`Transporter request for ${req.vehicleNo} has been APPROVED!`);
+  };
+
+  const handleRejectTransporterRequest = async (req: TransporterRequest) => {
+    const updatedReq: TransporterRequest = {
+      ...req,
+      status: 'REJECTED',
+      reviewedBy: 'Vehicle Manager',
+      reviewedAt: new Date().toISOString()
+    };
+    await updateTransporterRequestInFirestore(updatedReq);
+    alert(`Transporter request for ${req.vehicleNo} has been declined.`);
+  };
 
   const effectiveRole = propUserRole || (safeAppStorage.getItem('dpl_user_role') as UserRole) || UserRole.ADMIN;
   const effectiveRoles: UserRole[] = useMemo(() => {
@@ -1316,13 +1394,80 @@ const VehicleManagement: React.FC<VehicleManagementProps> = ({
             >
               <User size={16} /> Transporters & Brokers
             </button>
+            <button 
+              onClick={() => setActiveTab('ready_vehicles')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'ready_vehicles' ? 'bg-brand-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+            >
+              <MapPin size={16} /> Available Fleet (Ready for Loading)
+            </button>
           </div>
         </div>
       </div>
 
+      {/* Transporter Incoming Requests Desk */}
+      {transporterRequests.filter(r => r.status === 'PENDING').length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 sm:p-5 space-y-3 shadow-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                <Clock size={18} className="animate-spin" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>Transporter Requests Desk</span>
+                  <span className="bg-amber-500/20 text-amber-300 text-xs px-2 py-0.5 rounded-full font-mono">
+                    {transporterRequests.filter(r => r.status === 'PENDING').length} Pending
+                  </span>
+                </h4>
+                <p className="text-xs text-gray-400">
+                  New vehicle registrations, renewals, and cancellation requests submitted by transporters
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+            {transporterRequests.filter(r => r.status === 'PENDING').map(req => (
+              <div key={req.id} className="bg-slate-900 p-3.5 rounded-xl border border-white/10 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="font-mono font-bold text-white text-sm">{req.vehicleNo}</span>
+                  <span className="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded text-[10px] font-bold">
+                    {req.type.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="text-gray-400 text-[11px] space-y-0.5">
+                  <p>🏢 Transporter: <span className="text-gray-200">{req.transporterName}</span></p>
+                  {req.reason && <p>💬 Reason: <span className="text-gray-300">{req.reason}</span></p>}
+                  {req.vehicleData && (
+                    <p>🚚 Make/Model: <span className="text-gray-300">{req.vehicleData.make} ({req.vehicleData.model})</span></p>
+                  )}
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => handleRejectTransporterRequest(req)}
+                    className="px-2.5 py-1 text-red-400 hover:bg-red-500/10 rounded border border-red-500/30"
+                  >
+                    Decline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApproveTransporterRequest(req)}
+                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-semibold shadow"
+                  >
+                    Approve Request
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Content Area */}
       {activeTab === 'vehicles' && renderVehiclesSection()}
       {activeTab === 'transporters' && renderTransportersSection()}
+      {activeTab === 'ready_vehicles' && <AvailableVehiclesView userRole="VEHICLE_MANAGER" />}
 
       {/* Add Transporter Modal */}
       {showAddTransporter && (

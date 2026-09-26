@@ -4,7 +4,7 @@ import {
   Search, Filter, Download, CreditCard, Banknote, Briefcase, X, Save, Calendar, Camera,
   BookOpen, ChevronDown, ChevronUp, CheckCircle2, User, Layers, RefreshCw, AlertCircle, ArrowRight,
   Eye, Loader2, Share2, Upload, Zap, Trash2, Building, Truck, Clock, ShieldCheck, ArrowLeft,
-  ArrowLeftRight, FileSpreadsheet
+  ArrowLeftRight, FileSpreadsheet, UserPlus, FileCheck
 } from 'lucide-react';
 import Logo from './Logo';
 import { PdfViewerModal } from './PdfViewerModal';
@@ -97,7 +97,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     let maxSeq = 0;
     listToScan.forEach(f => {
       if (f.reference) {
-        const match = f.reference.match(/DPL-(\d+)/i);
+        const match = f.reference.match(/TSCTN-(\d+)/i) || f.reference.match(/DPL-(\d+)/i);
         if (match) {
           const seq = parseInt(match[1], 10);
           if (seq > maxSeq) maxSeq = seq;
@@ -110,7 +110,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       }
     });
     const nextSeq = maxSeq + 1;
-    return `DPL-${String(nextSeq).padStart(4, '0')}`;
+    return `TSCTN-${String(nextSeq).padStart(4, '0')}`;
   };
 
   // Cross-component and cross-storage live sync
@@ -235,6 +235,12 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   // Party selection inside modal
   const [isOtherClient, setIsOtherClient] = useState(false);
   const [otherClientName, setOtherClientName] = useState('');
+  const [isTemporaryParty, setIsTemporaryParty] = useState(false);
+  const [temporaryPartyName, setTemporaryPartyName] = useState('');
+
+  // Payment Completion & Receipt Download Popup Modal (SRS)
+  const [completedTransactionReceipt, setCompletedTransactionReceipt] = useState<FinanceEntry | null>(null);
+  const [showPaymentSuccessModal, setShowPaymentSuccessModal] = useState(false);
 
   // Vendors & Utilities State
   const [vendors, setVendors] = useState<Vendor[]>(() => getStoredVendors());
@@ -242,6 +248,28 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
   const [vendorCategoryFilter, setVendorCategoryFilter] = useState<string>('ALL');
   const [vendorSearchQuery, setVendorSearchQuery] = useState('');
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
+  
+  // Custom categories state with dynamic add option
+  const [vendorCategories, setVendorCategories] = useState<string[]>(() => {
+    const custom = safeAppStorage.getJSON<string[]>('dpl_custom_vendor_categories', []);
+    return Array.from(new Set([...VENDOR_CATEGORIES, ...custom]));
+  });
+  const [showAddCategoryInput, setShowAddCategoryInput] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+
+  const handleAddNewCategory = () => {
+    const trimmed = newCategoryName.trim();
+    if (!trimmed) return;
+    if (!vendorCategories.includes(trimmed)) {
+      const updated = [...vendorCategories, trimmed];
+      setVendorCategories(updated);
+      safeAppStorage.setJSON('dpl_custom_vendor_categories', updated);
+    }
+    setNewVendorForm(prev => ({ ...prev, category: trimmed as any }));
+    setNewCategoryName('');
+    setShowAddCategoryInput(false);
+  };
+
   const [newVendorForm, setNewVendorForm] = useState<Partial<Vendor>>({
     name: '',
     category: 'Drinking Water Charges',
@@ -1617,6 +1645,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     const paidDate = new Date().toISOString().split('T')[0];
     const isSummary = Boolean(invoiceForReceive.isClientSummary);
+    const seqRef = generateFinanceReference();
     const incomeEntry: FinanceEntry = {
       id: Date.now(),
       date: paidDate,
@@ -1628,7 +1657,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       type: 'INCOME',
       status: 'PAID',
       category: 'Client Payment',
-      reference: invoiceForReceive.reference || `REC-${Date.now()}`,
+      reference: seqRef,
       caseNo: invoiceForReceive.caseNo,
       containerNumber: invoiceForReceive.containerNumber,
       paymentMethod: receivePaymentMethod,
@@ -1653,80 +1682,95 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
     setShowReceivePaymentModal(false);
     setInvoiceForReceive(null);
-    handleOpenReceipt(incomeEntry);
+    setCompletedTransactionReceipt(incomeEntry);
+    setShowPaymentSuccessModal(true);
   };
 
   // ADD TRANSACTION HANDLER (Payment Received, Payment Paid, Receivable, Payable)
   const handleAddTransaction = () => {
-    const finalParty = isOtherClient ? otherClientName.trim() : (newTransaction.party || '').trim();
+    const finalParty = isTemporaryParty 
+      ? temporaryPartyName.trim() 
+      : isOtherClient 
+        ? otherClientName.trim() 
+        : (newTransaction.party || '').trim();
+
     if (!newTransaction.amount || !finalParty) {
       alert("Please provide both Party Name and Amount.");
       return;
     }
 
-    // Persist new client if entered via "Others"
-    if (isOtherClient && finalParty) {
-      saveClientToFirestore({ name: finalParty }).catch(() => {});
-      if (!clientList.includes(finalParty)) {
-        setClientList(prev => [...prev, finalParty]);
+    const isDirectPayment = transactionType === 'INCOME' || transactionType === 'EXPENSE';
+
+    // Persist new client or temporary party
+    if ((isOtherClient || isTemporaryParty) && finalParty) {
+      if (transactionType === 'INCOME') {
+        saveClientToFirestore({ name: finalParty }).catch(() => {});
+        if (!clientList.includes(finalParty)) {
+          setClientList(prev => [...prev, finalParty]);
+        }
+      } else {
+        // Register temporary vendor so ledger exists
+        const tempVendor: Vendor = {
+          id: Date.now().toString(),
+          name: finalParty,
+          companyTitle: finalParty,
+          category: 'Miscellaneous Payments',
+          isRecurring: false,
+          createdAt: new Date().toISOString()
+        };
+        saveVendor(tempVendor).catch(() => {});
+        setVendors(prev => {
+          if (!prev.some(v => v.name.toLowerCase() === finalParty.toLowerCase())) {
+            return [tempVendor, ...prev];
+          }
+          return prev;
+        });
       }
     }
 
-    const isDirectPayment = transactionType === 'INCOME' || transactionType === 'EXPENSE';
+    const matchedVendor = vendors.find(v => 
+      (v.name && v.name.trim().toLowerCase() === finalParty.toLowerCase()) || 
+      (v.companyTitle && v.companyTitle.trim().toLowerCase() === finalParty.toLowerCase())
+    );
 
-    const isStaff = users.some(u => u.name && u.name.trim().toLowerCase() === finalParty.toLowerCase() && u.role !== UserRole.CLIENT);
-    const isVendor = vendors.some(v => v.name && v.name.trim().toLowerCase() === finalParty.toLowerCase());
-    const isClient = clientList.some(c => c && c.trim().toLowerCase() === finalParty.toLowerCase());
-
-    const matchedVendor = vendors.find(v => v.name && v.name.trim().toLowerCase() === finalParty.toLowerCase());
+    // Always generate sequential reference ID: TSCTN-0001, TSCTN-0002, etc.
+    const seqRef = generateFinanceReference();
 
     const entry: FinanceEntry = {
       id: Date.now(),
       date: new Date().toISOString().split('T')[0],
-      description: newTransaction.description?.trim() || (transactionType === 'INCOME' ? 'Payment Received' : transactionType === 'PAYABLE' ? 'Payable Bill' : transactionType === 'RECEIVABLE' ? 'Receivable Bill' : 'Transaction Entry'),
+      description: newTransaction.description?.trim() || (transactionType === 'INCOME' ? 'Payment Received' : transactionType === 'EXPENSE' ? 'Payment Paid' : transactionType === 'PAYABLE' ? 'Payable Bill' : 'Receivable Bill'),
       amount: Number(newTransaction.amount),
       type: transactionType,
       status: isDirectPayment ? 'PAID' : 'PENDING',
       party: finalParty,
-      category: matchedVendor ? matchedVendor.category : (transactionType === 'INCOME' ? 'Client Payment' : transactionType === 'EXPENSE' ? 'Operational Expense' : transactionType === 'PAYABLE' ? 'Payable Bill' : 'Receivable Bill'),
-      reference: newTransaction.transactionId || generateFinanceReference(),
+      category: matchedVendor ? matchedVendor.category : (transactionType === 'INCOME' ? 'Client Payment' : transactionType === 'EXPENSE' ? 'Vendor / Operational Payment' : transactionType === 'PAYABLE' ? 'Payable Bill' : 'Receivable Bill'),
+      reference: seqRef,
       paymentMethod: isDirectPayment ? (newTransaction.paymentMethod as any || 'CASH') : undefined,
-      bankId: isDirectPayment ? newTransaction.bankId : undefined,
-      bankName: isDirectPayment ? newTransaction.bankName : undefined,
-      transactionId: isDirectPayment ? newTransaction.transactionId : undefined,
-      slipUrl: isDirectPayment ? newTransaction.slipUrl : undefined,
+      bankId: isDirectPayment && newTransaction.paymentMethod === 'BANK' ? newTransaction.bankId : undefined,
+      bankName: isDirectPayment && newTransaction.paymentMethod === 'BANK' ? newTransaction.bankName : undefined,
+      transactionId: newTransaction.transactionId?.trim() || undefined,
+      slipUrl: newTransaction.slipUrl,
       documentUrl: newTransaction.documentUrl,
       documentName: newTransaction.documentName
     };
-
-    // Auto-Vendor detection prompt when non-staff payee is entered in cashbook/payables
-    if ((transactionType === 'EXPENSE' || transactionType === 'PAYABLE') && !isStaff && !isVendor && !isClient) {
-      setAutoVendorPrompt({
-        isOpen: true,
-        name: finalParty,
-        category: 'Drinking Water Charges',
-        companyTitle: finalParty,
-        contactNumber: '',
-        address: '',
-        pendingEntry: entry
-      });
-      setShowAddModal(false);
-      return;
-    }
 
     if (transactionType === 'PAYABLE') setPayables([entry, ...payables]);
     else if (transactionType === 'RECEIVABLE') setReceivables([entry, ...receivables]);
     else setFinanceData([entry, ...financeData]);
 
     saveFinanceToFirestore(entry).catch((e) => console.warn("Firestore saveFinance error:", e));
+    logActivity(`${entry.type}: ${entry.reference} - PKR ${entry.amount.toLocaleString()} for ${entry.party}`, 'FINANCE');
 
     setShowAddModal(false);
     setIsOtherClient(false);
     setOtherClientName('');
+    setIsTemporaryParty(false);
+    setTemporaryPartyName('');
     setNewTransaction({ description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: '', documentUrl: '', documentName: '' });
 
     // If we're on client ledger, switch selected client to this party
-    if (activeTab === 'client_ledger') {
+    if (activeTab === 'client_ledger' && transactionType === 'INCOME') {
       setSelectedLedgerClient(finalParty);
     }
 
@@ -1734,7 +1778,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     if (transactionType === 'RECEIVABLE') {
       handleOpenInvoice(entry);
     } else if (transactionType === 'INCOME' || transactionType === 'EXPENSE') {
-      handleDirectDownloadReceipt(entry);
+      setCompletedTransactionReceipt(entry);
+      setShowPaymentSuccessModal(true);
     }
   };
 
@@ -1769,31 +1814,37 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       await saveFinanceToFirestore(updatedEntry).catch(() => {});
       logActivity(`New Vendor registered and payment recorded for ${newVendor.name} under ${newVendor.category}`, 'FINANCE');
 
-      if (updatedEntry.type === 'EXPENSE') {
-        handleDirectDownloadReceipt(updatedEntry);
+      if (updatedEntry.type === 'EXPENSE' || updatedEntry.type === 'INCOME') {
+        setCompletedTransactionReceipt(updatedEntry);
+        setShowPaymentSuccessModal(true);
       }
     }
 
     setAutoVendorPrompt(null);
     setIsOtherClient(false);
     setOtherClientName('');
+    setIsTemporaryParty(false);
+    setTemporaryPartyName('');
     setNewTransaction({ description: '', amount: 0, party: '', paymentMethod: 'CASH', bankId: '', transactionId: '', slipUrl: '', documentUrl: '', documentName: '' });
   };
 
   // Save new vendor manually from UI
   const handleSaveNewVendor = async () => {
-    if (!newVendorForm.name?.trim()) {
-      alert('Vendor Name is required.');
+    const company = newVendorForm.companyTitle?.trim();
+    const contactPerson = newVendorForm.name?.trim();
+    const primaryName = company || contactPerson;
+    if (!primaryName) {
+      alert('Please enter Vendor Company Name or Contact Person Name.');
       return;
     }
     const vendor: Vendor = {
       id: Date.now().toString(),
-      name: newVendorForm.name.trim(),
+      name: primaryName,
       category: (newVendorForm.category as any) || 'Miscellaneous Payments',
-      companyTitle: newVendorForm.companyTitle?.trim() || newVendorForm.name.trim(),
+      companyTitle: company || primaryName,
       contactNumber: newVendorForm.contactNumber?.trim() || '',
       address: newVendorForm.address?.trim() || '',
-      isRecurring: !!newVendorForm.isRecurring,
+      isRecurring: false,
       createdAt: new Date().toISOString()
     };
     await saveVendor(vendor);
@@ -3176,8 +3227,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
     }
 
     return (
-      <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
-        <div className={`bg-slate-900 border border-white/10 rounded-2xl w-full ${statBreakdownModal === 'cash_in_hand' ? 'max-w-5xl' : 'max-w-4xl'} max-h-[90vh] flex flex-col shadow-2xl overflow-hidden`}>
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-150">
+        <div className={`bg-slate-900 border border-white/10 rounded-2xl w-full ${statBreakdownModal === 'cash_in_hand' ? 'max-w-5xl' : 'max-w-4xl'} max-h-[90vh] flex flex-col shadow-2xl overflow-hidden mb-6`}>
           {/* Modal Header */}
           <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-950/60">
             <div>
@@ -4889,20 +4940,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
       }
 
       case 'vendor_ledger': {
-        const vendorCategoriesList = [
-          'ALL',
-          'Drinking Water Charges',
-          'Electric Bill',
-          'Gas Cylinder Refill',
-          'Internet Bill',
-          'Office Rent',
-          'Stationery',
-          'Photocopy & Printer Maintenance',
-          'Computer Repair',
-          'Office Maintenance',
-          'Legal Payments',
-          'Miscellaneous Payments'
-        ];
+        const vendorCategoriesList = ['ALL', ...vendorCategories];
 
         // If a specific vendor is selected, display their detailed ledger!
         if (selectedVendorForLedger) {
@@ -6030,38 +6068,45 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* Add Transaction Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 no-print">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-md shadow-2xl border border-white/15 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-200 no-print">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-md shadow-2xl border border-white/15 max-h-[90vh] overflow-y-auto mb-6">
             <div className="flex justify-between items-center mb-5 pb-3 border-b border-white/10">
               <div>
                 <h3 className="text-lg font-bold text-white">
-                  {transactionType === 'INCOME' ? 'Receive Payment' : 
-                   transactionType === 'EXPENSE' ? 'Make Payment' : 
+                  {transactionType === 'EXPENSE' ? 'Paid Payment' : 
+                   transactionType === 'INCOME' ? 'Receive Payment' : 
                    transactionType === 'RECEIVABLE' ? 'Add Receivable' : 'Add Payable'}
                 </h3>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  {transactionType === 'INCOME' ? 'Record received payment & generate instant official receipt' : 
-                   transactionType === 'EXPENSE' ? 'Record expense payment' :
+                  {transactionType === 'EXPENSE' ? 'Record paid payment & generate voucher' :
+                   transactionType === 'INCOME' ? 'Record received payment & generate instant official receipt' : 
                    transactionType === 'RECEIVABLE' ? 'Record receivable bill & generate invoice' : 'Record payable bill amount to be settled'}
                 </p>
               </div>
-              <button onClick={() => setShowAddModal(false)} className="text-gray-400 hover:text-white p-1">
+              <button 
+                onClick={() => {
+                  setShowAddModal(false);
+                  setIsTemporaryParty(false);
+                  setTemporaryPartyName('');
+                }} 
+                className="text-gray-400 hover:text-white p-1"
+              >
                 <X size={20}/>
               </button>
             </div>
             
             <div className="space-y-4">
-              {/* Payment Method (Dropdown for Payments only) */}
+              {/* Payment Method (Strictly Cash or Bank) */}
               {(transactionType === 'INCOME' || transactionType === 'EXPENSE') && (
                 <div className="space-y-1.5">
                   <label className="text-xs text-gray-300 font-medium">Payment Mode</label>
                   <select
-                    className="w-full glass-input rounded-xl p-2.5 outline-none text-sm text-white bg-slate-900 border border-white/15"
+                    className="w-full glass-input rounded-xl p-2.5 outline-none text-sm text-white bg-slate-900 border border-white/15 focus:border-brand-400 font-medium"
                     value={newTransaction.paymentMethod || 'CASH'}
                     onChange={(e) => setNewTransaction({ ...newTransaction, paymentMethod: e.target.value as 'CASH' | 'BANK' })}
                   >
-                    <option value="CASH">Cash In Hand</option>
-                    <option value="BANK">Bank Deposit / Transfer</option>
+                    <option value="CASH">Cash</option>
+                    <option value="BANK">Bank</option>
                   </select>
                 </div>
               )}
@@ -6070,7 +6115,7 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
               {(transactionType === 'INCOME' || transactionType === 'EXPENSE') && newTransaction.paymentMethod === 'BANK' && (
                 <div className="space-y-3 bg-brand-500/5 p-3.5 rounded-xl border border-brand-500/20 animate-in fade-in slide-in-from-top-2">
                   <div>
-                    <label className="text-xs text-gray-300 font-medium block mb-1">Deposit Bank Account</label>
+                    <label className="text-xs text-gray-300 font-medium block mb-1">Select Bank Account</label>
                     <select 
                       className="w-full glass-input rounded-xl p-2.5 outline-none text-sm text-white bg-slate-900 border border-white/15"
                       value={newTransaction.bankId}
@@ -6095,77 +6140,123 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                       onChange={(e) => setNewTransaction({...newTransaction, transactionId: e.target.value})}
                     />
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[11px] text-gray-400 font-medium">Upload Deposit Slip / Cheque Photo</label>
-                    <label className="flex items-center justify-center gap-2 p-2.5 border-2 border-dashed border-white/15 rounded-xl hover:bg-brand-500/10 hover:border-brand-500/50 transition-all cursor-pointer">
-                      <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
-                      <Camera size={16} className="text-brand-400" />
-                      <span className="text-xs text-gray-300">{newTransaction.slipUrl ? 'Slip Attached ✅' : 'Choose Receipt / Image'}</span>
-                    </label>
-                  </div>
                 </div>
               )}
 
               {/* PAYEE / PAYER SELECTION */}
               <div className="space-y-1.5">
-                <label className="text-xs text-gray-300 font-medium flex items-center justify-between">
-                  <span>
-                    {transactionType === 'PAYABLE' ? 'Payee' : 
-                     transactionType === 'RECEIVABLE' ? 'Payer' : 
-                     transactionType === 'INCOME' ? 'Payer' : 'Payee'}
-                  </span>
-                  <span className="text-[11px] text-brand-400">Registered Directory</span>
-                </label>
-                <div className="relative">
-                  <select
-                    className="w-full glass-input rounded-xl p-3 outline-none appearance-none cursor-pointer text-sm text-white bg-slate-900 border border-white/15 focus:border-brand-400"
-                    value={isOtherClient ? '__OTHERS__' : (newTransaction.party || '')}
-                    onChange={(e) => {
-                      if (e.target.value === '__OTHERS__') {
-                        setIsOtherClient(true);
-                        setNewTransaction({ ...newTransaction, party: otherClientName.trim() });
-                      } else {
-                        setIsOtherClient(false);
-                        setNewTransaction({ ...newTransaction, party: e.target.value });
-                      }
-                    }}
-                  >
-                    <option value="" className="bg-slate-900 text-gray-400">
-                      -- Select {transactionType === 'PAYABLE' ? 'Payee' : transactionType === 'RECEIVABLE' ? 'Payer' : transactionType === 'INCOME' ? 'Payer' : 'Payee'} --
-                    </option>
-                    {clientList.map((client) => (
-                      <option key={client} value={client} className="bg-slate-900 text-white">
-                        {client}
-                      </option>
-                    ))}
-                    <option value="__OTHERS__" className="bg-slate-900 text-amber-300 font-bold">
-                      ➕ Others (Add New {transactionType === 'PAYABLE' ? 'Payee' : transactionType === 'RECEIVABLE' ? 'Payer' : transactionType === 'INCOME' ? 'Payer' : 'Payee'})
-                    </option>
-                  </select>
-                  <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-gray-300 font-medium">
+                    {transactionType === 'EXPENSE' || transactionType === 'PAYABLE' ? 'Payee' : 'Payer'}
+                  </label>
+                  {/* Temporary Party Toggle Button */}
+                  {transactionType === 'EXPENSE' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsTemporaryParty(!isTemporaryParty);
+                        if (!isTemporaryParty) {
+                          setTemporaryPartyName('');
+                          setNewTransaction(prev => ({ ...prev, party: '' }));
+                        }
+                      }}
+                      className={`text-xs px-2.5 py-1 rounded-lg border font-semibold flex items-center gap-1 transition-all ${
+                        isTemporaryParty 
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
+                          : 'bg-white/5 text-brand-300 border-brand-500/30 hover:bg-brand-500/20'
+                      }`}
+                    >
+                      <UserPlus size={13} />
+                      <span>{isTemporaryParty ? 'Switch to List' : 'Temporary Vendor'}</span>
+                    </button>
+                  ) : transactionType === 'INCOME' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsTemporaryParty(!isTemporaryParty);
+                        if (!isTemporaryParty) {
+                          setTemporaryPartyName('');
+                          setNewTransaction(prev => ({ ...prev, party: '' }));
+                        }
+                      }}
+                      className={`text-xs px-2.5 py-1 rounded-lg border font-semibold flex items-center gap-1 transition-all ${
+                        isTemporaryParty 
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
+                          : 'bg-white/5 text-brand-300 border-brand-500/30 hover:bg-brand-500/20'
+                      }`}
+                    >
+                      <UserPlus size={13} />
+                      <span>{isTemporaryParty ? 'Switch to List' : 'Add Temporary Payer'}</span>
+                    </button>
+                  ) : null}
                 </div>
 
-                {/* Others text input when selected */}
-                {isOtherClient && (
-                  <div className="mt-2 space-y-1.5 animate-in fade-in slide-in-from-top-1 bg-amber-500/10 p-3 rounded-xl border border-amber-500/40">
-                    <label className="block text-xs text-amber-300 font-semibold">
-                      Enter New {transactionType === 'PAYABLE' ? 'Payee' : transactionType === 'RECEIVABLE' ? 'Payer' : transactionType === 'INCOME' ? 'Payer' : 'Payee'} Name
-                    </label>
+                {/* If Temporary party is toggled */}
+                {isTemporaryParty ? (
+                  <div className="space-y-1 animate-in fade-in slide-in-from-top-1">
                     <input
                       type="text"
-                      placeholder="e.g. Al-Madina Trading Co..."
-                      className="w-full glass-input rounded-lg p-2.5 outline-none text-sm text-white border border-amber-500/50 bg-slate-900 placeholder-gray-400 focus:border-amber-400"
-                      value={otherClientName}
+                      placeholder={transactionType === 'EXPENSE' ? 'Enter Temporary Vendor Name...' : 'Enter Temporary Payer Name...'}
+                      value={temporaryPartyName}
                       onChange={(e) => {
                         const val = e.target.value;
-                        setOtherClientName(val);
-                        setNewTransaction({ ...newTransaction, party: val.trim() });
+                        setTemporaryPartyName(val);
+                        setNewTransaction(prev => ({ ...prev, party: val.trim() }));
                       }}
+                      className="w-full glass-input rounded-xl p-3 outline-none text-sm text-white border border-amber-500/50 bg-slate-900 focus:border-amber-400 font-medium"
                       autoFocus
                     />
                     <p className="text-[11px] text-amber-300/80">
-                      ⚡ This new party will be added to the directory and will be available for future case registrations and transactions.
+                      ⚡ Temporary party will be recorded and added to directory with its own ledger.
                     </p>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <select
+                      className="w-full glass-input rounded-xl p-3 outline-none appearance-none cursor-pointer text-sm text-white bg-slate-900 border border-white/15 focus:border-brand-400"
+                      value={newTransaction.party || ''}
+                      onChange={(e) => setNewTransaction(prev => ({ ...prev, party: e.target.value }))}
+                    >
+                      <option value="" className="bg-slate-900 text-gray-400">
+                        -- Select {transactionType === 'EXPENSE' || transactionType === 'PAYABLE' ? 'Payee' : 'Payer'} --
+                      </option>
+                      {transactionType === 'EXPENSE' || transactionType === 'PAYABLE' ? (
+                        <>
+                          <optgroup label="Vendors & Utilities">
+                            {vendors.map((v) => (
+                              <option key={v.id} value={v.companyTitle || v.name} className="bg-slate-900 text-white">
+                                {v.companyTitle || v.name} ({v.category})
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Clients">
+                            {clientList.map((client) => (
+                              <option key={client} value={client} className="bg-slate-900 text-white">
+                                {client}
+                              </option>
+                            ))}
+                          </optgroup>
+                        </>
+                      ) : (
+                        <>
+                          <optgroup label="Clients">
+                            {clientList.map((client) => (
+                              <option key={client} value={client} className="bg-slate-900 text-white">
+                                {client}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Vendors & Utilities">
+                            {vendors.map((v) => (
+                              <option key={v.id} value={v.companyTitle || v.name} className="bg-slate-900 text-white">
+                                {v.companyTitle || v.name} ({v.category})
+                              </option>
+                            ))}
+                          </optgroup>
+                        </>
+                      )}
+                    </select>
+                    <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                   </div>
                 )}
               </div>
@@ -6190,78 +6281,72 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
                 <label className="text-xs text-gray-300 font-medium">Description / Remarks</label>
                 <input 
                   type="text" 
-                  placeholder={transactionType === 'INCOME' ? 'e.g. Part payment against Case DPL-26-000004' : transactionType === 'PAYABLE' ? 'e.g. Port Wharfage & Handling Charges' : 'e.g. Logistics Service Fee'}
+                  placeholder={
+                    transactionType === 'EXPENSE' ? 'e.g. Utility bill payment / Office supplies' :
+                    transactionType === 'INCOME' ? 'e.g. Part payment against Case DPL-26-000004' : 
+                    transactionType === 'PAYABLE' ? 'e.g. Port Wharfage & Handling Charges' : 'e.g. Logistics Service Fee'
+                  }
                   className="w-full glass-input rounded-xl p-3 outline-none text-sm text-white border border-white/15 focus:border-brand-400"
                   value={newTransaction.description}
                   onChange={(e) => setNewTransaction({...newTransaction, description: e.target.value})}
                 />
               </div>
 
-              {/* Document Upload Button for Payable & Receivable */}
-              {(transactionType === 'PAYABLE' || transactionType === 'RECEIVABLE') && (
-                <div className="space-y-1.5">
-                  <label className="text-xs text-gray-300 font-medium">Upload Document / Bill (Optional)</label>
-                  <label className="flex items-center justify-center gap-2 p-2.5 border-2 border-dashed border-white/15 rounded-xl hover:bg-brand-500/10 hover:border-brand-500/50 transition-all cursor-pointer bg-slate-900/50">
-                    <input type="file" className="hidden" accept="image/*,.pdf" onChange={handleDocumentChange} />
-                    <Upload size={16} className="text-brand-400" />
-                    <span className="text-xs text-gray-300">
-                      {newTransaction.documentName ? `Document: ${newTransaction.documentName} ✅` : newTransaction.documentUrl ? 'Document Attached ✅' : 'Choose Bill / Document'}
-                    </span>
+              {/* Bill / Receipt Upload Button for ALL transaction types */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-gray-300 font-medium">
+                    {transactionType === 'EXPENSE' ? 'Upload Bill / Invoice (Photo or PDF)' :
+                     transactionType === 'INCOME' ? 'Upload Deposit Slip / Receipt (Photo or PDF)' :
+                     'Upload Document / Bill (Optional)'}
                   </label>
+                  {(newTransaction.documentName || newTransaction.slipUrl || newTransaction.documentUrl) && (
+                    <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
+                      <CheckCircle2 size={12} /> Attached
+                    </span>
+                  )}
                 </div>
-              )}
+                <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-white/15 rounded-xl hover:bg-brand-500/10 hover:border-brand-500/50 transition-all cursor-pointer bg-slate-900/50 group">
+                  <input type="file" className="hidden" accept="image/*,.pdf" onChange={handleDocumentChange} />
+                  <Upload size={16} className="text-brand-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-xs text-gray-300 font-medium truncate max-w-[260px]">
+                    {newTransaction.documentName 
+                      ? `${newTransaction.documentName} ✅` 
+                      : (newTransaction.documentUrl || newTransaction.slipUrl) 
+                        ? 'Bill Attached ✅' 
+                        : 'Choose Bill / Receipt / Document'}
+                  </span>
+                </label>
+              </div>
 
-              {/* Uploaded Files Summary List with Download Option (SRS) */}
+              {/* Uploaded Files Summary with Download Option */}
               {(newTransaction.slipUrl || newTransaction.documentUrl) && (
-                <div className="p-3 bg-black/40 rounded-xl border border-white/10 space-y-1.5 mt-3 animate-in fade-in">
+                <div className="p-3 bg-black/40 rounded-xl border border-white/10 space-y-1.5 mt-2 animate-in fade-in">
                   <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
                     <Download size={11} className="text-brand-400" />
-                    Uploaded Transaction Documents / Receipts
+                    Uploaded Document Attached
                   </h5>
-                  <div className="grid grid-cols-1 gap-2">
-                    {newTransaction.slipUrl && (
-                      <div className="flex items-center justify-between text-xs p-1.5 rounded bg-black/20 border border-white/5">
-                        <span className="text-gray-200 font-medium truncate max-w-[150px]">Deposit Slip / Receipt Photo</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const link = document.createElement('a');
-                            link.href = newTransaction.slipUrl!;
-                            const ext = newTransaction.slipUrl!.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
-                            link.download = `Deposit_Slip${ext}`;
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
-                          }}
-                          className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded text-[10px]"
-                        >
-                          <Download size={11} /> Download
-                        </button>
-                      </div>
-                    )}
-                    {newTransaction.documentUrl && (
-                      <div className="flex items-center justify-between text-xs p-1.5 rounded bg-black/20 border border-white/5">
-                        <span className="text-gray-200 font-medium truncate max-w-[150px]">
-                          {newTransaction.documentName || 'Supporting Bill/Document'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const link = document.createElement('a');
-                            link.href = newTransaction.documentUrl!;
-                            const ext = newTransaction.documentUrl!.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
-                            const defaultName = newTransaction.documentName || 'supporting_doc';
-                            link.download = defaultName.endsWith('.pdf') || defaultName.endsWith('.jpg') ? defaultName : `${defaultName}${ext}`;
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
-                          }}
-                          className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded text-[10px]"
-                        >
-                          <Download size={11} /> Download
-                        </button>
-                      </div>
-                    )}
+                  <div className="flex items-center justify-between text-xs p-1.5 rounded bg-black/20 border border-white/5">
+                    <span className="text-gray-200 font-medium truncate max-w-[180px]">
+                      {newTransaction.documentName || 'Bill / Deposit Slip Photo'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetUrl = newTransaction.documentUrl || newTransaction.slipUrl;
+                        if (!targetUrl) return;
+                        const link = document.createElement('a');
+                        link.href = targetUrl;
+                        const ext = targetUrl.startsWith('data:application/pdf') ? '.pdf' : '.jpg';
+                        link.download = `Bill_Document${ext}`;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                      }}
+                      className="text-brand-400 hover:text-brand-300 font-bold hover:underline flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded text-[10px]"
+                    >
+                      <Download size={11} /> Download
+                    </button>
                   </div>
                 </div>
               )}
@@ -6269,21 +6354,168 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
             
             <div className="flex justify-end gap-2.5 mt-6 pt-3 border-t border-white/10">
               <button 
+                type="button"
                 onClick={() => {
                   setShowAddModal(false);
-                  setIsOtherClient(false);
-                  setOtherClientName('');
+                  setIsTemporaryParty(false);
+                  setTemporaryPartyName('');
                 }} 
                 className="text-gray-400 hover:text-white px-4 py-2 text-sm"
               >
                 Cancel
               </button>
               <button 
+                type="button"
                 onClick={handleAddTransaction} 
-                className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-2 rounded-xl text-sm font-semibold shadow-lg shadow-brand-600/30 flex items-center gap-1.5 transition-all"
+                className="bg-brand-600 hover:bg-brand-500 text-white px-6 py-2.5 rounded-xl text-sm font-semibold shadow-lg shadow-brand-600/30 flex items-center gap-2 transition-all"
               >
-                <Save size={16} />
-                <span>Save Transaction</span>
+                <CheckCircle2 size={16} />
+                <span>
+                  {transactionType === 'INCOME' || transactionType === 'EXPENSE' 
+                    ? 'Complete Payment' 
+                    : 'Save Transaction'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PAYMENT COMPLETION & RECEIPT DOWNLOAD SUCCESS POPUP MODAL */}
+      {showPaymentSuccessModal && completedTransactionReceipt && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-200 no-print">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-lg shadow-2xl border border-emerald-500/30 mb-6 bg-slate-900/95 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-emerald-500/20 text-emerald-400 rounded-2xl border border-emerald-500/40">
+                  <CheckCircle2 size={26} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">
+                    {completedTransactionReceipt.type === 'EXPENSE' 
+                      ? 'Payment Paid Successfully' 
+                      : 'Payment Received Successfully'}
+                  </h3>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-gray-400">Transaction Serial:</span>
+                    <span className="font-mono text-xs font-bold text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30">
+                      {completedTransactionReceipt.reference}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowPaymentSuccessModal(false);
+                  setCompletedTransactionReceipt(null);
+                }} 
+                className="text-gray-400 hover:text-white p-1"
+              >
+                <X size={20}/>
+              </button>
+            </div>
+
+            {/* Transaction Details Summary */}
+            <div className="py-4 space-y-3.5">
+              {/* Amount Display */}
+              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-500/10 via-slate-800 to-emerald-500/10 border border-emerald-500/20 text-center">
+                <span className="text-[11px] uppercase tracking-wider text-emerald-300 font-semibold block">
+                  {completedTransactionReceipt.type === 'EXPENSE' ? 'Total Amount Paid' : 'Total Amount Received'}
+                </span>
+                <span className="text-2xl sm:text-3xl font-bold font-mono text-white mt-1 block">
+                  PKR {completedTransactionReceipt.amount.toLocaleString()}
+                </span>
+                <span className="text-xs text-gray-300 italic mt-1 block">
+                  {numberToWordsRupees(completedTransactionReceipt.amount)}
+                </span>
+              </div>
+
+              {/* Grid of specifications */}
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <div className="p-2.5 bg-white/5 rounded-xl border border-white/5">
+                  <span className="text-gray-400 block text-[10px] uppercase font-semibold">
+                    {completedTransactionReceipt.type === 'EXPENSE' ? 'Payee / Beneficiary' : 'Payer / Client'}
+                  </span>
+                  <span className="text-white font-bold truncate block mt-0.5">
+                    {completedTransactionReceipt.party}
+                  </span>
+                </div>
+                <div className="p-2.5 bg-white/5 rounded-xl border border-white/5">
+                  <span className="text-gray-400 block text-[10px] uppercase font-semibold">Payment Mode</span>
+                  <span className="text-white font-bold block mt-0.5">
+                    {completedTransactionReceipt.paymentMethod === 'BANK' ? 'Bank' : 'Cash'}
+                    {completedTransactionReceipt.bankName ? ` (${completedTransactionReceipt.bankName})` : ''}
+                  </span>
+                </div>
+                <div className="p-2.5 bg-white/5 rounded-xl border border-white/5">
+                  <span className="text-gray-400 block text-[10px] uppercase font-semibold">Date</span>
+                  <span className="text-white font-bold block mt-0.5">{completedTransactionReceipt.date}</span>
+                </div>
+                <div className="p-2.5 bg-white/5 rounded-xl border border-white/5">
+                  <span className="text-gray-400 block text-[10px] uppercase font-semibold">Cashbook Serial</span>
+                  <span className="text-cyan-300 font-mono font-bold block mt-0.5">
+                    {completedTransactionReceipt.reference}
+                  </span>
+                </div>
+              </div>
+
+              {completedTransactionReceipt.description && (
+                <div className="p-2.5 bg-white/5 rounded-xl border border-white/5 text-xs">
+                  <span className="text-gray-400 block text-[10px] uppercase font-semibold">Description / Remarks</span>
+                  <span className="text-gray-200 mt-0.5 block">{completedTransactionReceipt.description}</span>
+                </div>
+              )}
+
+              {/* Physical Receiving & Signature Info */}
+              <div className="p-3 bg-brand-500/10 rounded-xl border border-brand-500/20 flex items-start gap-2.5 text-xs text-brand-200">
+                <FileCheck size={18} className="text-brand-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  Official receipt is ready for instant download with designated space for 
+                  <strong className="text-white"> Receiver / Payee signature</strong> and Accountant stamp.
+                </p>
+              </div>
+
+              {/* PDF Feedback Message if downloaded */}
+              {pdfSuccessMessage && (
+                <div className="p-2.5 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-xs text-emerald-300 flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 size={14} className="shrink-0" />
+                  <span>{pdfSuccessMessage}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons: Side-by-side Download Receipt and Finish */}
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => handleDirectDownloadReceipt(completedTransactionReceipt)}
+                disabled={isExportingPdf}
+                className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+              >
+                {isExportingPdf ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={16} />
+                    <span>Download Receipt</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPaymentSuccessModal(false);
+                  setCompletedTransactionReceipt(null);
+                }}
+                className="py-2.5 px-6 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 shadow-lg shadow-brand-600/30 transition-all cursor-pointer"
+              >
+                <CheckCircle2 size={16} />
+                <span>Finish</span>
               </button>
             </div>
           </div>
@@ -6292,8 +6524,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* Confirm Payment Modal */}
       {showConfirmPaidModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 no-print">
-          <div className="glass-card p-6 rounded-2xl w-full max-w-md shadow-2xl border border-white/10">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-200 no-print">
+          <div className="glass-card p-6 rounded-2xl w-full max-w-md shadow-2xl border border-white/10 mb-6">
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h3 className="text-lg font-bold text-white">Confirm Payment</h3>
@@ -6359,8 +6591,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* OFFICIAL PAYMENT RECEIPT / VOUCHER MODAL */}
       {selectedReceiptData && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="glass-card w-full max-w-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="glass-card w-full max-w-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] mb-6">
             <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-900/90">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-brand-500/10 rounded-xl text-brand-400 border border-brand-500/20">
@@ -6524,8 +6756,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* COMMERCIAL INVOICE PREVIEW MODAL */}
       {selectedInvoiceData && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="glass-card w-full max-w-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="glass-card w-full max-w-xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] mb-6">
             <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-900/90">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 bg-brand-500/10 rounded-xl text-brand-400 border border-brand-500/20">
@@ -6689,8 +6921,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* Add Recurring Expense Template Modal */}
       {showRecurringModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-fade-in">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-fade-in mb-6">
             <div className="p-4 border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400">
@@ -6808,8 +7040,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* AUTOMATIC VENDOR REGISTRATION POPUP PROMPT */}
       {autoVendorPrompt && autoVendorPrompt.isOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="glass-card w-full max-w-lg rounded-2xl border border-brand-500/40 shadow-2xl overflow-hidden flex flex-col">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in">
+          <div className="glass-card w-full max-w-lg rounded-2xl border border-brand-500/40 shadow-2xl overflow-hidden flex flex-col mb-6">
             <div className="p-5 border-b border-white/10 flex justify-between items-center bg-gradient-to-r from-brand-950/80 to-slate-900">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-brand-500/20 text-brand-300 rounded-xl border border-brand-500/30">
@@ -6932,8 +7164,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* MANUAL REGISTER VENDOR MODAL */}
       {showAddVendorModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="glass-card w-full max-w-lg rounded-2xl border border-purple-500/30 shadow-2xl overflow-hidden flex flex-col">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in">
+          <div className="glass-card w-full max-w-lg rounded-2xl border border-purple-500/30 shadow-2xl overflow-hidden flex flex-col mb-6">
             <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-900">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-purple-500/20 text-purple-300 rounded-xl border border-purple-500/30">
@@ -6954,83 +7186,104 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
             </div>
 
             <div className="p-5 space-y-4 text-xs max-h-[75vh] overflow-y-auto">
+              {/* 1. Vendor Company Name (Top field) */}
               <div>
-                <label className="block text-gray-400 font-semibold mb-1">Vendor / Contact Person Name *</label>
+                <label className="block text-gray-300 font-semibold mb-1">Vendor Company Name *</label>
                 <input
                   type="text"
-                  placeholder="e.g. Muhammad Aslam (Water Supplier)"
-                  value={newVendorForm.name || ''}
-                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500 text-sm font-semibold"
+                  placeholder="e.g. Aquafresh Water Supplies / K-Electric"
+                  value={newVendorForm.companyTitle || ''}
+                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, companyTitle: e.target.value }))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2.5 text-white outline-none focus:border-purple-500 text-sm font-semibold"
+                  autoFocus
                 />
               </div>
 
+              {/* 2. Select Utility Category with Add New Category button */}
               <div>
-                <label className="block text-gray-400 font-semibold mb-1">Vendor / Utility Category *</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-gray-300 font-semibold">Select Utility Category *</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCategoryInput(!showAddCategoryInput)}
+                    className="text-[11px] font-semibold text-purple-400 hover:text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 px-2 py-0.5 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                  >
+                    <Plus size={12} />
+                    <span>{showAddCategoryInput ? 'Cancel' : 'Add New Category'}</span>
+                  </button>
+                </div>
+
+                {showAddCategoryInput && (
+                  <div className="p-2.5 mb-2.5 bg-purple-500/10 border border-purple-500/30 rounded-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+                    <input
+                      type="text"
+                      placeholder="Type new category name..."
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                      className="flex-1 bg-slate-950 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-purple-500"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddNewCategory();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddNewCategory}
+                      className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold shrink-0 cursor-pointer"
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+
                 <select
                   value={newVendorForm.category}
                   onChange={(e) => setNewVendorForm(prev => ({ ...prev, category: e.target.value as any }))}
                   className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500 text-sm font-medium"
                 >
-                  <option value="Drinking Water Charges">Drinking Water Charges</option>
-                  <option value="Electric Bill">Electric Bill</option>
-                  <option value="Gas Cylinder Refill">Gas Cylinder Refill</option>
-                  <option value="Internet Bill">Internet Bill</option>
-                  <option value="Office Rent">Office Rent</option>
-                  <option value="Stationery">Stationery</option>
-                  <option value="Photocopy & Printer Maintenance">Photocopy & Printer Maintenance</option>
-                  <option value="Computer Repair">Computer Repair</option>
-                  <option value="Office Maintenance">Office Maintenance</option>
-                  <option value="Legal Payments">Legal Payments</option>
-                  <option value="Miscellaneous Payments">Miscellaneous Payments</option>
+                  {vendorCategories.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
                 </select>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-gray-400 font-semibold mb-1">Company / Store Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Aquafresh Water Supplies"
-                    value={newVendorForm.companyTitle || ''}
-                    onChange={(e) => setNewVendorForm(prev => ({ ...prev, companyTitle: e.target.value }))}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-gray-400 font-semibold mb-1">Contact Phone</label>
-                  <input
-                    type="text"
-                    placeholder="0300-0000000"
-                    value={newVendorForm.contactNumber || ''}
-                    onChange={(e) => setNewVendorForm(prev => ({ ...prev, contactNumber: e.target.value }))}
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
-                  />
-                </div>
+              {/* 3. Contact Person Name */}
+              <div>
+                <label className="block text-gray-300 font-semibold mb-1">Contact Person Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Muhammad Aslam"
+                  value={newVendorForm.name || ''}
+                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, name: e.target.value }))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500 text-sm"
+                />
               </div>
 
+              {/* 4. Contact Number */}
               <div>
-                <label className="block text-gray-400 font-semibold mb-1">Office / Shop Address</label>
+                <label className="block text-gray-300 font-semibold mb-1">Contact Number</label>
+                <input
+                  type="text"
+                  placeholder="0300-0000000"
+                  value={newVendorForm.contactNumber || ''}
+                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, contactNumber: e.target.value }))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500 text-sm"
+                />
+              </div>
+
+              {/* 5. Office / Shop Address */}
+              <div>
+                <label className="block text-gray-300 font-semibold mb-1">Office / Shop Address</label>
                 <input
                   type="text"
                   placeholder="Street / Plaza address"
                   value={newVendorForm.address || ''}
                   onChange={(e) => setNewVendorForm(prev => ({ ...prev, address: e.target.value }))}
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500"
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white outline-none focus:border-purple-500 text-sm"
                 />
-              </div>
-
-              <div className="p-3 bg-white/5 rounded-xl border border-white/10 flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="chkIsRecurring"
-                  checked={!!newVendorForm.isRecurring}
-                  onChange={(e) => setNewVendorForm(prev => ({ ...prev, isRecurring: e.target.checked }))}
-                  className="rounded text-purple-600 focus:ring-purple-500"
-                />
-                <label htmlFor="chkIsRecurring" className="text-xs text-gray-300 font-medium cursor-pointer">
-                  Mark as regular monthly recurring expense (e.g. rent, internet, water)
-                </label>
               </div>
             </div>
 
@@ -7057,8 +7310,8 @@ const Finance: React.FC<FinanceProps> = ({ initialFilter, onActionComplete, cust
 
       {/* ALL INVOICES MODAL (TABLE VIEW & INSTANT DOWNLOAD) */}
       {showAllInvoicesModal && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
-          <div className="glass-card w-full max-w-5xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in">
+          <div className="glass-card w-full max-w-5xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] mb-6">
             <div className="p-5 border-b border-white/10 flex justify-between items-center bg-slate-900">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-amber-500/20 text-amber-300 rounded-xl border border-amber-500/30">

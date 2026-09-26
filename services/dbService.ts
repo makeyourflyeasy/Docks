@@ -18,7 +18,7 @@ import {
   getActiveDbUserSession,
   clearActiveDbUserSession
 } from './firebase';
-import { Case, FinanceEntry, Vehicle, AppNotification, AppUser, Client, UserRole, RecurringFinanceTemplate, DestinationStaff, StaffLedgerEntry, Vendor, StaffLoadingBill, StaffPrivateLedgerEntry } from '../types';
+import { Case, FinanceEntry, Vehicle, AppNotification, AppUser, Client, UserRole, RecurringFinanceTemplate, DestinationStaff, StaffLedgerEntry, Vendor, StaffLoadingBill, StaffPrivateLedgerEntry, AvailableVehicle, TransporterRequest } from '../types';
 import { safeAppStorage } from './storage';
 
 /**
@@ -294,6 +294,100 @@ export async function deleteVehicleFromFirestore(vehicleId: number | string): Pr
   }
 }
 
+// AVAILABLE VEHICLES (READY FOR LOADING)
+export function subscribeToAvailableVehicles(
+  onData: (items: AvailableVehicle[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = 'available_vehicles';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const items: AvailableVehicle[] = [];
+      snapshot.forEach((docSnap) => {
+        items.push({ ...docSnap.data(), id: docSnap.id } as AvailableVehicle);
+      });
+      onData(items);
+    },
+    (error) => {
+      console.warn(`Firestore subscription notice on ${path}:`, error);
+      if (onError) onError(error);
+    }
+  );
+}
+
+export async function saveAvailableVehicleToFirestore(item: AvailableVehicle): Promise<void> {
+  const path = 'available_vehicles';
+  const docId = String(item.id || `ready_${item.vehicleNo.replace(/\s+/g, '_')}`);
+  try {
+    const payload = sanitizeForFirestore({
+      ...item,
+      id: docId,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(doc(db, path, docId), payload);
+  } catch (error) {
+    console.warn(`Firestore saveAvailableVehicle warning:`, error);
+  }
+}
+
+export async function deleteAvailableVehicleFromFirestore(id: string): Promise<void> {
+  const path = 'available_vehicles';
+  try {
+    await deleteDoc(doc(db, path, String(id)));
+  } catch (error) {
+    console.warn(`Firestore deleteAvailableVehicle warning:`, error);
+  }
+}
+
+// TRANSPORTER REQUESTS (REGISTRATION, RENEWAL, CANCELLATION)
+export function subscribeToTransporterRequests(
+  onData: (items: TransporterRequest[]) => void,
+  onError?: (err: any) => void
+) {
+  const path = 'transporter_requests';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const items: TransporterRequest[] = [];
+      snapshot.forEach((docSnap) => {
+        items.push({ ...docSnap.data(), id: docSnap.id } as TransporterRequest);
+      });
+      onData(items);
+    },
+    (error) => {
+      console.warn(`Firestore subscription notice on ${path}:`, error);
+      if (onError) onError(error);
+    }
+  );
+}
+
+export async function saveTransporterRequestToFirestore(request: TransporterRequest): Promise<void> {
+  const path = 'transporter_requests';
+  const docId = String(request.id || `req_${Date.now()}`);
+  try {
+    const payload = sanitizeForFirestore({
+      ...request,
+      id: docId,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(doc(db, path, docId), payload);
+  } catch (error) {
+    console.warn(`Firestore saveTransporterRequest warning:`, error);
+  }
+}
+
+export async function updateTransporterRequestInFirestore(request: TransporterRequest): Promise<void> {
+  const path = 'transporter_requests';
+  const docId = String(request.id);
+  try {
+    const payload = sanitizeForFirestore({ ...request, updatedAt: new Date().toISOString() });
+    await setDoc(doc(db, path, docId), payload, { merge: true });
+  } catch (error) {
+    console.warn(`Firestore updateTransporterRequest warning:`, error);
+  }
+}
+
 // NOTIFICATIONS
 export function subscribeToNotifications(
   onData: (items: AppNotification[]) => void,
@@ -360,7 +454,8 @@ export const DEFAULT_DATABASE_USERS: AppUser[] = [
   { id: 7, userId: 'lahore', password: 'dpl01234', name: 'Rashid Khan (Lahore)', role: UserRole.DESTINATION_PORT_STAFF, roles: [UserRole.DESTINATION_PORT_STAFF], designation: 'Destination Officer (Lahore)', contact: '0303-4455667', email: 'lahore.destination@docks.com', status: 'ACTIVE', baseSalary: 70000 },
   { id: 8, userId: 'peshawar', password: 'dpl01234', name: 'Destination Officer (Peshawar)', role: UserRole.DESTINATION_PORT_STAFF, roles: [UserRole.DESTINATION_PORT_STAFF], designation: 'Destination Officer (Peshawar)', contact: '0303-9988776', email: 'peshawar.destination@docks.com', status: 'ACTIVE', baseSalary: 70000 },
   { id: 10, userId: '', password: '', name: 'Tariq Mehmood', role: UserRole.OFFICE_STAFF, roles: [UserRole.OFFICE_STAFF], designation: 'Head Office Coordinator', contact: '0312-7788990', email: 'tariq.office@docks.com', status: 'ACTIVE', baseSalary: 55000 },
-  { id: 9, userId: 'client01', password: 'dpl01234', name: 'Client User', role: UserRole.CLIENT, roles: [UserRole.CLIENT], designation: 'Corporate Importer', contact: '021-111-222-333', email: 'client01@docks.com', status: 'ACTIVE', clientName: 'Client Account' }
+  { id: 9, userId: 'client01', password: 'dpl01234', name: 'Client User', role: UserRole.CLIENT, roles: [UserRole.CLIENT], designation: 'Corporate Importer', contact: '021-111-222-333', email: 'client01@docks.com', status: 'ACTIVE', clientName: 'Al-Khaleej Importers & Shipping Lines' },
+  { id: 15, userId: 'transporter', password: 'dpl01234', name: 'Bilal Goods Transport Co.', role: UserRole.TRANSPORTER, roles: [UserRole.TRANSPORTER], designation: 'Fleet Owner & Transporter', contact: '0300-8889999', email: 'transporter@docks.com', status: 'ACTIVE' }
 ];
 
 let hasSeededInitialUsers = false;

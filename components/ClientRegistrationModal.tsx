@@ -399,8 +399,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
   const currentCategoryArrangements = getCategoryArrangements(selectedCategory);
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
-      <div className="glass-card rounded-2xl w-full max-w-4xl border border-white/15 shadow-2xl bg-slate-900/95 my-auto max-h-[94vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-2 sm:px-4 overflow-y-auto animate-in fade-in duration-200">
+      <div className="glass-card rounded-2xl w-full max-w-4xl border border-white/15 shadow-2xl bg-slate-900/95 mb-6 max-h-[94vh] flex flex-col">
         {/* Modal Header */}
         <div className="p-4 sm:p-5 border-b border-white/10 flex justify-between items-center bg-slate-950/70 rounded-t-2xl shrink-0">
           <div className="flex items-center gap-3">
@@ -1052,8 +1052,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
       {/* SECONDARY POPUP: MASTER CHARGE PICKER & ADD CUSTOM CHARGE */}
       {/* ========================================================================= */}
       {showChargePicker && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg z-60 flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
-          <div className="glass-card rounded-2xl w-full max-w-xl border border-white/20 shadow-2xl bg-slate-900/98 max-h-[85vh] flex flex-col">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-lg z-60 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="glass-card rounded-2xl w-full max-w-xl border border-white/20 shadow-2xl bg-slate-900/98 max-h-[85vh] flex flex-col mb-6">
             {/* Picker Header */}
             <div className="p-4 border-b border-white/10 flex justify-between items-center bg-slate-950/80 rounded-t-2xl">
               <div>
@@ -1187,8 +1187,8 @@ export const ClientRegistrationModal: React.FC<ClientRegistrationModalProps> = (
 
       {/* Document Quick Preview */}
       {previewDoc && (
-        <div className="fixed inset-0 bg-black/95 z-70 flex items-center justify-center p-4">
-          <div className="glass-card rounded-2xl w-full max-w-2xl border border-white/20 p-4 space-y-3 bg-slate-900 flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-black/95 z-70 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto">
+          <div className="glass-card rounded-2xl w-full max-w-2xl border border-white/20 p-4 space-y-3 bg-slate-900 flex flex-col max-h-[90vh] mb-6">
             <div className="flex justify-between items-center border-b border-white/10 pb-2">
               <h4 className="text-sm font-bold text-white truncate">{previewDoc.name}</h4>
               <button 

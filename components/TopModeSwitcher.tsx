@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   ShieldCheck, DollarSign, Globe, Briefcase, UserPlus, 
-  ChevronDown, Check, Info, Lock, LogOut, KeyRound, X, ArrowRight, UserCheck
+  ChevronDown, Check, Info, Lock, LogOut, KeyRound, X, ArrowRight, UserCheck, Truck
 } from 'lucide-react';
 import { UserRole } from '../types';
 
-export type AppMode = 'admin' | 'finance' | 'client' | 'employee' | 'recruiter';
+export type AppMode = 'admin' | 'finance' | 'client' | 'employee' | 'recruiter' | 'transporter';
 
 export interface ModeOption {
   id: AppMode;
@@ -86,6 +86,19 @@ export const APP_MODES: ModeOption[] = [
     activeBg: 'bg-indigo-950/60',
     activeBorder: 'border-indigo-500/60',
     activeText: 'text-indigo-300'
+  },
+  {
+    id: 'transporter',
+    name: 'Transporter Portal',
+    role: UserRole.TRANSPORTER,
+    targetView: 'vehicles',
+    description: 'Fleet carriers, vehicle readiness, driver dispatch, and transport finance ledger',
+    badge: 'TRANSPORTER',
+    icon: Truck,
+    accentColor: 'text-amber-400',
+    activeBg: 'bg-amber-950/60',
+    activeBorder: 'border-amber-500/60',
+    activeText: 'text-amber-300'
   }
 ];
 

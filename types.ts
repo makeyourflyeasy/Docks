@@ -59,6 +59,44 @@ export interface Container {
   platePhoto?: string;
   driverPhoto?: string;
   status: 'Pending' | 'Loaded' | 'In Transit' | 'Delivered';
+  transporterId?: number | string;
+  transporterName?: string;
+  rentPaymentBy?: 'Client' | 'DPL';
+  rentAmount?: number;
+  transporterApproved?: boolean;
+}
+
+export interface AvailableVehicle {
+  id: string;
+  vehicleNo: string;
+  transporterId: string | number;
+  transporterName: string;
+  currentCity: string;
+  allowableDestinations: string[];
+  estimatedRent: number;
+  availableFromDate: string;
+  driverName?: string;
+  driverContact?: string;
+  vehicleType?: string;
+  capacity?: string;
+  readyStatus: 'READY' | 'ALLOCATED' | 'OFF_DUTY';
+  notes?: string;
+  createdAt: string;
+}
+
+export interface TransporterRequest {
+  id: string;
+  transporterId: string | number;
+  transporterName: string;
+  type: 'NEW_REGISTRATION' | 'RENEWAL' | 'CANCELLATION';
+  vehicleNo?: string;
+  vehicleData?: Partial<Vehicle>;
+  reason?: string;
+  documents?: Array<{ name: string; url: string; type: string }>;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
 }
 
 export interface ExtractedData {
@@ -1013,6 +1051,7 @@ export interface Vehicle {
   chassisNo: string;
   makeModel?: string;
   maker?: string; // e.g. HINO, NISSAN, VOLVO, FUSO, JAC
+  make?: string;
   model?: string; // e.g. 1993, 2004, 2018, 2026
   mra?: string; // Motor Registering Authority (e.g. LASBELA, KARACHI, LAHORE, PESHAWAR, HARIPUR)
   tareWeight?: string; // Tare weight of vehicle (e.g. 5100 KG, 15000 KG)
@@ -1066,6 +1105,11 @@ export interface Vehicle {
   onlineLocation?: string;
   onlineDestination?: string;
   onlineSince?: string;
+  isReadyForLoading?: boolean;
+  readyCity?: string;
+  readyDestinations?: string[];
+  estimatedRent?: number;
+  readySince?: string;
   isUpdatePending?: boolean;
   pendingFieldsList?: string[];
   tripsHistory?: Array<{

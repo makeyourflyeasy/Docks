@@ -710,8 +710,8 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
 
       {/* Confirmation Modal: Restore Database */}
       {restoreConfirmFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-          <div className="bg-slate-900 border border-amber-500/40 rounded-3xl p-6 max-w-md w-full shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto bg-black/80 backdrop-blur-md animate-fade-in">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-3xl p-6 max-w-md w-full shadow-2xl mb-6">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto mb-4">
               <RotateCcw size={24} />
             </div>
@@ -759,8 +759,8 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
 
       {/* Confirmation Modal: Delete Backup */}
       {deleteConfirmFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-          <div className="bg-slate-900 border border-red-500/40 rounded-3xl p-6 max-w-md w-full shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto bg-black/80 backdrop-blur-md animate-fade-in">
+          <div className="bg-slate-900 border border-red-500/40 rounded-3xl p-6 max-w-md w-full shadow-2xl mb-6">
             <div className="w-12 h-12 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-400 flex items-center justify-center mx-auto mb-4">
               <Trash2 size={24} />
             </div>

@@ -125,8 +125,8 @@ export const BulkVehicleImportModal: React.FC<BulkVehicleImportModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
-      <div className="glass-card w-full max-w-3xl rounded-2xl border border-white/10 overflow-hidden shadow-2xl bg-slate-950/95 flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in">
+      <div className="glass-card w-full max-w-3xl rounded-2xl border border-white/10 overflow-hidden shadow-2xl bg-slate-950/95 flex flex-col max-h-[90vh] mb-6">
         {/* Header */}
         <div className="p-5 border-b border-white/10 flex justify-between items-center bg-white/5">
           <div className="flex items-center gap-3">
@@ -332,8 +332,8 @@ export const VehicleOnlineModal: React.FC<VehicleOnlineModalProps> = ({
   if (!isOpen || !vehicle) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
-      <div className="glass-card w-full max-w-md rounded-2xl border border-white/10 overflow-hidden shadow-2xl bg-slate-950/95 space-y-5 p-6">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in">
+      <div className="glass-card w-full max-w-md rounded-2xl border border-white/10 overflow-hidden shadow-2xl bg-slate-950/95 space-y-5 p-6 mb-6">
         <div className="flex items-center justify-between border-b border-white/10 pb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
@@ -446,8 +446,8 @@ export const VehicleRenewalModal: React.FC<VehicleRenewalModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in">
-      <div className="glass-card w-full max-w-md rounded-2xl border border-white/10 overflow-hidden shadow-2xl bg-slate-950/95 space-y-5 p-6">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-start justify-center z-50 pt-3 sm:pt-6 pb-6 px-3 sm:px-4 overflow-y-auto animate-in fade-in">
+      <div className="glass-card w-full max-w-md rounded-2xl border border-white/10 overflow-hidden shadow-2xl bg-slate-950/95 space-y-5 p-6 mb-6">
         <div className="flex items-center justify-between border-b border-white/10 pb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
